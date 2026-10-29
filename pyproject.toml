@@ -1,6 +1,6 @@
 [project]
 name = "pr-comment"
-version = "0.0.0"
+version = "0.0.1"
 description = "Posts reviews, replies and comments to PRs, safely and with attribution."
 readme = "README.md"
 requires-python = ">=3.12"
