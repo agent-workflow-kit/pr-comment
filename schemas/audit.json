@@ -1,47 +1,482 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "pr-comment/audit",
+  "$id": "pr-comment/audit.json",
   "title": "pr-comment audit.jsonl record",
-  "description": "Audit record for pr-comment. Whether this tool writes audit records is decided in its design session (architecture §14).",
+  "description": "One record pair per command sharing attempt_id: result attempted immediately before the first forgectl write (after its pre-post hooks), and the outcome after the last, listing each write. Refusals, vetoes and escalations before the first write go to the log. Records never contain bodies or secrets.",
   "type": "object",
   "properties": {
     "ts": {
+      "$ref": "defs.json#/$defs/ts"
+    },
+    "tool": {
+      "const": "pr-comment"
+    },
+    "version": {
       "type": "string",
-      "format": "date-time"
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?$"
+    },
+    "attempt_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{8,64}$",
+      "description": "Pairs the run's attempted record with its outcome."
     },
     "actor": {
-      "type": "string"
+      "$ref": "defs.json#/$defs/actor"
+    },
+    "actor_source": {
+      "enum": [
+        "flag",
+        "tty",
+        "default"
+      ],
+      "description": "flag (--actor), tty (the human default from a TTY stdin), default (auto:unknown)."
+    },
+    "stdin_tty": {
+      "type": "boolean"
     },
     "decision_id": {
-      "oneOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
+      "$ref": "defs.json#/$defs/decision_ids",
+      "description": "The caller's --decision-id values; possibly empty."
+    },
+    "hook_decision_id": {
+      "$ref": "defs.json#/$defs/decision_ids",
+      "description": "Outcome record only: decision ids from pre-post hook stdout."
+    },
+    "override": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "override_escalation",
+          "allow_mention"
+        ]
+      },
+      "uniqueItems": true,
+      "description": "Human-only overrides that applied: override_escalation whenever --override-escalation was given, allow_mention when --allow-mention was given."
+    },
+    "action": {
+      "enum": [
+        "review",
+        "approve",
+        "comment",
+        "reply",
+        "resolve",
+        "unresolve"
       ]
     },
     "target": {
-      "type": "string"
+      "$ref": "defs.json#/$defs/pr",
+      "description": "The canonical #N form."
     },
-    "action": {
-      "type": "string"
+    "pr_id": {
+      "$ref": "defs.json#/$defs/pr_id"
     },
     "inputs": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "event": {
+          "enum": [
+            "comment",
+            "request_changes",
+            "approve",
+            null
+          ],
+          "description": "review and approve; null otherwise."
+        },
+        "draft_id": {
+          "oneOf": [
+            {
+              "$ref": "defs.json#/$defs/draft_id"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "review; null otherwise."
+        },
+        "draft_sha256": {
+          "oneOf": [
+            {
+              "$ref": "defs.json#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "review: of the draft file's bytes; null otherwise."
+        },
+        "anchor_head": {
+          "oneOf": [
+            {
+              "$ref": "defs.json#/$defs/sha"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "review: the draft's anchor.head_sha; null otherwise."
+        },
+        "reanchor_to": {
+          "oneOf": [
+            {
+              "$ref": "defs.json#/$defs/sha"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "review with --reanchor-to; null otherwise."
+        },
+        "pinned_head": {
+          "$ref": "defs.json#/$defs/sha",
+          "description": "The pinned head; comment and reply: --expected-head or show's head; resolve and unresolve: the comments read's head."
+        },
+        "base_ref": {
+          "oneOf": [
+            {
+              "$ref": "defs.json#/$defs/base_ref"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Untrusted: the pinned base; null for resolve and unresolve."
+        },
+        "dedupe_key": {
+          "oneOf": [
+            {
+              "$ref": "defs.json#/$defs/dedupe_key"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The main write's key; null for resolve and unresolve."
+        },
+        "to": {
+          "oneOf": [
+            {
+              "$ref": "defs.json#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "reply: the --to id; null otherwise."
+        },
+        "threads": {
+          "type": "array",
+          "items": {
+            "$ref": "defs.json#/$defs/thread_id"
+          },
+          "description": "resolve and unresolve: the threads to change; empty otherwise."
+        },
+        "bodies": {
+          "type": "array",
+          "items": {
+            "$ref": "defs.json#/$defs/body_entry"
+          },
+          "description": "Hashes of the posted text pr-comment handed to forgectl, without forgectl's dedupe line."
+        },
+        "counts": {
+          "$ref": "defs.json#/$defs/counts"
+        },
+        "plan_sha256": {
+          "oneOf": [
+            {
+              "$ref": "defs.json#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The confirmed plan's plan_sha256; null for resolve and unresolve."
+        },
+        "allowed_mentions": {
+          "type": "array",
+          "items": {
+            "$ref": "defs.json#/$defs/mention_name"
+          },
+          "uniqueItems": true,
+          "description": "--allow-mention names of this run."
+        },
+        "override_escalation": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "pr-comment",
+              "forgectl"
+            ]
+          },
+          "uniqueItems": true,
+          "description": "The scopes given to --override-escalation; [] when none."
+        },
+        "config_hash": {
+          "$ref": "defs.json#/$defs/sha256",
+          "description": "sha256 of sorted-key JSON of the merged config after defaults, without flags."
+        },
+        "config_path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The config file read; null when none exists."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "event",
+        "draft_id",
+        "draft_sha256",
+        "anchor_head",
+        "reanchor_to",
+        "pinned_head",
+        "base_ref",
+        "dedupe_key",
+        "to",
+        "threads",
+        "bodies",
+        "counts",
+        "plan_sha256",
+        "allowed_mentions",
+        "override_escalation",
+        "config_hash",
+        "config_path"
+      ]
     },
-    "result": {}
+    "result": {
+      "enum": [
+        "attempted",
+        "done",
+        "already_posted",
+        "partial",
+        "refused",
+        "failed",
+        "outcome_unknown",
+        "vetoed",
+        "escalated"
+      ]
+    },
+    "writes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Position of the write in the run, from 0 (the hooks' write_index)."
+          },
+          "ts": {
+            "$ref": "defs.json#/$defs/ts",
+            "description": "When the write started."
+          },
+          "action": {
+            "enum": [
+              "review",
+              "approve",
+              "comment",
+              "reply",
+              "resolve",
+              "unresolve"
+            ]
+          },
+          "thread_id": {
+            "oneOf": [
+              {
+                "$ref": "defs.json#/$defs/thread_id"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "resolve and unresolve writes; null otherwise."
+          },
+          "dedupe_key": {
+            "oneOf": [
+              {
+                "$ref": "defs.json#/$defs/dedupe_key"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null for resolve and unresolve writes."
+          },
+          "result": {
+            "enum": [
+              "done",
+              "already_posted",
+              "partial",
+              "refused",
+              "failed",
+              "outcome_unknown",
+              "vetoed",
+              "escalated"
+            ]
+          },
+          "lower": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "exit": {
+                    "$ref": "defs.json#/$defs/exit_code"
+                  },
+                  "code": {
+                    "oneOf": [
+                      {
+                        "$ref": "defs.json#/$defs/error_code"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "null on exit 0."
+                  },
+                  "reason": {
+                    "oneOf": [
+                      {
+                        "$ref": "defs.json#/$defs/refusal_reason"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "defs.json#/$defs/id"
+                    }
+                  },
+                  "thread_ids": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "defs.json#/$defs/id"
+                    }
+                  },
+                  "review_id": {
+                    "oneOf": [
+                      {
+                        "$ref": "defs.json#/$defs/id"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "already_posted": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "exit",
+                  "code",
+                  "reason",
+                  "ids",
+                  "thread_ids",
+                  "review_id",
+                  "already_posted"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "forgectl's result for this write; null for a vetoed or escalated write (forgectl was not called)."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "ts",
+          "action",
+          "thread_id",
+          "dedupe_key",
+          "result",
+          "lower"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "result": {
+                  "enum": [
+                    "vetoed",
+                    "escalated"
+                  ]
+                }
+              },
+              "required": [
+                "result"
+              ]
+            },
+            "then": {
+              "properties": {
+                "lower": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "lower": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "minItems": 1,
+      "description": "Outcome record only: every write the run tried after confirmation, in order, including vetoed or escalated ones before the first attempted record."
+    }
   },
+  "additionalProperties": false,
   "required": [
     "ts",
+    "tool",
+    "version",
+    "attempt_id",
     "actor",
-    "target",
+    "actor_source",
+    "stdin_tty",
+    "decision_id",
+    "override",
     "action",
+    "target",
+    "pr_id",
+    "inputs",
     "result"
   ],
-  "additionalProperties": true
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "result": {
+            "const": "attempted"
+          }
+        },
+        "required": [
+          "result"
+        ]
+      },
+      "then": {
+        "properties": {
+          "writes": false,
+          "hook_decision_id": false
+        }
+      },
+      "else": {
+        "required": [
+          "writes",
+          "hook_decision_id"
+        ]
+      }
+    }
+  ]
 }

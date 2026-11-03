@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pr-comment/cli/approve.json",
+  "title": "approve output",
+  "description": "Printed with --json on exit 0, including a --dry-run. A refusal, a dry run included, prints the error envelope.",
+  "type": "object",
+  "properties": {
+    "pr": {
+      "$ref": "../defs.json#/$defs/pr"
+    },
+    "action": {
+      "const": "approve"
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "event": {
+      "const": "approve"
+    },
+    "dedupe_key": {
+      "$ref": "../defs.json#/$defs/dedupe_key",
+      "description": "The key passed to forgectl."
+    },
+    "head_sha": {
+      "$ref": "../defs.json#/$defs/sha",
+      "description": "The pinned head; for comment and reply, --expected-head or show's head."
+    },
+    "base_ref": {
+      "$ref": "../defs.json#/$defs/base_ref",
+      "description": "Untrusted: the pinned base; for comment and reply, show's base ref."
+    },
+    "mentions_neutralized": {
+      "type": "array",
+      "items": {
+        "$ref": "../defs.json#/$defs/mention_name"
+      },
+      "uniqueItems": true,
+      "x-untrusted": true,
+      "description": "Untrusted: names after a replaced @, without it; in order of first appearance, deduplicated in ASCII lowercase."
+    },
+    "plan_sha256": {
+      "$ref": "../defs.json#/$defs/sha256",
+      "description": "The final plan's plan_sha256, on every run."
+    },
+    "ids": {
+      "type": "array",
+      "items": {
+        "$ref": "../defs.json#/$defs/id"
+      },
+      "description": "forgectl's ids, unordered; empty on a --dry-run."
+    },
+    "thread_ids": {
+      "type": "array",
+      "items": {
+        "$ref": "../defs.json#/$defs/id"
+      },
+      "description": "forgectl's; empty on a --dry-run."
+    },
+    "review_id": {
+      "oneOf": [
+        {
+          "$ref": "../defs.json#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "forgectl's; null on GitLab, for other actions and on a --dry-run."
+    },
+    "already_posted": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Real run: forgectl's answer from the real call (boolean). --dry-run: a hint, true when forgectl's dry run reported it, else null."
+    },
+    "follow_up_done": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "forgectl's (it performed a state step on a dedupe hit); null on a --dry-run."
+    },
+    "neutralized_lines": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "pr-comment's count from Text pipeline step 6."
+    },
+    "markers_removed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "pr-comment's count from Text pipeline step 6."
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "description": "forgectl's, plus pr-comment's own (body_thread_unresolved, neutralizing_mismatch); on a --dry-run, pr-comment's."
+    },
+    "head_verified": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "forgectl's: false when an earlier approval exists that forgectl cannot confirm counts for this head and base; null otherwise and on a --dry-run."
+    },
+    "plan": {
+      "oneOf": [
+        {
+          "$ref": "../defs.json#/$defs/plan"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "With --dry-run, the plan; null otherwise."
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "pr",
+    "action",
+    "dry_run",
+    "event",
+    "dedupe_key",
+    "head_sha",
+    "base_ref",
+    "mentions_neutralized",
+    "plan_sha256",
+    "ids",
+    "thread_ids",
+    "review_id",
+    "already_posted",
+    "follow_up_done",
+    "neutralized_lines",
+    "markers_removed",
+    "warnings",
+    "head_verified",
+    "plan"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "dry_run": {
+            "const": true
+          }
+        },
+        "required": [
+          "dry_run"
+        ]
+      },
+      "then": {
+        "properties": {
+          "plan": {
+            "type": "object"
+          },
+          "ids": {
+            "maxItems": 0
+          },
+          "thread_ids": {
+            "maxItems": 0
+          },
+          "already_posted": {
+            "enum": [
+              true,
+              null
+            ]
+          },
+          "review_id": {
+            "type": "null"
+          },
+          "follow_up_done": {
+            "type": "null"
+          },
+          "head_verified": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "plan": {
+            "type": "null"
+          },
+          "already_posted": {
+            "type": "boolean"
+          },
+          "follow_up_done": {
+            "not": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

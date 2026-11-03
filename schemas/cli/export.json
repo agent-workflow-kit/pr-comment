@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pr-comment/cli/export.json",
+  "title": "export output (--json)",
+  "description": "With --json, one array of audit records (or, with --log, log records), oldest first. Without --json, the same records as JSONL.",
+  "type": "array",
+  "items": {
+    "oneOf": [
+      {
+        "$ref": "../audit.json"
+      },
+      {
+        "$ref": "../log.json"
+      }
+    ]
+  }
+}

@@ -1,2 +1,102 @@
-# Example config for pr-comment. Location: ~/.config/pr-comment/config.yaml (drop-ins: config.d/*.yaml). Keys are defined in docs/interface.md once designed.
+# pr-comment example config: every key with its built-in default.
+# Location: ~/.config/pr-comment/config.yaml (XDG_CONFIG_HOME respected), plus config.d/*.yaml in
+# lexical order; --config <path> reads another file (drop-ins are read next to it).
+# Drop-ins: maps merge, hook lists append, other lists replace.
+# Precedence: flags, then repos.<id>, then environment (scalar keys only), then config, then defaults.
+# Environment: PR_COMMENT_FORGECTL_BIN, PR_COMMENT_FORGECTL_CONFIG, PR_COMMENT_TIMEOUT and
+# PR_COMMENT_ME__NAME set the matching scalar keys. Lists, maps and allow_auto_approve cannot be
+# set from the environment.
+# Durations: seconds as a positive number, or <number><unit> with unit ms, s, m, h or d ("30s");
+# a bare number string ("90") means seconds; zero is refused.
+# Schema: schemas/config.json. Invalid config exits 2 (config_invalid), naming the key.
+
+# forgectl, the only tool pr-comment posts through: a bare name resolved only against absolute
+# PATH entries, or an absolute path. A missing forgectl exits 12 (tool_missing).
+forgectl_bin: forgectl
+
+# Passed to forgectl as --config. null: unset, so forgectl reads its own default config.
+forgectl_config: null
+
+# Budget per forgectl call, passed to it as --timeout.
+timeout: 120s
+
+me:
+  # Used for the default actor (human:<name> when stdin is a TTY) and for {user} in footers.
+  # null: the OS username.
+  name: null
+
+# Attribution line, put at the top of every review, comment, reply and approval body, followed by a
+# "---" line; the marker line <!-- pr-comment:v1 --> ends the body. The marker is always appended;
+# no setting removes it. Each template is one line of at most 512 characters that starts with an
+# ASCII letter or {, with no control or format characters and no <, `, [, ] or backslash.
+# Placeholders (any other {...} is invalid), each allowed in either template: {user} (the actor's
+# name for human:, me.name for auto:), {policy} (the actor's name for auto:, empty for human:),
+# {sha}, {decision_id}, {tool_version}. {user}, {policy} and {decision_id} are written as code
+# spans. Write literal braces as {{ and }}; a lone brace is invalid. The rendered line passes
+# through mention neutralizing like the rest of the body.
+footer:
+  # Used for a human: actor. false (human only) leaves out the attribution line, leaving only the
+  # marker.
+  human: "Drafted with AI assistance · posted by {user} after review · {sha}"
+  # Used for an auto: actor. A non-empty string; never false.
+  auto: "Posted automatically under policy {policy} · no human review · {sha}"
+
+# Every @ in untrusted posted text (code included) and every &#64;-style entity form becomes the
+# fullwidth ＠ unless its name is allowed; only applicable suggestions are exempt. A human may add
+# names for one interactive run with --allow-mention <name>.
+mentions:
+  # neutralize or allow (allow turns the pass off).
+  policy: neutralize
+  # Names that pass through, without the @, compared in ASCII lowercase on the whole name; a team
+  # as org/team.
+  allow: []
+
+gitlab:
+  # When to resolve a published GitLab review body's discussion, which can block a merge:
+  # non_blocking (after comment and approving reviews), never, or always (also after
+  # request-changes reviews).
+  resolve_body_thread: non_blocking
+
+# Let an auto: actor approve (approve, review --approve). Also needs at least one --decision-id.
+# Human actors are never affected.
+allow_auto_approve: false
+
+# Hooks, each a list of entries (default []). cmd runs through sh -c in its own process group,
+# with the JSON payload on stdin, in a private empty directory, without token variables (see
+# hook_env_deny). pre-post: exit 0 continues, 13 escalates (--override-escalation=pr-comment,
+# human-only, counts it as allow), any other failure or a timeout vetoes. post-post: cannot undo; failures are
+# logged and warned. Only post-post entries may set async. --hook <name>=<cmd> adds a hook for one
+# run, after the configured ones.
+# Remove the line `hooks: {}` to use the example below.
 hooks: {}
+# hooks:
+#   pre-post:
+#     - cmd: example-post-gate
+#       # Default 30s.
+#       timeout: 30s
+#       # Add each body's final text to the payload (default false).
+#       with_text: false
+#   post-post:
+#     - cmd: example-notify
+#       timeout: 30s
+#       # Run detached under a watchdog that enforces its timeout (default false).
+#       async: true
+#       with_text: false
+
+# Variables removed from hook environments, in addition to forgectl's ambient token list.
+hook_env_deny: []
+
+# Per-repo overrides, keyed by repo id (host/<full project path>, matched case-insensitively). Each
+# may override footer, mentions, gitlab and allow_auto_approve; they merge over the
+# global values, and unset keys inherit.
+# Remove the line `repos: {}` to use the example below.
+repos: {}
+# repos:
+#   gitlab.example.com/group/project:
+#     footer:
+#       human: "Reviewed by {user} · {sha}"
+#     mentions:
+#       allow: [example-team-bot]
+#     gitlab:
+#       resolve_body_thread: never
+#     allow_auto_approve: false

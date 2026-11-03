@@ -1,0 +1,391 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pr-comment/hooks/pre-post.json",
+  "title": "pre-post hook payload (stdin)",
+  "description": "Once per forgectl write, after confirmation and before the write (and, for the first write, before the attempted audit record). Exit 0 continues, 13 escalates, any other non-zero exit or a timeout vetoes. A decision_id in stdout is recorded in the audit outcome's hook_decision_id and passed to that write's forgectl call.",
+  "type": "object",
+  "properties": {
+    "tool": {
+      "const": "pr-comment"
+    },
+    "hook": {
+      "const": "pre-post"
+    },
+    "object_type": {
+      "const": "pr"
+    },
+    "object_id": {
+      "$ref": "../defs.json#/$defs/pr",
+      "description": "The PR, #N form."
+    },
+    "repo": {
+      "$ref": "../defs.json#/$defs/repo_id"
+    },
+    "action": {
+      "enum": [
+        "review",
+        "approve",
+        "comment",
+        "reply",
+        "resolve",
+        "unresolve"
+      ],
+      "description": "review for review --approve too; event says which kind. resolve for the GitLab body-thread follow-up too."
+    },
+    "actor": {
+      "$ref": "../defs.json#/$defs/actor"
+    },
+    "decision_ids": {
+      "$ref": "../defs.json#/$defs/decision_ids",
+      "description": "The caller's --decision-id values plus ids from earlier hooks' stdout; at most 32."
+    },
+    "attempt_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{8,64}$",
+      "description": "The run's attempt_id, shared by its audit record pair."
+    },
+    "write_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Position of this forgectl write in the run (the audit outcome's writes[].index)."
+    },
+    "plan_sha256": {
+      "oneOf": [
+        {
+          "$ref": "../defs.json#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The run's plan_sha256 (also on the follow-up resolve of a posting command); null for the resolve and unresolve commands."
+    },
+    "override_escalation": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "pr-comment",
+          "forgectl"
+        ]
+      },
+      "uniqueItems": true,
+      "description": "The scopes given to --override-escalation; [] when none."
+    },
+    "head_sha": {
+      "$ref": "../defs.json#/$defs/sha",
+      "description": "The pinned head; comment and reply: show's head (or --expected-head); resolve and unresolve: the comments read's head."
+    },
+    "anchor_head": {
+      "oneOf": [
+        {
+          "$ref": "../defs.json#/$defs/sha"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "review: the draft's anchor.head_sha; null otherwise."
+    },
+    "base_ref": {
+      "oneOf": [
+        {
+          "$ref": "../defs.json#/$defs/base_ref"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Untrusted: the pinned base (comment and reply: show's base); null for resolve and unresolve."
+    },
+    "event": {
+      "enum": [
+        "comment",
+        "request_changes",
+        "approve",
+        null
+      ],
+      "description": "review and approve; null otherwise."
+    },
+    "dedupe_key": {
+      "oneOf": [
+        {
+          "$ref": "../defs.json#/$defs/dedupe_key"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "null only for resolve and unresolve."
+    },
+    "counts": {
+      "$ref": "../defs.json#/$defs/counts"
+    },
+    "bodies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "pattern": "^(?:body|inline:[A-Za-z0-9._-]{1,64})$",
+            "description": "body, or inline:<finding id>."
+          },
+          "sha256": {
+            "$ref": "../defs.json#/$defs/sha256",
+            "description": "Of the final UTF-8 text handed to forgectl."
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "text": {
+            "type": "string",
+            "x-untrusted": true,
+            "description": "Untrusted: the body's final text; only with with_text: true."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "sha256",
+          "bytes"
+        ],
+        "description": "One body handed to forgectl. Never holds text."
+      },
+      "description": "Empty only for resolve and unresolve."
+    },
+    "to": {
+      "oneOf": [
+        {
+          "$ref": "../defs.json#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "reply: the --to id; null otherwise."
+    },
+    "thread_id": {
+      "oneOf": [
+        {
+          "$ref": "../defs.json#/$defs/thread_id"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "resolve and unresolve; null otherwise."
+    },
+    "thread_author_is_self": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "resolve and unresolve: whether the thread's first comment is by the authenticated account; null otherwise or when unknown."
+    },
+    "thread_path": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "x-untrusted": true,
+      "description": "Untrusted: resolve and unresolve: the thread's file path; null otherwise or for a thread without one."
+    },
+    "thread_line": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "description": "resolve and unresolve: the thread's line; null otherwise or for a thread without one."
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "tool",
+    "hook",
+    "object_type",
+    "object_id",
+    "repo",
+    "action",
+    "actor",
+    "decision_ids",
+    "attempt_id",
+    "write_index",
+    "plan_sha256",
+    "override_escalation",
+    "head_sha",
+    "anchor_head",
+    "base_ref",
+    "event",
+    "dedupe_key",
+    "counts",
+    "bodies",
+    "to",
+    "thread_id",
+    "thread_author_is_self",
+    "thread_path",
+    "thread_line"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "enum": [
+              "review",
+              "approve"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "event": {
+            "type": "string"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "event": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "approve"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "event": {
+            "const": "approve"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "review"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "anchor_head": {
+            "type": "string"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "anchor_head": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "reply"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "to": {
+            "type": "string"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "to": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "enum": [
+              "resolve",
+              "unresolve"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "thread_id": {
+            "type": "string"
+          },
+          "dedupe_key": {
+            "type": "null"
+          },
+          "bodies": {
+            "maxItems": 0
+          },
+          "base_ref": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "thread_id": {
+            "type": "null"
+          },
+          "dedupe_key": {
+            "type": "string"
+          },
+          "bodies": {
+            "minItems": 1
+          },
+          "base_ref": {
+            "type": "string"
+          },
+          "plan_sha256": {
+            "type": "string"
+          },
+          "thread_author_is_self": {
+            "type": "null"
+          },
+          "thread_path": {
+            "type": "null"
+          },
+          "thread_line": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

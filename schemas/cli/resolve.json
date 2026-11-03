@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pr-comment/cli/resolve.json",
+  "title": "resolve output",
+  "description": "Printed with --json on exit 0 and also when a thread failed (the exit code and error are then the first failing thread's). On a --dry-run, changed and resolved are the intended change.",
+  "type": "object",
+  "properties": {
+    "pr": {
+      "$ref": "../defs.json#/$defs/pr"
+    },
+    "action": {
+      "const": "resolve"
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "threads": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "thread_id": {
+            "$ref": "../defs.json#/$defs/thread_id"
+          },
+          "resolved": {
+            "enum": [
+              true,
+              null
+            ],
+            "description": "The thread's state after the command (on a --dry-run, the intended state); null on failure and for a thread not attempted."
+          },
+          "changed": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "true, false (pr-comment's read found the thread already in the requested state: no write), or null (a thread pr-comment could not see before the write, because the listing was incomplete; also on failure and for a thread not attempted)."
+          },
+          "error": {
+            "oneOf": [
+              {
+                "$ref": "../defs.json#/$defs/error"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null, or an error object as in the envelope."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "thread_id",
+          "resolved",
+          "changed",
+          "error"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "changed": {
+                  "enum": [
+                    true,
+                    false
+                  ]
+                }
+              },
+              "required": [
+                "changed"
+              ]
+            },
+            "then": {
+              "properties": {
+                "resolved": {
+                  "const": true
+                },
+                "error": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "minItems": 1,
+      "description": "One entry per --thread, in the given order."
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "pr",
+    "action",
+    "dry_run",
+    "threads"
+  ]
+}

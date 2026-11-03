@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pr-comment/cli/draft-new.json",
+  "title": "draft new output",
+  "description": "draft new prints a review draft on stdout (with or without --json); it writes nothing.",
+  "$ref": "../review-draft.json"
+}
