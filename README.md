@@ -33,7 +33,7 @@ pr-comment review <pr> --draft-file d.json
 
 | Command | Purpose |
 |---|---|
-| `pr-comment review <pr> --draft-file <path>\|- [--approve] [--reanchor-to <sha>] [--dedupe-key <k>] [--allow-mention <name>]...` | Post a review from a draft. |
+| `pr-comment review <pr> --draft-file <path>\|- [--approve] [--reanchor-to <sha>] [--expected-head <sha>] [--dedupe-key <k>] [--allow-mention <name>]...` | Post a review from a draft (`--expected-head` is required with `--approve` for an `auto:` actor). |
 | `pr-comment comment <pr> --body-file <path>\|- [--expected-head <sha>] [--dedupe-key <k>] [--allow-mention <name>]...` | Post a general comment. |
 | `pr-comment reply <pr> --to <id> --body-file <path>\|- [--expected-head <sha>] [--dedupe-key <k>] [--allow-mention <name>]...` | Reply to a comment, thread or review. |
 | `pr-comment approve <pr> [--body-file <path>\|-] [--expected-head <sha>] [--expected-base <ref>] [--dedupe-key <k>] [--allow-mention <name>]...` | Approve at a pinned head and base (both required unless interactive). |
