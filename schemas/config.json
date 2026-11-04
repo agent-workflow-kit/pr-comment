@@ -1,12 +1,317 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "pr-comment/config",
+  "$id": "pr-comment/config.json",
   "title": "pr-comment config",
+  "description": "~/.config/pr-comment/config.yaml (XDG respected) plus config.d/*.yaml in lexical order. Invalid config exits 2 (config_invalid), naming the key. Drop-ins: maps merge, hook lists append, other lists replace. Precedence: flags, then repos.<id>, then environment (top-level scalars only), then config, then defaults.",
   "type": "object",
   "properties": {
+    "forgectl_bin": {
+      "type": "string",
+      "pattern": "^(/.*|[^/]+)$",
+      "default": "forgectl",
+      "description": "A bare name resolved only against absolute PATH entries, or an absolute path."
+    },
+    "forgectl_config": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "pattern": "^[^-]",
+      "default": null,
+      "description": "Passed to forgectl as --config=<path>; must not start with a dash; null: unset."
+    },
+    "timeout": {
+      "$ref": "#/$defs/duration",
+      "default": "120s",
+      "description": "Budget per forgectl call, passed as --timeout."
+    },
+    "me": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Za-z0-9._@-]{1,64}$",
+          "default": null,
+          "description": "Used for the default actor and {user}; null: the OS username."
+        }
+      },
+      "additionalProperties": false,
+      "required": [],
+      "default": {}
+    },
+    "footer": {
+      "type": "object",
+      "properties": {
+        "human": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 512,
+              "pattern": "^(?=[A-Za-z{])(?:[^{}<`\\[\\]\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\{\\{|\\}\\}|\\{(?:user|policy|sha|decision_id|tool_version)\\})*$"
+            },
+            {
+              "const": false
+            }
+          ],
+          "description": "Attribution line for a human: actor, or false to leave out the attribution line and its --- (only the marker remains).",
+          "default": "Drafted with AI assistance · posted by {user} after review · {sha}"
+        },
+        "auto": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^(?=[A-Za-z{])(?:[^{}<`\\[\\]\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\{\\{|\\}\\}|\\{(?:user|policy|sha|decision_id|tool_version)\\})*$",
+          "description": "Attribution line for an auto: actor; never false.",
+          "default": "Posted automatically under policy {policy} · no human review · {sha}"
+        }
+      },
+      "additionalProperties": false,
+      "required": [],
+      "description": "Each template is one line of at most 512 characters, starts with an ASCII letter or {, and contains no character of category Cc or Cf (Cf is checked in code), no forgectl separator, and no <, backtick, [, ] or backslash. Placeholders (closed set, each allowed in either template): {user} (the actor's name for human:, me.name for auto:), {policy} (the actor's name for auto:, empty for human:), {sha}, {decision_id}, {tool_version}; literal braces are {{ and }}, a lone brace is invalid. {user}, {policy} and {decision_id} are written as code spans. The rendered line passes through mention neutralizing. The attribution line goes at the top of the body; the marker line is always appended as the last line.",
+      "default": {}
+    },
+    "mentions": {
+      "type": "object",
+      "properties": {
+        "policy": {
+          "enum": [
+            "neutralize",
+            "allow"
+          ],
+          "description": "neutralize replaces every @ in untrusted text (code included), and every entity form of @, with the fullwidth U+FF20 unless its name is allowed; only applicable suggestions are exempt. allow turns the pass off.",
+          "default": "neutralize"
+        },
+        "allow": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mention_name"
+          },
+          "description": "Names that pass through, without the @, compared in ASCII lowercase on the whole name; a team as org/team.",
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "required": [],
+      "default": {}
+    },
+    "gitlab": {
+      "type": "object",
+      "properties": {
+        "resolve_body_thread": {
+          "enum": [
+            "non_blocking",
+            "never",
+            "always"
+          ],
+          "description": "When to resolve a published review body's discussion: non_blocking (after comment and approving reviews), never, or always (also after request-changes reviews).",
+          "default": "non_blocking"
+        }
+      },
+      "additionalProperties": false,
+      "required": [],
+      "default": {}
+    },
+    "allow_auto_approve": {
+      "type": "boolean",
+      "description": "Let an auto: actor approve (with at least one --decision-id).",
+      "default": false
+    },
+    "hook_env_deny": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "default": [],
+      "description": "Extra environment variables removed from hook processes, in addition to forgectl's ambient token list."
+    },
     "hooks": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "pre-post": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hook_entry_pre"
+          },
+          "default": []
+        },
+        "post-post": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hook_entry_post"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "required": [],
+      "default": {}
+    },
+    "repos": {
+      "type": "object",
+      "default": {},
+      "description": "Per-repo overrides, keyed by repo id (matched case-insensitively against forgectl show's repo): footer, mentions, gitlab and allow_auto_approve. They merge over the global values; unset keys inherit.",
+      "patternProperties": {
+        "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?::[0-9]{1,5})?(?:/(?!\\.\\.?(?:/|$))[A-Za-z0-9._-]+)+$": {
+          "type": "object",
+          "properties": {
+            "footer": {
+              "type": "object",
+              "properties": {
+                "human": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 512,
+                      "pattern": "^(?=[A-Za-z{])(?:[^{}<`\\[\\]\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\{\\{|\\}\\}|\\{(?:user|policy|sha|decision_id|tool_version)\\})*$"
+                    },
+                    {
+                      "const": false
+                    }
+                  ],
+                  "description": "Attribution line for a human: actor, or false to leave out the attribution line and its --- (only the marker remains)."
+                },
+                "auto": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "pattern": "^(?=[A-Za-z{])(?:[^{}<`\\[\\]\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\{\\{|\\}\\}|\\{(?:user|policy|sha|decision_id|tool_version)\\})*$",
+                  "description": "Attribution line for an auto: actor; never false."
+                }
+              },
+              "additionalProperties": false,
+              "required": [],
+              "description": "Each template is one line of at most 512 characters, starts with an ASCII letter or {, and contains no character of category Cc or Cf (Cf is checked in code), no forgectl separator, and no <, backtick, [, ] or backslash. Placeholders (closed set, each allowed in either template): {user} (the actor's name for human:, me.name for auto:), {policy} (the actor's name for auto:, empty for human:), {sha}, {decision_id}, {tool_version}; literal braces are {{ and }}, a lone brace is invalid. {user}, {policy} and {decision_id} are written as code spans. The rendered line passes through mention neutralizing. The attribution line goes at the top of the body; the marker line is always appended as the last line."
+            },
+            "mentions": {
+              "type": "object",
+              "properties": {
+                "policy": {
+                  "enum": [
+                    "neutralize",
+                    "allow"
+                  ],
+                  "description": "neutralize replaces every @ in untrusted text (code included), and every entity form of @, with the fullwidth U+FF20 unless its name is allowed; only applicable suggestions are exempt. allow turns the pass off."
+                },
+                "allow": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/mention_name"
+                  },
+                  "description": "Names that pass through, without the @, compared in ASCII lowercase on the whole name; a team as org/team."
+                }
+              },
+              "additionalProperties": false,
+              "required": []
+            },
+            "gitlab": {
+              "type": "object",
+              "properties": {
+                "resolve_body_thread": {
+                  "enum": [
+                    "non_blocking",
+                    "never",
+                    "always"
+                  ],
+                  "description": "When to resolve a published review body's discussion: non_blocking (after comment and approving reviews), never, or always (also after request-changes reviews)."
+                }
+              },
+              "additionalProperties": false,
+              "required": []
+            },
+            "allow_auto_approve": {
+              "type": "boolean",
+              "description": "Let an auto: actor approve (with at least one --decision-id)."
+            }
+          },
+          "additionalProperties": false,
+          "required": []
+        }
+      },
+      "additionalProperties": false
     }
   },
-  "additionalProperties": true
+  "additionalProperties": false,
+  "required": [],
+  "$defs": {
+    "duration": {
+      "anyOf": [
+        {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^(?=.*[1-9])[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d)$"
+        },
+        {
+          "type": "string",
+          "pattern": "^(?=.*[1-9])[0-9]+(?:\\.[0-9]+)?$"
+        }
+      ],
+      "description": "Seconds as a positive number, a string <number><unit> with unit ms, s, m, h or d (e.g. '30s'), or a bare number string meaning seconds; zero is refused."
+    },
+    "hook_entry_post": {
+      "type": "object",
+      "properties": {
+        "cmd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Run through sh -c in its own process group."
+        },
+        "timeout": {
+          "$ref": "#/$defs/duration",
+          "default": "30s"
+        },
+        "async": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run detached under a watchdog that enforces its timeout."
+        },
+        "with_text": {
+          "type": "boolean",
+          "default": false,
+          "description": "Add each body's final text to the payload's bodies."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cmd"
+      ],
+      "description": "Cannot undo; failures are logged and warned, never fatal."
+    },
+    "hook_entry_pre": {
+      "type": "object",
+      "properties": {
+        "cmd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Run through sh -c in its own process group."
+        },
+        "timeout": {
+          "$ref": "#/$defs/duration",
+          "default": "30s"
+        },
+        "with_text": {
+          "type": "boolean",
+          "default": false,
+          "description": "Add each body's final text to the payload's bodies."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cmd"
+      ],
+      "description": "Exit 0 continues; 13 escalates; any other non-zero exit or a timeout vetoes."
+    },
+    "mention_name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$",
+      "description": "A name without the @; a team as org/team. Matched in ASCII lowercase."
+    }
+  }
 }

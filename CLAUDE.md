@@ -13,7 +13,9 @@ shared contracts package.
 1. `../awkit-docs/architecture.md`: this tool's §5.2 entry and its §20 entry (constraints and open
    topics), plus the cross-cutting sections listed in `docs/design.md`.
 2. `../awkit-docs/design-guide.md`: the conventions every awkit tool follows.
-3. `docs/design.md`: this tool's design doc.
+3. `docs/interface.md`: the single normative source for this tool's rules.
+4. `docs/design.md`: decisions, modules and test strategy; `docs/plan.md`: the staged plan.
+5. `../forgectl/docs/interface.md`: the only lower tool; pr-comment posts only through it.
 
 ## Rules
 
@@ -37,11 +39,11 @@ shared contracts package.
 
 ## Workflow
 
-1. Start with a design session that resolves the open topics in `docs/design.md` and records
-   decisions there.
-2. Write `docs/interface.md` and `schemas/` (the interface spec), and register it in
-   `../awkit-docs/interface-registry.md`.
-3. Implement test-first.
+1. The design is done (interface 0.1.0-design). Implement the GitHub issues in plan order,
+   test-first; `docs/interface.md` wins over any other document.
+2. Interface changes update `docs/interface.md`, `schemas/` and
+   `../awkit-docs/interface-registry.md` together.
+3. pr-comment never calls `gh` or `glab`; every host operation goes through forgectl.
 
 ## Repository workflow
 

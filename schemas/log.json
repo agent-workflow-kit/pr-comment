@@ -1,33 +1,71 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "pr-comment/log",
+  "$id": "pr-comment/log.json",
   "title": "pr-comment log.jsonl record",
+  "description": "Usage errors, refusals, declined dialogs, vetoes and escalations before any write, moved findings with reasons, degraded suggestions, pre-check rounds, warnings and config warnings. A log write failure warns only. No bodies.",
   "type": "object",
   "properties": {
     "ts": {
-      "type": "string",
-      "format": "date-time"
+      "$ref": "defs.json#/$defs/ts"
     },
     "level": {
-      "type": "string",
       "enum": [
-        "debug",
-        "info",
+        "error",
         "warn",
-        "error"
-      ]
+        "info",
+        "debug"
+      ],
+      "description": "error for exit 1; warn for refusals, vetoes, escalations, declined dialogs and exit 12; info otherwise; debug with --verbose."
     },
     "event": {
-      "type": "string"
+      "enum": [
+        "usage_error",
+        "refused",
+        "declined",
+        "vetoed",
+        "escalated",
+        "finding_moved",
+        "suggestion_degraded",
+        "precheck",
+        "warning",
+        "config_warning",
+        "neutralizing_mismatch"
+      ]
     },
-    "message": {
-      "type": "string"
+    "pr": {
+      "oneOf": [
+        {
+          "$ref": "defs.json#/$defs/pr"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "attempt_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[A-Za-z0-9_-]{8,64}$",
+      "description": "The run's attempt_id; null before one exists."
+    },
+    "details": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "x-untrusted": true,
+      "description": "Untrusted: may hold host or draft text. Never bodies or secrets."
     }
   },
+  "additionalProperties": false,
   "required": [
     "ts",
     "level",
-    "event"
-  ],
-  "additionalProperties": true
+    "event",
+    "pr",
+    "attempt_id",
+    "details"
+  ]
 }
