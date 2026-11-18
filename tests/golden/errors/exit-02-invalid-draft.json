@@ -1,0 +1,24 @@
+{
+  "error": {
+    "code": "invalid_draft",
+    "decision_ids": [],
+    "details": {
+      "errors": [
+        {
+          "message": "bad",
+          "pointer": "/body"
+        }
+      ]
+    },
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": null,
+    "hook_stderr": null,
+    "landed": null,
+    "lower_error": null,
+    "message": "draft is invalid",
+    "reason": null,
+    "retry": null,
+    "retry_after": null
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "error": {
+    "code": "rate_limited",
+    "decision_ids": [],
+    "details": null,
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": null,
+    "hook_stderr": null,
+    "landed": false,
+    "lower_error": {
+      "error": {
+        "code": "rate_limited",
+        "message": "slow down"
+      }
+    },
+    "message": "rate limited",
+    "reason": null,
+    "retry": "same_command",
+    "retry_after": 60
+  }
+}

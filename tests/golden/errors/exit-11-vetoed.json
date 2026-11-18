@@ -1,0 +1,17 @@
+{
+  "error": {
+    "code": "vetoed",
+    "decision_ids": [],
+    "details": null,
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": "pre-post",
+    "hook_stderr": "no weekends",
+    "landed": null,
+    "lower_error": null,
+    "message": "hook vetoed the post",
+    "reason": null,
+    "retry": null,
+    "retry_after": null
+  }
+}
