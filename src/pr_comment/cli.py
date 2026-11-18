@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, NoReturn, cast
 
 from . import __version__
+from .actor import ActorError, resolve_run, stream_is_tty
 
 PROG = "pr-comment"
 DESCRIPTION = "Posts reviews, replies and comments to PRs, safely and with attribution."
@@ -332,8 +333,8 @@ def _add_common_posting_flags(parser: argparse.ArgumentParser, *, base: bool = F
     if base:
         parser.add_argument("--expected-base", metavar="REF")
     parser.add_argument("--dedupe-key", metavar="KEY")
-    # TODO(#16): validate and apply the mention allowlist; TODO(#5): require a human actor and
-    # an interactive run for --allow-mention.
+    # TODO(#16): validate and apply the mention allowlist. The human-only, interactive-only rule
+    # for --allow-mention is enforced in actor.resolve_run.
     parser.add_argument("--allow-mention", action=AppendAction, default=[], metavar="NAME")
 
 
@@ -397,9 +398,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def validate_args(args: argparse.Namespace) -> None:
     """Rules argparse cannot express. Raises ``UsageError``."""
-    # TODO(#5): resolve the actor, detect interactive runs, apply the human-only flag rules
-    # (--allow-mention, --override-escalation) and refuse `--body-file -` / `--draft-file -`
-    # when stdin is a TTY.
+    try:
+        args.run = resolve_run(
+            args, stdin_tty=stream_is_tty(sys.stdin), stderr_tty=stream_is_tty(sys.stderr)
+        )
+    except ActorError as exc:
+        raise UsageError(str(exc)) from exc
     # TODO(#6): the grammars enforced at parse time (--actor, --decision-id, --expect-plan,
     # --hook, --override-escalation and the thread cap) move into the shared validator.
     if args.expect_plan is not None and args.command not in POSTING_COMMANDS:
