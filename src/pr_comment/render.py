@@ -10,10 +10,11 @@ The neutralizers are applied in rendering order (path, title, body), so ``Mentio
 reports names in the order the text appears. The body counts are taken from ``finding_parts``
 (the parts as given, before any of this) with ``neutralize.count_parts``.
 
-Not here: suggestion blocks (TODO(#19): the caller passes the rendered block as
-``suggestion_block``), the attribution line, the marker, the layout around the parts and forgectl's
-neutralizing (TODO(#20)), and the re-anchoring that decides a moved finding's anchor and reason
-(TODO(#22)).
+Suggestion blocks are ``render_suggestion`` (applicable, degraded or moved); the caller of
+``render_finding_text`` passes the block as ``suggestion_block``, and ``render_moved_entry`` renders
+a moved finding's own. Not here: the attribution line, the marker, the layout around the parts and
+forgectl's neutralizing (TODO(#20)), and the re-anchoring that decides a moved finding's anchor and
+reason (TODO(#22)).
 """
 
 from __future__ import annotations
@@ -24,10 +25,10 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from pr_comment import textpipe
-from pr_comment.display import sanitize_line
+from pr_comment.display import is_marked, sanitize_line, sanitize_text
 from pr_comment.draft import SEVERITIES
 from pr_comment.mentions import MentionNeutralizer
-from pr_comment.neutralize import neutralize_characters
+from pr_comment.neutralize import neutralize_characters, neutralize_suggestion_lines
 
 FILE_LEVEL_HEADING: Final = "### File-level findings"
 MOVED_HEADING: Final = "### Findings that could not be anchored"
@@ -184,7 +185,8 @@ def render_finding_text(
     suggestion_block: str | None = None,
 ) -> str:
     """The bold prefix (when present), a blank line, the body and the suggestion block (when
-    given). ``suggestion_block`` is pr-comment's own text (TODO(#19)) and is added as it is."""
+    given). ``suggestion_block`` is pr-comment's own text (``render_suggestion``) and is added
+    as it is."""
     pieces: list[str] = []
     prefix = render_prefix(finding, mentions)
     if prefix is not None:
@@ -195,6 +197,131 @@ def render_finding_text(
     if suggestion_block:
         pieces.append(suggestion_block)
     return _SEPARATOR.join(pieces)
+
+
+SUGGESTION_HOSTS: Final = ("github", "gitlab")
+DEGRADE_NOTE: Final = (
+    "_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._"
+)
+MOVED_NOTE: Final = "_Suggestion shown as code: this finding could not be posted inline._"
+
+# cmark-gfm (GitHub's engine) keeps a fence length in one byte: a fence of 256 or more characters
+# wraps and a shorter run in the content then closes it. No fence is longer than this.
+MAX_FENCE: Final = 255
+# Shown inside a run of backticks that no fence can enclose (both backtick and tilde runs of
+# 255 or more in one suggestion), every MAX_FENCE - 1 characters; an ASCII ``<`` only in ours.
+_RUN_SPLIT: Final = "<run split>"
+_FENCE_RUN_RE: Final = re.compile(r"`{3,}|~{3,}")
+
+
+@dataclass(frozen=True)
+class SuggestionBlock:
+    """A rendered suggestion: the text to add to the finding text and, for an applicable
+    suggestion that was degraded, the reason (None for an applicable or a moved one)."""
+
+    block: str
+    degraded: str | None
+
+
+def _suggestion_lines(finding: Mapping[str, Any]) -> list[str] | None:
+    """The finding's suggestion lines after step 1, or None when it has no suggestion."""
+    suggestion = finding.get("suggestion")
+    if suggestion is None:
+        return None
+    if not isinstance(suggestion, Mapping) or set(suggestion) != {"lines"}:  # pyright: ignore[reportUnknownArgumentType]
+        raise ValueError("suggestion must be an object with only lines")
+    lines: Any = suggestion["lines"]  # pyright: ignore[reportUnknownVariableType]
+    if not isinstance(lines, list) or not all(isinstance(line, str) for line in lines):  # pyright: ignore[reportUnknownVariableType]
+        raise ValueError("suggestion lines must be a list of str")
+    return [_one_line(line, "suggestion line") for line in lines]  # pyright: ignore[reportUnknownVariableType]
+
+
+def degrade_reason(lines: Sequence[str]) -> str | None:
+    """The first reason an applicable suggestion must be degraded, in the order
+    ``invisible_chars``, ``fence``, ``slash_line``, or None."""
+    if any(is_marked(ch) for line in lines for ch in line):
+        return "invisible_chars"
+    if any(_FENCE_RUN_RE.search(line) for line in lines):
+        return "fence"
+    if any(line.startswith("/") for line in lines):
+        return "slash_line"
+    return None
+
+
+def _longest_run(lines: Sequence[str], char: str) -> int:
+    run = re.compile(re.escape(char) + "+")
+    return max((len(m.group()) for line in lines for m in run.finditer(line)), default=0)
+
+
+def _fence_for(lines: Sequence[str]) -> tuple[str, int | None]:
+    """The fence character and length for ``lines``: backticks one more than the longest run,
+    else (when that is over ``MAX_FENCE``) tildes the same way, else no size."""
+    for char in "`~":
+        size = max(3, _longest_run(lines, char) + 1)
+        if size <= MAX_FENCE:
+            return char, size
+    return "`", None
+
+
+def _split_long_run(match: re.Match[str]) -> str:
+    run = match.group()
+    return _RUN_SPLIT.join(run[i : i + MAX_FENCE - 1] for i in range(0, len(run), MAX_FENCE - 1))
+
+
+def _text_block(lines: Sequence[str], mentions: MentionNeutralizer) -> str:
+    """The lines as a ``text`` block: mentions, then ``<`` and ``![``, then the markers (which
+    are not neutralized), in a backtick fence one more than the longest run in the content."""
+    shown = [
+        sanitize_text(line)
+        for line in neutralize_suggestion_lines(
+            (mentions.neutralize(line) for line in lines), applicable=False
+        )
+    ]
+    char, size = _fence_for(shown)
+    if size is None:
+        shown = [_BACKTICK_RUN_RE.sub(_split_long_run, line) for line in shown]
+        char, size = "`", max(3, _longest_run(shown, "`") + 1)
+    fence = char * size
+    return "\n".join([fence + "text", *shown, fence])
+
+
+def render_suggestion(
+    finding: Mapping[str, Any],
+    mentions: MentionNeutralizer,
+    *,
+    host: str,
+    moved: bool = False,
+) -> SuggestionBlock | None:
+    """The finding's suggestion block, or None when it has none.
+
+    An applicable suggestion (an inline finding on the right side with a line) is a three-backtick
+    fence: ``suggestion`` on GitHub, ``suggestion:-N+0`` on GitLab with ``N = line - start_line``;
+    its lines are raw. When a line has an invisible character, a fence run or a leading ``/``, or
+    when ``moved`` is true, it is a ``text`` block with a note before it and its lines neutralized
+    and marked; only the first case reports a reason. Text pipeline step 6's leading space for a
+    ``/`` line is forgectl's pre-applied neutralizing (TODO(#20)).
+    """
+    if host not in SUGGESTION_HOSTS:
+        raise ValueError("host must be github or gitlab")
+    lines = _suggestion_lines(finding)
+    if lines is None:
+        return None
+    if moved:
+        return SuggestionBlock(MOVED_NOTE + _SEPARATOR + _text_block(lines, mentions), None)
+    line: Any = finding.get("line")
+    start: Any = finding.get("start_line")
+    if not _is_int(line):
+        raise ValueError("an applicable suggestion needs a line")
+    if start is not None and (not _is_int(start) or start >= line):
+        raise ValueError("start_line must be a positive integer below line")
+    if finding.get("side") not in (None, "right"):
+        raise ValueError("a suggestion is only for the right side")
+    reason = degrade_reason(lines)
+    if reason is not None:
+        return SuggestionBlock(DEGRADE_NOTE + _SEPARATOR + _text_block(lines, mentions), reason)
+    offset = 0 if start is None else int(line) - int(start)
+    info = "suggestion" if host == "github" else f"suggestion:-{offset}+0"
+    return SuggestionBlock("\n".join(["```" + info, *lines, "```"]), None)
 
 
 @dataclass(frozen=True)
@@ -216,8 +343,8 @@ def last_known_anchor(a: Anchor, b: Anchor | None, *, failed_validation_at_b: bo
 
 @dataclass(frozen=True)
 class MovedFinding:
-    """A finding that went to the review body, its reason, its last anchor and its rendered
-    suggestion block, if any (TODO(#19)).
+    """A finding that went to the review body, its reason, its last anchor and, optionally, its
+    rendered suggestion block (when None, ``render_moved_entry`` renders the finding's own).
 
     ``anchor.line=None`` renders as a file-level span. The caller must pass the line for a finding
     that was inline (TODO(#22): the re-anchoring that decides the anchor)."""
@@ -238,6 +365,11 @@ def render_moved_entry(moved: MovedFinding, mentions: MentionNeutralizer) -> str
     span = _finding_span(moved.finding, mentions, moved.anchor.line, moved.anchor.start_line)
     entry = f"{span} (at {moved.anchor.sha[:12]}) — {REASON_TEXT[moved.reason]}"
     text = render_finding_text(moved.finding, mentions, suggestion_block=moved.suggestion_block)
+    if moved.suggestion_block is None:
+        # After the title and body, so mentions are reported in the order the text appears.
+        shown = render_suggestion(moved.finding, mentions, host="github", moved=True)
+        if shown is not None:
+            text = _SEPARATOR.join([text, shown.block] if text else [shown.block])
     return _SEPARATOR.join([entry, text] if text else [entry])
 
 

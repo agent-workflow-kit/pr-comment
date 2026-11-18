@@ -1,0 +1,13 @@
+` src/a.py:8-10 ` (at 0123456789ab) — the commented line changed after this review was drafted
+
+**minor · T**
+
+Body text.
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+````text
+a
+```
+b<U+202E>
+````

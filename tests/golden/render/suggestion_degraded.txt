@@ -1,0 +1,72 @@
+# invisible_chars
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
+ok
+a<U+202E>b
+```
+
+---
+
+# invisible_chars
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
+x<U+00AD>y
+```
+
+---
+
+# invisible_chars
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
+x<U+3164>
+```
+
+---
+
+# fence
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+`````text
+````
+`````
+
+---
+
+# fence
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+````text
+```suggestion
+````
+
+---
+
+# slash_line
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
+ok
+/* c */
+```
+
+---
+
+# fence
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+````text
+```
+/x
+````
+
+---
+
+# invisible_chars
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
+<U+202E>
+```
