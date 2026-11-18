@@ -172,6 +172,13 @@ class Plan:
         before, after = self._flags()
         return [*before, "--dry-run", *after]
 
+    def write_args(self) -> list[str]:
+        """The real call's arguments for ``Gateway.call``: ``command()`` without the program, the
+        subcommand and ``--json``, which the gateway adds itself. The input is ``self.input``."""
+        before, after = self._flags()
+        tail = ["--override-escalation"] if self.override_forgectl else []
+        return [*before, "--yes", *after, *tail]
+
     def command(self) -> list[str]:
         """The real forgectl call (docs/interface.md, Review order step 9): with ``--json`` and
         ``--yes``; the input goes on stdin. ``--override-escalation`` only with the scope

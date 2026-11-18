@@ -399,3 +399,26 @@ def test_main_without_me_name_keeps_the_os_username(
 
 def _resolve_with_fake_os_user(args: argparse.Namespace, **kw: Any) -> RunContext:
     return resolve_run(args, os_user=lambda: "osuser", **kw)
+
+
+def test_the_default_me_name_is_never_read_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from pr_comment import cli
+
+    for variable in ("USER", "LOGNAME", "LNAME", "USERNAME"):
+        monkeypatch.setenv(variable, "not-the-os-user")
+    loaded = SimpleNamespace(config=SimpleNamespace(me=SimpleNamespace(name=None)))
+    expected = actor_mod.os_username()
+    if expected is None or not actor_mod.NAME_RE.fullmatch(expected):
+        expected = "unknown"
+    assert cli._me_name(loaded) == expected  # pyright: ignore[reportPrivateUsage]
+    assert cli._me_name(loaded) != "not-the-os-user"  # pyright: ignore[reportPrivateUsage]
+
+
+def test_the_me_name_grammar_has_one_definition() -> None:
+    from pr_comment import cli
+
+    assert cli.NAME_RE is actor_mod.NAME_RE

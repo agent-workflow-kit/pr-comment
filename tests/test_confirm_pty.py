@@ -41,9 +41,21 @@ def _show() -> dict[str, Any]:
     return ok("show", doc)
 
 
-def _script(forgectl: FakeForgectl, runs: int = 1) -> None:
+def _script(forgectl: FakeForgectl, runs: int = 1, *, write: bool = False) -> None:
+    """``runs`` runs up to the pre-check; with ``write`` the last one is confirmed and posts."""
     for _ in range(runs):
         forgectl.script(_show(), ok("review", h.post_doc("review", dry_run=True)))
+    if write:
+        forgectl.script(
+            ok("review", h.post_doc("review", ids=["gh:rc:RC_1"], review_id="gh:r:R_1"))
+        )
+
+
+def assert_one_confirmed_write(forgectl: FakeForgectl) -> None:
+    """The run was confirmed: the pre-check never carried ``--yes``, the one write did."""
+    (write,) = forgectl.writes()
+    assert "--yes" in write.argv
+    assert [c for c in forgectl.calls() if c.is_dry_run and "--yes" in c.argv] == []
 
 
 def _draft(tmp_path: Path, findings: list[dict[str, Any]], **kw: Any) -> str:
@@ -63,6 +75,14 @@ class Result:
         """The dialog up to the prompt (without the echo of the answer)."""
         text = self.terminal
         return text[: text.index(PROMPT)] if PROMPT in text else text
+
+
+def _prompt_is_up(terminal: bytes) -> bool:
+    """True when the real prompt is on the terminal: ``Post? [y/N] `` flush left. A draft's own text
+    can hold that string, but the dialog shows it behind its ``  | `` margin, never at the start
+    of a line; answering on such a match is early and the child discards the typed answer."""
+    lines = terminal.replace(b"\r\n", b"\n").split(b"\n")
+    return any(line.startswith(PROMPT.encode()) for line in lines)
 
 
 def run_cli(
@@ -150,9 +170,7 @@ def run_cli(
                 time.sleep(1.0)  # the child is blocked writing a dialog bigger than the pty holds
                 os.write(master, typeahead_midway)
                 typeahead_midway = b""
-            # The prompt is the last thing written, on a line of its own; a hostile body line that
-            # contains the prompt text (shown as "| Post? [y/N] y") must not trigger the answer.
-            if not acted and terminal.replace(b"\r\n", b"\n").endswith(b"\n" + PROMPT.encode()):
+            if not acted and _prompt_is_up(terminal):
                 acted = True
                 if send is not None:
                     os.kill(pid, send)
@@ -219,14 +237,16 @@ def assert_nothing_written(forgectl: FakeForgectl) -> None:
 # --- the answer --------------------------------------------------------------------------------
 
 
-def test_yes_confirms_and_the_run_stops_at_the_seam(tmp_path: Path, forgectl: FakeForgectl) -> None:
-    _script(forgectl, 2)
+def test_yes_confirms_and_the_dialog_shows_the_plan_that_is_posted(
+    tmp_path: Path, forgectl: FakeForgectl
+) -> None:
+    _script(forgectl, 2, write=True)
     plan = dry_run(tmp_path, forgectl)
     result = run_cli(tmp_path, forgectl, review_argv(tmp_path), answer=b"y\n")
-    assert result.code == 1 and result.document is not None
-    assert result.document["error"]["code"] == "internal"  # TODO(#29): the write order
+    assert result.code == 0 and result.document is not None
+    assert result.document["plan_sha256"] == plan["plan_sha256"] and result.document["ids"]
     assert PROMPT in result.terminal
-    assert_nothing_written(forgectl)
+    assert_one_confirmed_write(forgectl)
     # the dialog shows the real plan: its hash and every body, byte for byte
     text = result.dialog()
     assert f"plan_sha256 {plan['plan_sha256']}\n" in text
@@ -261,10 +281,10 @@ def _bodies(dialog: str) -> dict[str, str]:
     "answer", [b"y\n", b"Y\n", b"yes\n", b"YES\n", b"  yEs \t\n", b"\x0b yes \x0c\n"]
 )
 def test_yes_answers_confirm(tmp_path: Path, forgectl: FakeForgectl, answer: bytes) -> None:
-    _script(forgectl)
+    _script(forgectl, write=True)
     result = run_cli(tmp_path, forgectl, review_argv(tmp_path), answer=answer)
-    assert result.code == 1  # past the dialog; the seam ends the run
-    assert_nothing_written(forgectl)
+    assert result.code == 0  # past the dialog: the write was made
+    assert_one_confirmed_write(forgectl)
 
 
 @pytest.mark.parametrize(
@@ -321,15 +341,18 @@ def test_an_overlong_line_declines_and_is_not_left_for_the_shell(
     assert_nothing_written(forgectl)
 
 
-@pytest.mark.parametrize(("size", "code"), [(255, 1), (256, 1), (257, 13)])
+@pytest.mark.parametrize(("size", "code"), [(255, 0), (256, 0), (257, 13)])
 def test_the_answer_length_boundary_on_a_terminal(
     tmp_path: Path, forgectl: FakeForgectl, size: int, code: int
 ) -> None:
-    _script(forgectl)
+    _script(forgectl, write=code == 0)
     answer = b"y" + b" " * (size - 2) + b"\n"  # size bytes with the newline
     result = run_cli(tmp_path, forgectl, review_argv(tmp_path), answer=answer)
-    assert result.code == code  # 1: past the dialog, stopped at the seam
-    assert_nothing_written(forgectl)
+    assert result.code == code  # 0: confirmed and posted; 13: a too long answer declines
+    if code == 0:
+        assert_one_confirmed_write(forgectl)
+    else:
+        assert_nothing_written(forgectl)
 
 
 def test_typeahead_before_the_prompt_cannot_answer(tmp_path: Path, forgectl: FakeForgectl) -> None:
@@ -466,20 +489,20 @@ def test_an_auto_actor_on_a_terminal_is_not_offered_a_dialog(
 
 
 def test_yes_skips_the_dialog_and_never_prompts(tmp_path: Path, forgectl: FakeForgectl) -> None:
-    _script(forgectl)
+    _script(forgectl, write=True)
     result = run_cli(tmp_path, forgectl, review_argv(tmp_path, "--yes"), answer=None)
-    assert result.code == 1  # the seam: the write orders are later issues
+    assert result.code == 0  # --yes: confirmed without a dialog, and posted
     assert PROMPT not in result.terminal and "plan_sha256" not in result.terminal
-    assert_nothing_written(forgectl)
+    assert_one_confirmed_write(forgectl)
 
 
 def test_yes_with_an_auto_actor_is_accepted(tmp_path: Path, forgectl: FakeForgectl) -> None:
-    _script(forgectl)
+    _script(forgectl, write=True)
     argv = review_argv(tmp_path, "--yes", "--expected-head", A)
     argv[argv.index("human:alice")] = "auto:bot"
     result = run_cli(tmp_path, forgectl, argv, stdin="null", stderr="pipe", answer=None)
-    assert result.code == 1  # past the gate
-    assert_nothing_written(forgectl)
+    assert result.code == 0  # past the gate: posted
+    assert_one_confirmed_write(forgectl)
 
 
 def test_dry_run_needs_no_terminal_and_shows_no_dialog(
