@@ -1,0 +1,302 @@
+[
+  {
+    "action": "comment",
+    "actor": "auto:bot",
+    "actor_source": "flag",
+    "attempt_id": "abcDEF123_-xyz0000001",
+    "decision_id": [],
+    "inputs": {
+      "allowed_mentions": [],
+      "anchor_head": null,
+      "base_ref": "main",
+      "bodies": [
+        {
+          "bytes": 12,
+          "role": "body",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "config_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "config_path": null,
+      "counts": {
+        "file_level": 0,
+        "images": 0,
+        "inline": 0,
+        "invisible": 0,
+        "links": 0,
+        "mentions_neutralized": 0,
+        "moved": {
+          "base_changed": 0,
+          "changed": 0,
+          "diff_unavailable": 0,
+          "file_removed": 0,
+          "files_incomplete": 0,
+          "invalid_position": 0
+        },
+        "raw_html": 0,
+        "severity": {
+          "blocker": 0,
+          "info": 0,
+          "major": 0,
+          "minor": 0,
+          "nit": 0
+        },
+        "suggestions_degraded": 0
+      },
+      "dedupe_key": "k1",
+      "draft_id": null,
+      "draft_sha256": null,
+      "event": null,
+      "override_escalation": [],
+      "pinned_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "plan_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "reanchor_to": null,
+      "threads": [],
+      "to": null
+    },
+    "override": [],
+    "pr_id": "gh:pr:abc123",
+    "result": "attempted",
+    "stdin_tty": false,
+    "target": "example.com/acme/repo#7",
+    "tool": "pr-comment",
+    "ts": "2026-11-10T10:00:00.000Z",
+    "version": "0.1.0"
+  },
+  {
+    "action": "comment",
+    "actor": "auto:bot",
+    "actor_source": "flag",
+    "attempt_id": "abcDEF123_-xyz0000001",
+    "decision_id": [],
+    "hook_decision_id": [],
+    "inputs": {
+      "allowed_mentions": [],
+      "anchor_head": null,
+      "base_ref": "main",
+      "bodies": [
+        {
+          "bytes": 12,
+          "role": "body",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "config_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "config_path": null,
+      "counts": {
+        "file_level": 0,
+        "images": 0,
+        "inline": 0,
+        "invisible": 0,
+        "links": 0,
+        "mentions_neutralized": 0,
+        "moved": {
+          "base_changed": 0,
+          "changed": 0,
+          "diff_unavailable": 0,
+          "file_removed": 0,
+          "files_incomplete": 0,
+          "invalid_position": 0
+        },
+        "raw_html": 0,
+        "severity": {
+          "blocker": 0,
+          "info": 0,
+          "major": 0,
+          "minor": 0,
+          "nit": 0
+        },
+        "suggestions_degraded": 0
+      },
+      "dedupe_key": "k1",
+      "draft_id": null,
+      "draft_sha256": null,
+      "event": null,
+      "override_escalation": [],
+      "pinned_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "plan_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "reanchor_to": null,
+      "threads": [],
+      "to": null
+    },
+    "override": [],
+    "pr_id": "gh:pr:abc123",
+    "result": "done",
+    "stdin_tty": false,
+    "target": "example.com/acme/repo#7",
+    "tool": "pr-comment",
+    "ts": "2026-11-10T10:00:05.000Z",
+    "version": "0.1.0",
+    "writes": [
+      {
+        "action": "comment",
+        "dedupe_key": "k1",
+        "index": 0,
+        "lower": {
+          "already_posted": false,
+          "code": null,
+          "exit": 0,
+          "ids": [
+            "gh:ic:x1"
+          ],
+          "reason": null,
+          "review_id": null,
+          "thread_ids": []
+        },
+        "result": "done",
+        "thread_id": null,
+        "ts": "2026-11-10T10:00:05.000Z"
+      }
+    ]
+  },
+  {
+    "action": "comment",
+    "actor": "auto:bot",
+    "actor_source": "flag",
+    "attempt_id": "abcDEF123_-xyz0000002",
+    "decision_id": [],
+    "inputs": {
+      "allowed_mentions": [],
+      "anchor_head": null,
+      "base_ref": "main",
+      "bodies": [
+        {
+          "bytes": 12,
+          "role": "body",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "config_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "config_path": null,
+      "counts": {
+        "file_level": 0,
+        "images": 0,
+        "inline": 0,
+        "invisible": 0,
+        "links": 0,
+        "mentions_neutralized": 0,
+        "moved": {
+          "base_changed": 0,
+          "changed": 0,
+          "diff_unavailable": 0,
+          "file_removed": 0,
+          "files_incomplete": 0,
+          "invalid_position": 0
+        },
+        "raw_html": 0,
+        "severity": {
+          "blocker": 0,
+          "info": 0,
+          "major": 0,
+          "minor": 0,
+          "nit": 0
+        },
+        "suggestions_degraded": 0
+      },
+      "dedupe_key": "k1",
+      "draft_id": null,
+      "draft_sha256": null,
+      "event": null,
+      "override_escalation": [],
+      "pinned_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "plan_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "reanchor_to": null,
+      "threads": [],
+      "to": null
+    },
+    "override": [],
+    "pr_id": "gh:pr:abc123",
+    "result": "attempted",
+    "stdin_tty": false,
+    "target": "example.com/acme/repo#7",
+    "tool": "pr-comment",
+    "ts": "2026-11-12T08:30:00.000Z",
+    "version": "0.1.0"
+  },
+  {
+    "action": "comment",
+    "actor": "auto:bot",
+    "actor_source": "flag",
+    "attempt_id": "abcDEF123_-xyz0000002",
+    "decision_id": [],
+    "hook_decision_id": [],
+    "inputs": {
+      "allowed_mentions": [],
+      "anchor_head": null,
+      "base_ref": "main",
+      "bodies": [
+        {
+          "bytes": 12,
+          "role": "body",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "config_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "config_path": null,
+      "counts": {
+        "file_level": 0,
+        "images": 0,
+        "inline": 0,
+        "invisible": 0,
+        "links": 0,
+        "mentions_neutralized": 0,
+        "moved": {
+          "base_changed": 0,
+          "changed": 0,
+          "diff_unavailable": 0,
+          "file_removed": 0,
+          "files_incomplete": 0,
+          "invalid_position": 0
+        },
+        "raw_html": 0,
+        "severity": {
+          "blocker": 0,
+          "info": 0,
+          "major": 0,
+          "minor": 0,
+          "nit": 0
+        },
+        "suggestions_degraded": 0
+      },
+      "dedupe_key": "k1",
+      "draft_id": null,
+      "draft_sha256": null,
+      "event": null,
+      "override_escalation": [],
+      "pinned_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "plan_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "reanchor_to": null,
+      "threads": [],
+      "to": null
+    },
+    "override": [],
+    "pr_id": "gh:pr:abc123",
+    "result": "outcome_unknown",
+    "stdin_tty": false,
+    "target": "example.com/acme/repo#7",
+    "tool": "pr-comment",
+    "ts": "2026-11-12T08:30:09.000Z",
+    "version": "0.1.0",
+    "writes": [
+      {
+        "action": "comment",
+        "dedupe_key": "k1",
+        "index": 0,
+        "lower": {
+          "already_posted": false,
+          "code": null,
+          "exit": 0,
+          "ids": [
+            "gh:ic:x1"
+          ],
+          "reason": null,
+          "review_id": null,
+          "thread_ids": []
+        },
+        "result": "done",
+        "thread_id": null,
+        "ts": "2026-11-12T08:30:09.000Z"
+      }
+    ]
+  }
+]

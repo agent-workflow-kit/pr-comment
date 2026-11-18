@@ -1,0 +1,18 @@
+{
+  "draft_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "errors": [
+    {
+      "kind": "control_character",
+      "message": "control character or lone surrogate",
+      "pointer": "/findings/0/body"
+    },
+    {
+      "kind": "suggestion_fence",
+      "message": "suggestion fence",
+      "pointer": "/body"
+    }
+  ],
+  "findings": 3,
+  "schema_version": 1,
+  "valid": false
+}

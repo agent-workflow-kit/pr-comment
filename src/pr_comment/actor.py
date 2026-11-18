@@ -74,7 +74,6 @@ def stream_is_tty(stream: object) -> bool:
 
 
 def _human_default(os_user: Callable[[], str | None]) -> str:
-    # The CLI replaces this with `me.name` from the config once the config is loaded (cli.py).
     try:
         name = os_user()
     except (KeyError, OSError):
