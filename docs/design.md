@@ -97,13 +97,15 @@ Each becomes a `live` test in the plan.
 | `yamlstrict.py` | the strict YAML reader `config.py` uses (core-schema scalars, no anchors, aliases, merge keys, duplicate or non-string keys; node and depth caps) |
 | `draft.py` | draft loading (no-follow, caps), schema, version and consistency checks, `draft check`, `draft new` |
 | `diffmap.py` | unified-diff parser and hunk mapping for re-anchoring |
-| `render.py` | text pipeline, character pass (mentions, `<`, images), finding text, suggestions, layout, attribution line and marker, dedupe keys |
+| `render.py` | text pipeline, mentions; calls `neutralize.py` for `<`, `![` and the counts, finding text, suggestions, layout, attribution line and marker, dedupe keys |
+| `neutralize.py` | the character pass of the text pipeline (`<` and `![`, never on applicable suggestion lines) and the body counts (`raw_html`, `images`, `links`, `invisible`); `render.py` calls it |
 | `plan.py` | the posting plan shown by the dialog and `--dry-run`, and its `plan_sha256` |
 | `forge.py` | the forgectl edge: argv in `=` form, stdin input, the pre-check, result and envelope parsing by the fields pr-comment uses |
 | `gateway.py` | the only subprocess boundary |
 | `hooks.py` | `pre-post` and `post-post` |
 | `audit.py` | audit and log records, `export` |
-| `confirm.py` | the TTY dialog, display sanitizing and the summary |
+| `display.py` | display sanitizing with forgectl's rules (`sanitize_text`, `sanitize_line`, `sanitize_bytes`) and the shared predicate `is_marked` / `count_marked` |
+| `confirm.py` | the TTY dialog and the summary (shows untrusted text through `display.py`) |
 
 ## Data model
 
