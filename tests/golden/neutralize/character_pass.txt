@@ -1,0 +1,18 @@
+== html_comment
+＜!-- hidden -->
+
+== details
+＜details>＜summary>s＜/summary>x＜/details>
+
+== img
+＜img src="https://t.example/pic">
+
+== image
+！[](https://t.example/pic)
+
+== reference_image
+！[t][r]
+
+== reference_definition
+[r]: /u
+    ＜details>

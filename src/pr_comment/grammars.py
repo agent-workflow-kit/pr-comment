@@ -6,9 +6,9 @@ message names the expected form and never echoes the value, so it is safe to pri
 ``hook_decision_id`` is the one exception to raising: a hook-supplied id that fails is dropped
 with a warning, never an exit 2.
 
-Callers that are not written yet: the config loader (#7) must call ``check_timeout`` and
-``check_forgectl_config`` and turn a ``GrammarError`` into exit 2 ``config_invalid`` with
-``details.key``; the hooks module (#33) must call ``hook_decision_id``.
+The config loader (config.py) calls ``check_timeout`` and ``check_forgectl_config`` and turns a
+``GrammarError`` into exit 2 ``config_invalid`` with ``details.key``. Caller not written yet: the
+hooks module (#33) must call ``hook_decision_id``.
 
 Patterns are matched with ``fullmatch`` over ASCII classes only, so a trailing newline, a Unicode
 digit or a lookalike character never passes.
@@ -175,8 +175,8 @@ def check_escalation_scope(value: object) -> str:
     return text
 
 
-# TODO(#7): the config loader calls this for `timeout` and PR_COMMENT_TIMEOUT; GrammarError becomes
-# exit 2 config_invalid with details.key.
+# The config loader (config.py) calls this for `timeout` and PR_COMMENT_TIMEOUT; a GrammarError
+# becomes exit 2 config_invalid with details.key.
 def check_timeout(value: object) -> str:
     """The duration grammar of schemas/defs.json, capped at forgectl's 100 years.
 
@@ -203,8 +203,17 @@ def check_timeout(value: object) -> str:
     raise GrammarError(message)
 
 
-# TODO(#7): the config loader calls this for `forgectl_config` and PR_COMMENT_FORGECTL_CONFIG;
-# GrammarError becomes exit 2 config_invalid with details.key.
+def duration_seconds(value: object) -> Fraction:
+    """The exact seconds of a duration that ``check_timeout`` accepts (``GrammarError`` if not)."""
+    text = check_timeout(value)
+    match = _DURATION_RE.fullmatch(text)
+    if match is None:  # check_timeout returns plain decimal strings for numbers
+        raise GrammarError("invalid timeout")
+    return Fraction(match[1]) * _UNIT_SECONDS[match[2]]
+
+
+# The config loader (config.py) calls this for `forgectl_config` and PR_COMMENT_FORGECTL_CONFIG and
+# turns a GrammarError into exit 2 config_invalid with details.key.
 def check_forgectl_config(value: object) -> str:
     """A non-empty path that does not start with ``-`` (it is passed as ``--config=<path>``)."""
     text = _text(value, "forgectl config path")
