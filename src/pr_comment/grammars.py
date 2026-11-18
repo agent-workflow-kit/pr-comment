@@ -150,7 +150,6 @@ def check_actor(value: object) -> str:
     return _full(_ACTOR_RE, value, "actor (human:<name> or auto:<name>)")
 
 
-# TODO(#33): the hooks module drops a failing hook-supplied id with a warning (interface.md, Hooks).
 def hook_decision_id(value: object) -> str | None:
     """The id to keep, or ``None`` to drop it with a warning. Never raises, whatever the value."""
     if type(value) is not str or len(value) > 128:

@@ -40,7 +40,7 @@
     },
     "hook_decision_id": {
       "$ref": "defs.json#/$defs/decision_ids",
-      "description": "Outcome record only: decision ids from pre-post hook stdout."
+      "description": "Outcome record only: decision ids from pre-post and post-post hook stdout."
     },
     "override": {
       "type": "array",

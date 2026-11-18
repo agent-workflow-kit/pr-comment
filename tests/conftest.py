@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import signal
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,23 @@ def private_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     nothing.mkdir()
     monkeypatch.setenv("PATH", str(nothing))
     return home
+
+
+@pytest.fixture
+def default_signals() -> Iterator[None]:
+    """A test that sends SIGINT, SIGTERM or SIGHUP to itself needs them not ignored: pr-comment
+    leaves an ignored signal alone, as a background job's shell sets them. Whichever of the three
+    is ignored when the test starts gets its default action for the test and is restored after."""
+    saved: dict[int, Any] = {}
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        if signal.getsignal(sig) == signal.SIG_IGN:
+            saved[sig] = signal.SIG_IGN
+            signal.signal(sig, signal.SIG_DFL)
+    try:
+        yield
+    finally:
+        for sig, previous in saved.items():
+            signal.signal(sig, previous)
 
 
 @pytest.fixture

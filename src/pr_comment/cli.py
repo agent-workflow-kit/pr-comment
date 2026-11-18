@@ -28,6 +28,7 @@ from .files import StateDirs, StateUnsafeError, open_state_dirs
 from .forge import Forge
 from .gateway import ForgectlInterrupted, Gateway, ProcessGateway, ToolMissing
 from .grammars import MAX_DECISION_IDS, MAX_THREADS
+from .hooks import HookSet
 from .jsonlog import LogWriter, write_config_warnings
 from .lower import LowerFailure, tool_missing_outcome
 from .output import LOG, PROG, Outcome, check_outcome, error_outcome, internal_outcome, render
@@ -582,6 +583,12 @@ def _confirm_and_post(
         log=session.log,
         run=args.run,
         config=args.loaded_config,
+        hooks=HookSet(
+            pre=args.loaded_config.hooks_for("pre-post", args.hook),
+            post=args.loaded_config.hooks_for("post-post", args.hook),
+            deny=tuple(args.loaded_config.config.hook_env_deny),
+        ),
+        dirs=session.dirs,
     )
     return post_review(prepared, env)
 
@@ -858,7 +865,7 @@ def _load_config_into(args: argparse.Namespace) -> Outcome | None:
     broken config never blocks reading the audit trail (interface.md, Commands).
     ``loaded_config.warnings`` go to log.jsonl as ``config_warning`` lines (a failure only warns).
     The posting commands pass the canonical repo id from ``show`` to ``loaded_config.for_repo``.
-    TODO(#33): merge ``loaded_config.hooks_for(name, args.hook)`` when running hooks.
+    The hooks of a write are ``loaded_config.hooks_for(name, args.hook)`` (``_confirm_and_post``).
     """
     if args.command in ("draft check", "export"):
         return None

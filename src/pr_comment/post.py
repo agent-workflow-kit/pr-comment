@@ -5,8 +5,8 @@ order steps 9 to 11; issue #29).
 It posts exactly what the human confirmed: the call is ``prepared.plan.write_args()`` with
 ``prepared.plan.input`` on stdin, never a plan rebuilt after the dialog. The order of events::
 
-    pre-post hooks (TODO(#33))  ->  audit ``attempted``  ->  forgectl review --yes  ->
-    post-post hooks (TODO(#33))  ->  audit ``outcome``  ->  the result document
+    pre-post hooks  ->  audit ``attempted``  ->  forgectl review --yes  ->
+    post-post hooks  ->  audit ``outcome``  ->  the result document
 
 ``comment`` and ``reply`` (issue #30) take the same path: ``post_text.py`` holds their human lines.
 
@@ -35,16 +35,24 @@ Rules that keep a post from happening twice or being lost:
 which forgectl command); the automatic approval guard (``approve.py``) has run before this module
 is reached.
 
-Seams: TODO(#33) the ``pre-post`` and ``post-post`` hooks; TODO(#36) the GitLab review body thread
-resolve (``Plan.follow_ups``): until then it is reported as not done (``body_thread_unresolved``).
+Hooks (``hooks.py``, docs/interface.md Hooks): ``pre-post`` runs once per forgectl write after the
+confirmation and before ``attempted`` (a veto exits 11, an escalation 13 unless
+``--override-escalation=pr-comment``: nothing was sent and no audit record is written);
+``post-post`` runs after the write, also when it failed, and can change nothing. An id a hook
+prints joins the write's forgectl call and the audit outcome, never the plan, the caller's ids or
+the automatic approval guard (which ran before any hook).
+
+Seam: TODO(#36) the GitLab review body thread resolve (``Plan.follow_ups``): until then it is
+reported as not done (``body_thread_unresolved``).
 """
 
 from __future__ import annotations
 
 import hashlib
+import os
 import signal
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import FrameType, TracebackType
 from typing import Any, Final
@@ -65,6 +73,7 @@ from .audit import (
 )
 from .config import LoadedConfig
 from .confirm import Interrupted
+from .files import StateDirs
 from .forge import PostRead, read_post
 from .gateway import (
     FORWARDED_SIGNALS,
@@ -74,6 +83,18 @@ from .gateway import (
     GatewayInternalError,
     GatewayUsageError,
     ToolMissing,
+)
+from .hooks import (
+    POST,
+    PRE,
+    DecisionIds,
+    HookResult,
+    HookRunner,
+    HookSet,
+    first_line,
+    payload_for,
+    run_post,
+    run_pre,
 )
 from .jsonlog import LogWriter
 from .lower import LowerFailure, require_ok, tool_missing_outcome
@@ -98,6 +119,11 @@ class PostEnv:
     log: LogWriter
     run: RunContext
     config: LoadedConfig
+    # the hooks of this run (``config.hooks_for`` plus ``--hook``), the opened state directories
+    # their working directories live in, and the environment they start from (default: ours)
+    hooks: HookSet = HookSet()
+    dirs: StateDirs | None = None
+    environ: Mapping[str, str] | None = None
 
 
 # --- the audit record of a run ---------------------------------------------------------------
@@ -275,12 +301,17 @@ def _human_lines(prepared: Prepared, read: PostRead, warnings: Sequence[str]) ->
     return tuple(lines)
 
 
-def _record(env: PostEnv, writes: Sequence[WriteRecord], outcome: Outcome) -> Outcome:
+def _record(
+    env: PostEnv,
+    writes: Sequence[WriteRecord],
+    outcome: Outcome,
+    hook_decision_ids: Sequence[str] = (),
+) -> Outcome:
     """Append the audit outcome record. On ``AuditFailedError`` the run ends exit 12
     ``audit_failed`` with ``outcome``'s document in ``details.outcome`` and the writes' own
     ``landed``/``retry``: the write may have landed, so nothing here retries it."""
     try:
-        env.trail.outcome(writes)
+        env.trail.outcome(writes, hook_decision_ids)
     except AuditFailedError as exc:
         document = outcome.document or {}
         failed = audit_failed_error(exc, document)
@@ -320,26 +351,182 @@ class _DeferredSignals:
             signal.signal(sig, signal.SIG_DFL if previous is None else previous)
 
 
+# --- the hooks of the write ---------------------------------------------------------------------
+
+
+def _why(result: HookResult) -> str:
+    """A fixed phrase for how a hook ended (never hook output)."""
+    if result.reason == "timeout":
+        return "timed out"
+    if result.reason.startswith("signal_"):
+        return f"killed by signal {result.reason[7:]}"
+    if result.reason.startswith("exit_"):
+        return f"exit {result.reason[5:]}"
+    return result.reason.replace("_", " ")
+
+
+def _write_result(lowered: Lowered, warnings: Sequence[str]) -> dict[str, Any]:
+    """The ``result`` of a ``post-post`` payload (``schemas/hooks/post-post.json``)."""
+    lower, read = lowered.lower, lowered.read
+    landed = lower.exit == 0
+    return {
+        "exit": lower.exit,
+        "code": lower.code,
+        "reason": lower.reason,
+        "ids": list(lower.ids) if landed else [],
+        "thread_ids": list(lower.thread_ids) if landed else [],
+        "review_id": lower.review_id if landed else None,
+        "already_posted": lower.already_posted if landed else None,
+        "neutralized_lines": read.neutralized_lines if read is not None else None,
+        "head_verified": read.head_verified if read is not None else None,
+        "changed": None,
+        "warnings": list(warnings) if landed else [],
+    }
+
+
+class _WriteHooks:
+    """The hooks of the run's one forgectl write (index 0). The ids they print are kept apart from
+    the plan's: ``plan.decision_ids`` (the caller's) is never touched."""
+
+    def __init__(self, prepared: Prepared, env: PostEnv) -> None:
+        self._prepared = prepared
+        self._env = env
+        plan = prepared.plan
+        self.ids = DecisionIds(plan.decision_ids)
+        self.runner = HookRunner(
+            env.hooks,
+            dirs=env.dirs,
+            environ=os.environ if env.environ is None else env.environ,
+            log=env.log,
+            pr=plan.pr,
+            attempt_id=env.trail.attempt_id,
+        )
+
+    def _payload(
+        self,
+        hook: str,
+        entry_text: bool,
+        decision_ids: Sequence[str],
+        result: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        request = self._prepared.request
+        return payload_for(
+            self._prepared.plan,
+            hook=hook,
+            attempt_id=self._env.trail.attempt_id,
+            write_index=0,
+            decision_ids=decision_ids,
+            override_escalation=request.override_escalation,
+            with_text=entry_text,
+            result=result,
+        )
+
+    def write_args(self) -> list[str]:
+        """The plan's arguments plus one ``--decision-id`` per id a hook printed."""
+        extra = [f"--decision-id={item}" for item in self.ids.from_hooks]
+        return [*self._prepared.plan.write_args(), *extra]
+
+    def pre(self) -> Outcome | None:
+        """Run the ``pre-post`` hooks: None to go on, else the run's outcome (veto or escalation:
+        nothing was sent, and with no write there is no audit record, only the log)."""
+        if not self._env.hooks.pre:
+            return None
+        verdict = run_pre(
+            self.runner,
+            self.ids,
+            lambda entry, ids: self._payload(PRE, entry.with_text, ids, None),
+        )
+        found = tuple(self.ids.from_hooks)
+        if verdict.vetoed is not None:
+            vetoed = verdict.vetoed
+            message = f"pre-post hook {vetoed.index} vetoed the write ({_why(vetoed)})"
+            detail = first_line(vetoed.stderr)
+            if detail:
+                message += f": {detail}"
+            return error_outcome(
+                "vetoed", message, hook=PRE, hook_stderr=vetoed.stderr, decision_ids=found
+            )
+        if not verdict.escalated:
+            return None
+        first = verdict.escalated[0]
+        hooks = [{"hook": PRE, "index": item.index} for item in verdict.escalated]
+        if "pr-comment" in self._prepared.request.override_escalation:
+            self._env.log.write(
+                "escalated",
+                level="info",
+                pr=self._prepared.plan.pr,
+                attempt_id=self._env.trail.attempt_id,
+                details={"overridden": True, "hooks": hooks},
+            )
+            return None
+        message = (
+            f"pre-post hook {first.index} escalated: a human must decide; "
+            "rerun with --override-escalation=pr-comment to allow"
+        )
+        detail = first_line(first.stderr)
+        if detail:
+            message += f": {detail}"
+        return error_outcome(
+            "escalated",
+            message,
+            hook=PRE,
+            hook_stderr=first.stderr,
+            escalated_by="pr-comment",
+            escalated_hooks=hooks,
+            decision_ids=found,
+        )
+
+    def post(
+        self,
+        lowered: Lowered,
+        warnings: Sequence[str],
+        *,
+        skip: bool,
+        interrupted: Callable[[], bool],
+    ) -> None:
+        """Run the ``post-post`` hooks (also after a failed write). Never changes the outcome.
+        ``interrupted()`` is true once a signal was held: no further hook starts."""
+        if not self._env.hooks.post:
+            return
+        if skip:
+            self.runner.warn(POST, None, "hooks_skipped_after_signal")
+            return
+        result = _write_result(lowered, warnings)
+        run_post(
+            self.runner,
+            self.ids,
+            lambda entry, ids: self._payload(POST, entry.with_text, ids, result),
+            interrupted=interrupted,
+        )
+
+
 def post_review(prepared: Prepared, env: PostEnv) -> Outcome:
     """Steps 9 to 11 of the review order for a confirmed plan (see the module docstring)."""
     # Read once now, so a failure after the write never starts another forgectl call (a signal
     # there would lose the write's result): ``lower.mismatch_outcome`` reads the cached value.
     env.gateway.lower_version()
-    # TODO(#33): the pre-post hooks run here (veto: exit 11, escalation: exit 13), before
-    # ``attempted``; a veto or escalation before the first write goes to the log only. An id a
-    # hook prints must never feed the automatic approval guard (``approve.py``): it has already
-    # run, on the caller's ``--decision-id`` flags only.
+    # The ``pre-post`` hooks run before ``attempted`` and before signals are held: a signal during
+    # one ends the run (128 + signum, nothing was sent). A veto or escalation before the first
+    # write goes to the log only. An id a hook prints never feeds the automatic approval guard
+    # (``approve.py``): it has already run, on the caller's ``--decision-id`` flags only.
+    hooks = _WriteHooks(prepared, env)
+    blocked = hooks.pre()
+    if blocked is not None:
+        log_failure(env.log, env.trail.attempt_id, prepared.plan.pr, blocked)
+        return blocked
     with _DeferredSignals() as held:
-        return _post_with_audit(prepared, env, held)
+        return _post_with_audit(prepared, env, held, hooks)
 
 
-def _call_and_lower(prepared: Prepared, env: PostEnv) -> tuple[Lowered, Outcome]:
+def _call_and_lower(
+    prepared: Prepared, env: PostEnv, hooks: _WriteHooks, held: _DeferredSignals
+) -> tuple[Lowered, Outcome]:
     """The forgectl write and what it means: forgectl's lowered answer and the run's outcome."""
     plan = prepared.plan
     interrupted: ForgectlInterrupted | None = None
     lowered: Lowered
     try:
-        result = env.gateway.call(plan.action, plan.write_args(), stdin=plan.input)
+        result = env.gateway.call(plan.action, hooks.write_args(), stdin=plan.input)
     except ForgectlInterrupted as exc:
         interrupted = exc
         result = exc.result
@@ -354,12 +541,19 @@ def _call_and_lower(prepared: Prepared, env: PostEnv) -> tuple[Lowered, Outcome]
         )
     else:
         lowered = lower_answer(result, plan, env.gateway)
-    # TODO(#33): the post-post hooks run here, also when the write failed.
+    warnings = () if lowered.read is None else _warnings(prepared, lowered.read)
+    # After a signal the user wants out: the ``post-post`` hooks do not start. Otherwise they run
+    # whatever the write's result was, and nothing they do changes it.
+    hooks.post(
+        lowered,
+        warnings,
+        skip=interrupted is not None or bool(held.received),
+        interrupted=lambda: bool(held.received),
+    )
     if lowered.failure is not None:
         outcome = lowered.failure
     else:
         assert lowered.read is not None
-        warnings = _warnings(prepared, lowered.read)
         if lowered.read.neutralized_lines or lowered.read.markers_removed:
             env.log.write(
                 NEUTRALIZING_MISMATCH,
@@ -386,7 +580,9 @@ def _call_and_lower(prepared: Prepared, env: PostEnv) -> tuple[Lowered, Outcome]
     return lowered, outcome
 
 
-def _post_with_audit(prepared: Prepared, env: PostEnv, held: _DeferredSignals) -> Outcome:
+def _post_with_audit(
+    prepared: Prepared, env: PostEnv, held: _DeferredSignals, hooks: _WriteHooks
+) -> Outcome:
     plan = prepared.plan
     try:
         env.trail.attempted(audit_record(prepared, env))
@@ -408,7 +604,7 @@ def _post_with_audit(prepared: Prepared, env: PostEnv, held: _DeferredSignals) -
             return final
         raise Interrupted(held.received[0])
     try:
-        lowered, outcome = _call_and_lower(prepared, env)
+        lowered, outcome = _call_and_lower(prepared, env, hooks, held)
     except Exception as exc:  # after ``attempted`` nothing is known: the write may have landed
         LOG.error("unexpected %s after the write was attempted", type(exc).__name__, exc_info=exc)
         outcome = error_outcome(
@@ -421,7 +617,7 @@ def _post_with_audit(prepared: Prepared, env: PostEnv, held: _DeferredSignals) -
     if outcome.exit_code == 0 and plan.follow_ups:
         # the main write landed and its follow-up was not performed (TODO(#36)): partial, landed
         write = replace(write, result="partial")
-    final = _record(env, [write], outcome)
+    final = _record(env, [write], outcome, hooks.ids.from_hooks)
     if final is not outcome:  # the audit failure replaced the outcome: the original is logged too
         log_failure(env.log, env.trail.attempt_id, plan.pr, outcome)
     log_failure(env.log, env.trail.attempt_id, plan.pr, final)
