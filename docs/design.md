@@ -92,6 +92,7 @@ Each becomes a `live` test in the plan.
 | Module | Responsibility |
 |---|---|
 | `cli.py` | argparse, global flags, actor resolution, interactive detection, dispatch (`HANDLERS`) |
+| `grammars.py` | the value grammars of every forwarded flag, config value and hook-supplied decision id, shared by `cli.py`, `config.py` and `hooks.py` |
 | `config.py` | Pydantic config, drop-ins, environment, per-repo merge, footer placeholder validation |
 | `draft.py` | draft loading (no-follow, caps), schema, version and consistency checks, `draft check`, `draft new` |
 | `diffmap.py` | unified-diff parser and hunk mapping for re-anchoring |
