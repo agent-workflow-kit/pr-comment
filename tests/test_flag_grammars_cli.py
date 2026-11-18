@@ -60,8 +60,18 @@ FLAGS: list[tuple[list[str], str, str, list[str]]] = [
         "org/team",
         ["", "@john", "a/", "/a", "a//b", "a b", "é", "a​b", "＠x", "a\nb"],
     ),
-    (["comment", PR, "--body-file", "b"], "--allow-mention", "John.Doe", ["@x", "a,b"]),
-    (["reply", PR, "--body-file", "b"], "--allow-mention", "a-b_c", ["a/", "a&#64;"]),
+    (
+        ["comment", PR, "--body-file", "b"],
+        "--allow-mention",
+        "John.Doe",
+        ["@johnmarker", "zzmarker@", "a,zzmarker"],
+    ),
+    (
+        ["reply", PR, "--body-file", "b"],
+        "--allow-mention",
+        "a-b_c",
+        ["a/", "zzmarker&#64;", "a\nzzmarker"],
+    ),
     (["approve", PR], "--allow-mention", "g/sub/proj", ["@all", "a/b/"]),
     (["resolve", PR], "--thread", THREAD, ["gh:ic:abc", "gl:d:" + "a" * 39, "x", "-x"]),
     (["unresolve", PR], "--thread", "gl:d:" + SHA, ["gh:rt:" + "a" * 101, "gl:n:1"]),
@@ -98,11 +108,16 @@ def test_invalid_values_exit_two_naming_the_flag(
     calls = _no_handler(monkeypatch)
     extra = _complete(base, flag)
     for value in bad:
-        code, doc, _ = _run(capsys, [*base, *extra, f"{flag}={value}"])
+        code, doc, err = _run(capsys, [*base, *extra, f"{flag}={value}"])
         assert code == 2, value
         assert doc["error"]["code"] == "usage", value
         assert flag in doc["error"]["message"], value
         validate("pr-comment/cli/error.json", doc)
+        if flag == "--allow-mention" and value:
+            # the value is not echoed anywhere (docs/interface.md: Mentions)
+            assert value not in doc["error"]["message"], value
+            assert value not in json.dumps(doc), value
+            assert value not in err, value
     assert calls == []
 
 

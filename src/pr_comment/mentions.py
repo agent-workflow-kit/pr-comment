@@ -20,6 +20,8 @@ import re
 from collections.abc import Iterable
 from typing import Final, Literal
 
+from pr_comment.grammars import MENTION_NAME_RE
+
 REPLACEMENT: Final = "＠"
 
 # A literal `@`, or an entity form of `@` with its `;` when present: `&#` with optional zeros and
@@ -28,11 +30,19 @@ REPLACEMENT: Final = "＠"
 # one way to match, so matching is linear.
 _FORM_RE: Final = re.compile(r"@|&#0*64(?![0-9]);?|&#[xX]0*40(?![0-9A-Fa-f]);?|&commat;?")
 
-# The name after an `@` (the allow rule's N, before the trailing dots are removed).
-_NAME_RE: Final = re.compile(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*")
+# The name after an `@` (the allow rule's N, before the trailing dots are removed): the grammar
+# of an allowlist entry, defined once in grammars.py.
+_NAME_RE: Final = MENTION_NAME_RE
+
+# Reporting caps (docs/interface.md: Mentions, Reporting): a silent cut in the report only.
+_MAX_NAME_LENGTH: Final = 128
+_MAX_NAMES: Final = 100
 
 _ASCII_LOWER: Final = {ord(c): ord(c) + 32 for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"}
-_ASCII_ALNUM: Final = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
+_ASCII_LETTERS: Final = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+_ASCII_ALNUM: Final = _ASCII_LETTERS | frozenset("0123456789")
+_DIGITS: Final = frozenset("0123456789")
+_HEX: Final = _DIGITS | frozenset("abcdefABCDEF")
 _WHITESPACE: Final = frozenset(" \t\n")
 _FOLLOW: Final = _WHITESPACE | frozenset(",;:!?)]}'\"*~")
 
@@ -51,7 +61,11 @@ class MentionNeutralizer:
         if policy not in ("neutralize", "allow"):
             raise ValueError("invalid mentions policy (expected neutralize or allow)")
         self._active = policy == "neutralize"
-        self._allow = frozenset(entry.translate(_ASCII_LOWER) for entry in allow)
+        entries = tuple(allow)
+        for entry in entries:
+            if not _NAME_RE.fullmatch(entry):
+                raise ValueError("invalid mentions allow entry (expected a name or org/team)")
+        self._allow = frozenset(entry.translate(_ASCII_LOWER) for entry in entries)
         self._names: dict[str, None] = {}
         self._count = 0
 
@@ -78,21 +92,33 @@ class MentionNeutralizer:
         for match in _FORM_RE.finditer(text):
             start, end = match.span()
             literal = text[start] == "@"
-            if literal and start > pos and text[start - 1] in _ASCII_ALNUM:
-                continue  # e-mail-like: a letter or digit directly before the `@`
             name, follow_ok = self._name_after(text, end)
             if literal and follow_ok and name and name.translate(_ASCII_LOWER) in self._allow:
                 continue
+            if (
+                literal
+                and start > pos
+                and text[start - 1] in _ASCII_ALNUM
+                and not _ends_entity_tail(text, start)
+            ):
+                continue  # e-mail-like: a letter or digit directly before the `@`
             out.append(text[pos:start])
             out.append(REPLACEMENT)
             pos = end
             self._count += 1
             if name:
-                self._names.setdefault(name.translate(_ASCII_LOWER), None)
+                self._report(name)
         if pos == 0:
             return text
         out.append(text[pos:])
         return "".join(out)
+
+    def _report(self, name: str) -> None:
+        """Adds ``name`` to the report: cut to 128 characters before the repeat check, and
+        dropped once 100 names are held. ``count`` is not affected."""
+        key = name.translate(_ASCII_LOWER)[:_MAX_NAME_LENGTH]
+        if key not in self._names and len(self._names) < _MAX_NAMES:
+            self._names[key] = None
 
     @staticmethod
     def _name_after(text: str, at: int) -> tuple[str, bool]:
@@ -109,3 +135,24 @@ class MentionNeutralizer:
         if len(name) == end - at:  # no trailing dot was removed
             return name, text[end] in _FOLLOW
         return name, text[end] in _WHITESPACE
+
+
+def _ends_entity_tail(text: str, end: int) -> bool:
+    """Whether ``text[:end]`` ends with an unterminated entity-like tail:
+    ``&(?:#[0-9]+|#[xX][0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]*)``. A downstream HTML parser decodes such
+    a tail (without its ``;``) to a character that is not a letter or digit. The scan goes back over
+    one run of letters and digits only, so a text of many ``@`` is scanned in linear time."""
+    k = end
+    while k > 0 and text[k - 1] in _ASCII_ALNUM:
+        k -= 1
+    run = text[k:end]
+    if k == 0 or not run:
+        return False
+    before = text[k - 1]
+    if before == "&":
+        return run[0] in _ASCII_LETTERS
+    if before == "#" and k >= 2 and text[k - 2] == "&":
+        if all(c in _DIGITS for c in run):
+            return True
+        return run[0] in "xX" and len(run) > 1 and all(c in _HEX for c in run[1:])
+    return False

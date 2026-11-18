@@ -9,9 +9,11 @@ decoded-text oracle and the cmark-gfm oracle both ask the same question the host
 from __future__ import annotations
 
 import html
+import json
 import random
 import re
 import time
+from pathlib import Path
 
 import cmarkgfm  # pyright: ignore[reportMissingTypeStubs]
 import pytest
@@ -123,6 +125,41 @@ UNCHANGED = [
 @pytest.mark.parametrize("text", UNCHANGED)
 def test_unchanged_text(text: str) -> None:
     assert run(text) == (text, (), 0)
+
+
+# An `@` after an unterminated entity-like tail (`&amp`, `&#38`, `&#x26`) is replaced: a downstream
+# HTML parser decodes the tail to a non-word character and the `@` would be live.
+ENTITY_TAIL_CASES = [
+    ("<div>&amp@octocat</div>", f"<div>&amp{AT}octocat</div>"),
+    ("<div>&#38@octocat", f"<div>&#38{AT}octocat"),
+    ("<p>&lt@john", f"<p>&lt{AT}john"),
+    ("<!--x-->&#x4@name", f"<!--x-->&#x4{AT}name"),
+    ("&#X26@a", f"&#X26{AT}a"),
+    ("&copy@a", f"&copy{AT}a"),
+    ("&#xa@a", f"&#xa{AT}a"),
+    ("R&D@corp", f"R&D{AT}corp"),
+]
+
+
+@pytest.mark.parametrize(("text", "out"), ENTITY_TAIL_CASES)
+def test_an_at_after_an_unterminated_entity_tail_is_replaced(text: str, out: str) -> None:
+    assert run(text)[0] == out
+    assert run(text)[2] == 1
+
+
+@pytest.mark.parametrize("text", ["a@b.com", "x&y;z@b", "a#38@b", "&#x@b", "&#3x@b"])
+def test_an_at_not_after_an_entity_tail_stays_email_like(text: str) -> None:
+    assert run(text) == (text, (), 0)
+
+
+def test_an_email_and_a_terminated_reference_keep_their_old_behavior() -> None:
+    assert run("a@b.com") == ("a@b.com", (), 0)
+    # `;` is not a letter or digit, so the `@` was replaced before and still is.
+    assert run("&amp;@x") == (f"&amp;{AT}x", ("x",), 1)
+
+
+def test_an_allowed_name_is_kept_after_an_entity_tail() -> None:
+    assert run("&amp@john", ("john",)) == ("&amp@john", (), 0)
 
 
 def test_a_bare_commat_without_semicolon_is_replaced() -> None:
@@ -290,6 +327,18 @@ def test_decoded_text_fuzz_with_terminated_entities() -> None:
         assert not LIVE.search(html.unescape(out)), repr(text)
 
 
+def test_html5_decoded_fuzz_with_unterminated_entity_tails() -> None:
+    # html.unescape decodes `&amp`, `&#38` and `&#x26` without their `;` as an HTML5 parser does:
+    # no `@` may be live after decoding, whatever entity-like tail precedes it.
+    rng = random.Random(19)
+    tokens = ["@", "@x", "a", "1", "&", "&#", "&#x", "&amp", "&lt", "&copy", "&#38", "&#x26"]
+    tokens += ["&#x4", "&#xa", ";", " ", "<p>", "&#64;", "&commat;"]
+    for _ in range(5000):
+        text = "".join(rng.choice(tokens) for _ in range(rng.randint(1, 12)))
+        out, _, _ = run(text)
+        assert not LIVE.search(html.unescape(out)), repr(text)
+
+
 def test_neutralizing_is_idempotent() -> None:
     rng = random.Random(17)
     for _ in range(500):
@@ -389,7 +438,8 @@ def test_matching_ignores_ascii_case_on_both_sides() -> None:
 def test_matching_is_ascii_only() -> None:
     # U+0130 and the Kelvin sign lower to ASCII letters under Unicode rules, not under ASCII's.
     assert run("@K", ("k",)) == (f"{AT}K", (), 1)
-    assert run("@k", ("K",)) == (f"{AT}k", ("k",), 1)
+    with pytest.raises(ValueError, match="allow"):  # a non-ASCII entry is outside the grammar
+        run("@k", ("\u212a",))
 
 
 def test_a_team_entry_covers_exactly_that_team() -> None:
@@ -423,10 +473,20 @@ def test_an_allowed_name_overrides_the_preceding_character_rule() -> None:
     assert run("&#64@john", ("john",)) == (f"{AT}@john", (), 1)
 
 
-def test_empty_allowlist_entry_is_harmless() -> None:
-    assert run("@", ("",)) == (AT, (), 1)
-    assert run("@.", ("",)) == (f"{AT}.", (), 1)
-    assert run("@ x", ("",)) == (f"{AT} x", (), 1)
+@pytest.mark.parametrize("entry", ["", "@john", "a b", "zz/", "/zz", "a//b", "é", "a\nb", "＠x"])
+def test_an_allowlist_entry_outside_the_name_grammar_is_refused(entry: str) -> None:
+    with pytest.raises(ValueError, match="allow") as excinfo:
+        MentionNeutralizer("neutralize", (entry,))
+    assert entry not in str(excinfo.value) or entry == ""
+
+
+def test_the_name_grammar_is_defined_once() -> None:
+    from pr_comment import mentions
+
+    assert mentions._NAME_RE is grammars.MENTION_NAME_RE  # pyright: ignore[reportPrivateUsage]
+    schema = json.loads((Path(__file__).parent.parent / "schemas" / "defs.json").read_text())
+    pattern = schema["$defs"]["mention_name"]["pattern"]
+    assert pattern == f"^{grammars.MENTION_NAME_RE.pattern}$"
 
 
 def test_an_entry_with_a_trailing_dot_never_matches() -> None:
@@ -476,6 +536,31 @@ def test_a_part_boundary_counts_as_a_non_letter() -> None:
     neutralizer.neutralize("a")
     assert neutralizer.neutralize("@x") == f"{AT}x"
     assert neutralizer.names == ("x",)
+
+
+def test_a_reported_name_is_cut_to_128_characters_before_dedupe() -> None:
+    neutralizer = MentionNeutralizer()
+    long = "a" * 128
+    out = neutralizer.neutralize(f"@{long}b @{long}c @{'a' * 500}")
+    assert neutralizer.names == (long,)
+    assert neutralizer.count == 3
+    assert out == f"{AT}{long}b {AT}{long}c {AT}{'a' * 500}"  # the text is neutralized exactly
+
+
+def test_at_most_100_names_are_reported_but_every_form_is_counted() -> None:
+    neutralizer = MentionNeutralizer()
+    neutralizer.neutralize(" ".join(f"@u{i}" for i in range(150)))
+    assert neutralizer.names == tuple(f"u{i}" for i in range(100))
+    assert neutralizer.count == 150
+    neutralizer.neutralize("@u0 @late")
+    assert neutralizer.names == tuple(f"u{i}" for i in range(100))
+    assert neutralizer.count == 152
+
+
+def test_the_names_cap_does_not_change_the_neutralized_text() -> None:
+    text = " ".join(f"@u{i}" for i in range(150))
+    out = MentionNeutralizer().neutralize(text)
+    assert "@" not in out
 
 
 def test_reported_names_hold_only_name_grammar_characters() -> None:
@@ -543,7 +628,7 @@ def test_many_distinct_names_run_in_bounded_time() -> None:
     neutralizer = MentionNeutralizer()
     neutralizer.neutralize(text)
     assert time.monotonic() - started < 10
-    assert len(neutralizer.names) == 200_000
+    assert len(neutralizer.names) == 100
     assert neutralizer.count == 200_000
 
 
@@ -557,40 +642,50 @@ def test_mention_name_valid_is_returned_unchanged(value: str) -> None:
     assert grammars.check_mention_name(value) == value
 
 
-@pytest.mark.parametrize(
-    "value",
-    [
-        "",
-        "@john",
-        "@org/team",
-        "john ",
-        " john",
-        "john\n",
-        "a b",
-        "a\tb",
-        "/a",
-        "a/",
-        "a//b",
-        "a/b/",
-        "é",
-        "a​b",
-        "＠john",
-        "john＠",
-        "а",
-        "a\x00b",
-        "a&#64;",
-        "a,b",
-        "a\\b",
-        "a`b",
-        "a<b",
-        "*",
-        "\U0001d7ce",
-    ],
-)
+INVALID_NAMES = [
+    "",
+    "@john",
+    "@org/team",
+    "john ",
+    " john",
+    "john\n",
+    "a b",
+    "a\tb",
+    "/a",
+    "a/",
+    "a//b",
+    "a/b/",
+    "é",
+    "a​b",
+    "＠john",
+    "john＠",
+    "а",
+    "a\x00b",
+    "a&#64;",
+    "a,b",
+    "a\\b",
+    "a`b",
+    "a<b",
+    "*",
+    "\U0001d7ce",
+    # distinctive values, so "the value is absent from the message" cannot hold by accident
+    "a\nzzmarker",
+    "zzmarker@",
+    "@johnmarker",
+    "zzmarker&#64;",
+]
+
+
+@pytest.mark.parametrize("value", INVALID_NAMES)
 def test_mention_name_invalid(value: str) -> None:
     with pytest.raises(GrammarError) as excinfo:
         grammars.check_mention_name(value)
-    assert value not in str(excinfo.value) or value == ""
+    message = str(excinfo.value)
+    assert "mention name" in message
+    if value:
+        assert value not in message
+        assert "zzmarker" not in message
+        assert "johnmarker" not in message
 
 
 def test_mention_name_refuses_a_non_string() -> None:

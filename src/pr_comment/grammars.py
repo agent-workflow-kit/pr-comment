@@ -36,7 +36,7 @@ _PLAN_HASH_RE = re.compile(r"[0-9a-f]{64}")
 _DEDUPE_KEY_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 _DECISION_ID_RE = re.compile(r"[A-Za-z0-9._:@/-]{1,128}")
 _ACTOR_RE = re.compile(r"(?:human|auto):[A-Za-z0-9._@-]{1,64}")
-_MENTION_NAME_RE = re.compile(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*")
+MENTION_NAME_RE = re.compile(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*")
 _NODE = r"[A-Za-z0-9_=-]{1,100}"
 _THREAD_RE = re.compile(rf"gh:rt:{_NODE}|gl:d:[0-9a-f]{{40}}")
 _REPLY_TARGET_RE = re.compile(
@@ -164,7 +164,7 @@ def check_mention_name(value: object) -> str:
     The same grammar as the config key ``mentions.allow`` entries (no leading ``@``). The matcher
     compares it in ASCII lowercase, so the value comes back unchanged.
     """
-    return _full(_MENTION_NAME_RE, value, "mention name (a name, or a team as org/team)")
+    return _full(MENTION_NAME_RE, value, "mention name (a name, or a team as org/team)")
 
 
 def check_hook(value: object) -> str:
