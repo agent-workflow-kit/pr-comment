@@ -244,9 +244,53 @@ def files_doc(
 
 
 def comments_doc(
-    pr: str = PR, *, head_sha: str = HEAD, threads: Sequence[Mapping[str, Any]] = ()
+    pr: str = PR,
+    *,
+    head_sha: str = HEAD,
+    threads: Sequence[Mapping[str, Any]] = (),
+    complete: bool = True,
 ) -> dict[str, Any]:
-    return {"pr": pr, "head_sha": head_sha, "threads": list(threads), "complete": True}
+    return {"pr": pr, "head_sha": head_sha, "threads": list(threads), "complete": complete}
+
+
+def comment_doc(cid: str, body: str = "hello", *, review_id: str | None = None) -> dict[str, Any]:
+    """One comment of a ``comments`` thread (``comments.json``)."""
+    return {
+        "id": cid,
+        "author": {"login": "octo", "id": "1", "is_bot": False},
+        "body": body,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "minimized": False,
+        "reply_to": None,
+        "review_id": review_id,
+    }
+
+
+def thread_doc(
+    thread: str,
+    comments: Sequence[Mapping[str, Any]],
+    *,
+    resolvable: bool = True,
+    resolved: bool = False,
+    head_sha: str = HEAD,
+    path: str | None = None,
+    line: int | None = None,
+) -> dict[str, Any]:
+    """One thread of a ``comments`` read. A thread without a path is a general one (a review body
+    on GitLab); a resolved thread must be resolvable."""
+    return {
+        "id": thread,
+        "resolvable": resolvable,
+        "resolved": resolved,
+        "outdated": False,
+        "path": path,
+        "line": line,
+        "side": None,
+        "start_line": None,
+        "commit_sha": head_sha,
+        "comments": [dict(c) for c in comments],
+    }
 
 
 def diff_doc(pr: str = PR, *, head_sha: str = HEAD, diff: str = "") -> dict[str, Any]:

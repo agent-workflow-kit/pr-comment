@@ -440,6 +440,7 @@ def result_document(
     posted: PostRead | None = None,
     warnings: Sequence[str] = (),
     body_thread_resolved: bool | None = None,
+    body_thread_id: str | None = None,
 ) -> dict[str, Any]:
     """The ``--json`` result (docs/interface.md: Post result): a dry run's (``dry_run=True``, the
     plan in ``plan``), or a real run's from forgectl's checked answer ``posted`` (``plan`` is null).
@@ -495,7 +496,7 @@ def result_document(
                 {"id": d.id, "reason": d.reason} for d in plan.suggestions_degraded
             ],
             body_thread_resolved=body_thread_resolved,
-            body_thread_id=None,
+            body_thread_id=body_thread_id,
             reanchored_draft=prepared.reanchored_draft,
         )
     if plan.action == "reply":

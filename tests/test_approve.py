@@ -385,6 +385,28 @@ def test_a_gitlab_approve_reports_no_review_id(
     assert doc["warnings"] == []  # an approve has no body thread (only a review does)
 
 
+def test_a_gitlab_approve_has_no_follow_up_and_never_reads_or_resolves_a_thread(
+    cli: Run, forgectl: FakeForgectl, state_home: Path
+) -> None:
+    thread = "gl:d:" + "1" * 40  # even when forgectl names a thread, an approve resolves nothing
+    forgectl.script(
+        show(pr=GL_PR, backend="gitlab"),
+        dry_approve(GL_PR),
+        show(pr=GL_PR, backend="gitlab"),
+        dry_approve(GL_PR),
+        approved(GL_PR, ids=["gl:n:11"], review_id=None, thread_ids=[thread]),
+    )
+    code, doc, _ = cli(*human_approve(GL_PR, "--dry-run"))
+    assert code == 0, doc
+    assert doc["plan"]["follow_ups"] == []
+    code, doc, _ = cli(*human_approve(GL_PR))
+    assert code == 0, doc
+    validate("pr-comment/cli/approve.json", doc)
+    commands = {c.subcommand for c in forgectl.calls()}
+    assert "comments" not in commands and "resolve" not in commands
+    assert len(forgectl.writes()) == 1
+
+
 def test_a_gitlab_rerun_that_completes_the_approval_reports_follow_up_done(
     cli: Run, forgectl: FakeForgectl, state_home: Path
 ) -> None:
