@@ -101,7 +101,8 @@ Each becomes a `live` test in the plan.
 | `gateway.py` | the only subprocess boundary |
 | `hooks.py` | `pre-post` and `post-post` |
 | `audit.py` | audit and log records, `export` |
-| `confirm.py` | the TTY dialog, display sanitizing and the summary |
+| `display.py` | display sanitizing with forgectl's rules (`sanitize_text`, `sanitize_line`, `sanitize_bytes`) and the shared predicate `is_marked` / `count_marked` |
+| `confirm.py` | the TTY dialog and the summary (shows untrusted text through `display.py`) |
 
 ## Data model
 
