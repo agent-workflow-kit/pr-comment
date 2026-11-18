@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
 
 import pytest
 from jsonschema import ValidationError
@@ -87,3 +90,112 @@ def test_validate_follows_cross_file_refs() -> None:
 def test_validate_unknown_schema_raises_key_error() -> None:
     with pytest.raises(KeyError):
         validate("pr-comment/nope.json", {})
+
+
+@pytest.mark.parametrize("bad", ["not-a-date", "2025-13-45T99:99:99Z", "2025-01-01", ""])
+def test_ts_format_date_time_is_enforced(bad: str) -> None:
+    with pytest.raises(ValidationError):
+        validate("pr-comment/defs.json#/$defs/ts", bad)
+
+
+def test_ts_accepts_a_real_timestamp() -> None:
+    validate("pr-comment/defs.json#/$defs/ts", "2025-01-02T03:04:05Z")
+
+
+def test_refs_inside_const_enum_examples_default_are_data() -> None:
+    doc = {
+        "$id": "pr-comment/x.json",
+        "const": {"$ref": "nope.json"},
+        "enum": [{"$ref": "nope.json"}],
+        "examples": [{"$ref": "nope.json"}],
+        "default": {"$ref": "nope.json"},
+    }
+    assert list(iter_refs(doc)) == []
+
+
+def test_property_named_ref_is_not_a_reference() -> None:
+    doc = {
+        "properties": {"$ref": {"type": "string"}},
+        "$defs": {"$ref": {"type": "string"}},
+        "patternProperties": {"^x": {"$ref": "defs.json#/$defs/pr"}},
+    }
+    assert list(iter_refs(doc)) == ["defs.json#/$defs/pr"]
+
+
+def test_refs_are_found_in_subschema_positions() -> None:
+    doc = {
+        "allOf": [{"$ref": "a"}],
+        "items": {"$ref": "b"},
+        "properties": {"p": {"$ref": "c"}},
+        "$defs": {"d": {"$ref": "d"}},
+        "if": {"$ref": "e"},
+        "not": {"$ref": "f"},
+        "$dynamicRef": "#g",
+    }
+    assert sorted(iter_refs(doc)) == ["#g", "a", "b", "c", "d", "e", "f"]
+
+
+def test_nested_id_changes_the_base_for_refs(monkeypatch: pytest.MonkeyPatch) -> None:
+    # `$defs/inner` re-bases to pr-comment/sub/inner.json, so `x.json` means sub/x.json, which
+    # does not exist; resolved against the root id it would wrongly hit pr-comment/x.json.
+    root = {
+        "$id": "pr-comment/root.json",
+        "$defs": {"inner": {"$id": "sub/inner.json", "$ref": "x.json"}},
+    }
+    other = {"$id": "pr-comment/x.json", "type": "string"}
+    monkeypatch.setattr(
+        "tests.schema_harness.load_schemas",
+        lambda: {root["$id"]: root, other["$id"]: other},
+    )
+    from referencing import Registry, Resource
+    from referencing.jsonschema import DRAFT202012
+
+    registry: Registry[Any] = Registry()
+    for doc in (root, other):
+        registry = registry.with_resource(
+            doc["$id"], Resource.from_contents(doc, default_specification=DRAFT202012)
+        )
+    monkeypatch.setattr("tests.schema_harness.build_registry", lambda: registry)
+    failures = resolve_all_refs()
+    assert len(failures) == 1
+    assert "x.json" in failures[0]
+
+
+def test_dynamic_ref_is_checked(monkeypatch: pytest.MonkeyPatch) -> None:
+    broken = {"$id": "pr-comment/dyn.json", "$dynamicRef": "missing.json#thing"}
+    monkeypatch.setattr("tests.schema_harness.load_schemas", lambda: {broken["$id"]: broken})
+    monkeypatch.setattr("tests.schema_harness.build_registry", _registry_with(broken))
+    assert len(resolve_all_refs()) == 1
+
+
+@pytest.fixture
+def schema_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    monkeypatch.setattr("tests.schema_harness.SCHEMAS_DIR", tmp_path)
+    load_schemas.cache_clear()
+    yield tmp_path
+    load_schemas.cache_clear()
+
+
+def test_invalid_metaschema_is_rejected(schema_dir: Path) -> None:
+    (schema_dir / "bad.json").write_text('{"$id": "pr-comment/bad.json", "type": "strin"}')
+    with pytest.raises(ValueError, match="bad.json"):
+        load_schemas()
+
+
+def test_invalid_json_names_the_file(schema_dir: Path) -> None:
+    (schema_dir / "broken.json").write_text("{not json")
+    with pytest.raises(ValueError, match="broken.json"):
+        load_schemas()
+
+
+def test_top_level_non_object_names_the_file(schema_dir: Path) -> None:
+    (schema_dir / "list.json").write_text("[1, 2]")
+    with pytest.raises(ValueError, match="list.json"):
+        load_schemas()
+
+
+def test_non_json_file_under_schemas_fails(schema_dir: Path) -> None:
+    (schema_dir / "ok.json").write_text('{"$id": "pr-comment/ok.json"}')
+    (schema_dir / "stray.yaml").write_text("a: 1")
+    with pytest.raises(ValueError, match="stray.yaml"):
+        load_schemas()

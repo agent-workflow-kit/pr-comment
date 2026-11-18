@@ -119,7 +119,8 @@ Every failure before the first write sends nothing. forgectl's errors pass throu
 
 - `pyyaml` and `pydantic` (design guide section 3); `pydantic` also models the forgectl output fields pr-comment reads.
 - No Markdown parser: mentions, `<` and images are neutralized by character (D-6, D-22), so `markdown-it-py` is not a dependency.
-- `jsonschema` and `referencing` (tests only; `referencing` builds the registry over `schemas/` keyed by `$id`, so cross-file `$ref`s resolve offline) and `cmarkgfm` (tests only; `cmarkgfm` is GitHub's engine, pinned, used as the oracle for the text-safety tests).
+- Test-only dependencies sit in the `test` dependency group, which the `dev` group includes; none is imported by `src/`. `jsonschema` and `referencing` (`referencing` builds the registry over `schemas/` keyed by `$id`, so cross-file `$ref`s resolve offline); `rfc3339-validator` (without it `jsonschema` silently skips `format: date-time`); `packaging` (parses the dependency tables in the project layout tests); and `cmarkgfm` (GitHub's engine, pinned exactly, used as the oracle for the text-safety tests).
+- Type stubs `types-pyyaml` and `types-jsonschema` (`dev` group): pyright checks `src/` and `tests/`, and neither `pyyaml` nor `jsonschema` ships inline types.
 
 ## Test strategy
 

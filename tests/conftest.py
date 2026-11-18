@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from typing import Any
 
 import pytest
 
-from tests.golden_harness import check_golden, render_json
+from tests.golden_harness import check_golden, refuse_regen_in_ci, render_json
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -15,6 +16,10 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="rewrite tests/golden/ files instead of comparing against them",
     )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    refuse_regen_in_ci(os.environ, regenerate=bool(config.getoption("--regen-golden")))
 
 
 @pytest.fixture
