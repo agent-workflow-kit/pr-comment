@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import logging
+import os
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from typing import Any, NoReturn, cast
 
 from . import __version__, grammars
 from .actor import ActorError, resolve_run, stream_is_tty
+from .config import ConfigError, load_config
 from .errors import sanitize
 from .grammars import MAX_DECISION_IDS, MAX_THREADS
 from .output import LOG, PROG, Outcome, check_outcome, error_outcome, internal_outcome, render
@@ -611,6 +613,29 @@ def main(argv: list[str] | None = None) -> int:
         LOG.removeHandler(handler)
 
 
+def _load_config_into(args: argparse.Namespace) -> Outcome | None:
+    """Load the config once per run into ``args.loaded_config``; an invalid config is the outcome.
+
+    ``draft check`` is offline and ``export`` reads local files only: neither reads config, so a
+    broken config never blocks reading the audit trail (interface.md, Commands).
+    TODO(#5): the actor resolution passes ``loaded_config.config.me.name`` to ``_human_default``.
+    TODO(#11): write ``loaded_config.warnings`` as ``config_warning`` log lines.
+    TODO(#26) and TODO(#29): callers pass the canonical repo id to ``loaded_config.for_repo``.
+    TODO(#33): merge ``loaded_config.hooks_for(name, args.hook)`` when running hooks.
+    """
+    if args.command in ("draft check", "export"):
+        return None
+    try:
+        args.loaded_config = load_config(args.config, env=os.environ)
+    except ConfigError as exc:
+        # The key can be a file name or user text (control characters, a lone surrogate from a
+        # non-UTF-8 --config path), so both fields are sanitized.
+        return error_outcome(
+            "config_invalid", sanitize(str(exc)), details={"key": sanitize(exc.key)}
+        )
+    return None
+
+
 def _main(argv: list[str]) -> int:
     parser = build_parser()
     if len(argv) > MAX_ARGV_TOKENS:  # argparse is quadratic in repeated flags
@@ -629,7 +654,7 @@ def _main(argv: list[str]) -> int:
     except UsageError as exc:
         return _fail_usage(argv, exc.message, exc.usage, exc.code)
     try:
-        outcome = check_outcome(HANDLERS[args.command](args))
+        outcome = _load_config_into(args) or check_outcome(HANDLERS[args.command](args))
         stdout, stderr = render(outcome, as_json=args.json, quiet=args.quiet, verbose=args.verbose)
     except Exception as exc:  # a handler bug must still honor the exit-code and envelope contract
         outcome = internal_outcome(exc)
