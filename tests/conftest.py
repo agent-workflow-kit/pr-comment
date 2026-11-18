@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -20,6 +21,19 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 def pytest_configure(config: pytest.Config) -> None:
     refuse_regen_in_ci(os.environ, regenerate=bool(config.getoption("--regen-golden")))
+
+
+@pytest.fixture(autouse=True)
+def private_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Every test runs with a private HOME and XDG_CONFIG_HOME and no PR_COMMENT_* variable, so
+    the developer's real config and environment never reach a test."""
+    home = tmp_path / "private-home"
+    home.mkdir(mode=0o700)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    for name in [n for n in os.environ if n.startswith("PR_COMMENT_")]:
+        monkeypatch.delenv(name)
+    return home
 
 
 @pytest.fixture
