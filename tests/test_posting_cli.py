@@ -552,3 +552,33 @@ def test_a_comment_body_that_is_hostile_never_reaches_forgectl(
     assert code == 2 and error["error"]["code"] == "invalid_text"
     assert error["error"]["details"] == {"pointer": "/body", "kind": "control_character"}
     assert forgectl.calls() == []
+
+
+def test_a_lone_surrogate_in_a_finding_path_is_refused_before_planning(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path
+) -> None:
+    # json.dumps escapes the lone surrogate as \ud800, which the loader decodes back to it.
+    draft = draft_file(tmp_path, [finding("f1", "a\ud800.py", 3)])
+    assert b"\\ud800" in Path(draft).read_bytes()
+    code, error, _ = cli(
+        "review", PR, "--draft-file", draft, "--dry-run", "--json", "--actor", "human:alice"
+    )
+    assert code == 2 and error["error"]["code"] == "invalid_text"
+    assert error["error"]["details"] == {"pointer": "/findings/0/path", "kind": "control_character"}
+    assert forgectl.calls() == []
+
+
+def test_a_lone_surrogate_in_an_unanchored_path_is_refused_before_planning(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path
+) -> None:
+    entry = {"finding": finding("u1", "a\udc00.py", 4), "head_sha": "d" * 40, "reason": "changed"}
+    draft = draft_file(tmp_path, [finding("f1", "a.py", 3)], unanchored=[entry])
+    code, error, _ = cli(
+        "review", PR, "--draft-file", draft, "--dry-run", "--json", "--actor", "human:alice"
+    )
+    assert code == 2 and error["error"]["code"] == "invalid_text"
+    assert error["error"]["details"] == {
+        "pointer": "/unanchored/0/finding/path",
+        "kind": "control_character",
+    }
+    assert forgectl.calls() == []
