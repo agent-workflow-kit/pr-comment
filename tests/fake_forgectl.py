@@ -309,6 +309,7 @@ class Fail(Exception):
         self.extra = extra or {}
         self.plan = plan
         self.fields = fields
+        self.namespace: Namespace | None = None  # the parsed command line, when it got that far
 
     @property
     def exit_code(self) -> int:
@@ -762,7 +763,13 @@ def parse_argv(argv: list[str], version: str = VERSION) -> Namespace:
     parser = build_parser(version)
     token = _SEEN.set(set())
     try:
-        args = parser.parse_args(argv)
+        # parse_args is parse_known_args plus the error for what is left over; an unmodeled
+        # command is found before that error, since its own flags are not known here
+        args, extras = parser.parse_known_args(argv)
+        if args.command in UNMODELED:
+            raise FakeError(f"forgectl {args.command} is not modeled by the fake")
+        if extras:
+            parser.error("unrecognized arguments: " + " ".join(extras))
     finally:
         _SEEN.reset(token)
     if args.verbose and args.quiet:
@@ -1180,24 +1187,32 @@ def _would_refuse_result(ctx: Context, err: Fail) -> dict[str, Any]:
     return result
 
 
-def check_error(ctx: Context, err: Fail) -> None:
-    """A scripted error must be one forgectl can emit for this command, in its exact shape."""
+def check_error(ctx: Context, err: Fail, *, scripted: bool = True) -> None:
+    """An error must be one forgectl can emit for this command, in its exact shape. A scripted one
+    (``scripted``) also names only what the host or a hook decides: the fake itself answers for
+    the command line, the input, the closed host list and confirmation."""
     command = ctx.command
-    if err.code in ("usage", "config_invalid", "invalid_pr", "body_too_large"):
-        raise FakeError(
-            f"{err.code} comes from the command line or the input, which the fake checks itself; "
-            "script a host or hook outcome"
-        )
-    if err.code == "confirmation_required":
-        raise FakeError("confirmation_required is produced by the fake from the argv (no --yes)")
-    if err.code == "partial_results":
-        raise FakeError("partial_results is a `partial` outcome (whoami)")
-    if err.code == "refused":
+    own = ("usage", "config_invalid", "invalid_pr", "body_too_large", "confirmation_required")
+    if scripted:
+        if err.code in own[:4]:
+            raise FakeError(
+                f"{err.code} comes from the command line or the input, which the fake checks "
+                "itself; script a host or hook outcome"
+            )
+        if err.code == "confirmation_required":
+            raise FakeError("confirmation_required is made by the fake from the argv (no --yes)")
+        if err.code == "partial_results":
+            raise FakeError("partial_results is a `partial` outcome (whoami)")
         if err.reason == "unknown_host":
-            raise FakeError("unknown_host is produced by the fake from the closed host list")
-        if err.reason not in ALLOWED_REASONS[command]:
+            raise FakeError("unknown_host is made by the fake from the closed host list")
+    if err.code == "refused":
+        if err.reason not in ALLOWED_REASONS[command] | (
+            frozenset() if scripted else frozenset({"unknown_host"})
+        ):
             raise FakeError(f"forgectl {command} cannot refuse with reason {err.reason!r}")
-    elif err.code not in ALLOWED_CODES[command]:
+    elif err.code == "partial_results" and command == "whoami" and not scripted:
+        pass
+    elif err.code not in ALLOWED_CODES[command] | (frozenset() if scripted else frozenset(own)):
         raise FakeError(f"forgectl {command} cannot fail with code {err.code!r}")
     if err.reason is not None and err.code != "refused":
         raise FakeError("reason is only for code 'refused'")
@@ -1213,9 +1228,13 @@ def check_error(ctx: Context, err: Fail) -> None:
         "hook" in err.extra or "hook_stderr" in err.extra
     ):
         raise FakeError("hook and hook_stderr are only on vetoed and escalated")
-    if "retry_after" in err.extra and err.code != "rate_limited":
-        # forgectl sets it for rate limits and `Retry-After` answers; no other code carries one
-        raise FakeError("retry_after is only on rate_limited")
+    if "retry_after" in err.extra and err.code not in (
+        "rate_limited",
+        "upstream_error",
+        "network_error",
+    ):
+        # a read's last retryable failure carries the wait the host asked for, when known
+        raise FakeError("retry_after is only on rate_limited, upstream_error and network_error")
     required = REQUIRED_DETAILS_BY_CODE.get(err.code, ()) + REQUIRED_DETAILS_BY_REASON.get(
         err.reason or "", ()
     )
@@ -1239,9 +1258,11 @@ def check_error(ctx: Context, err: Fail) -> None:
         raise FakeError(f"{err.code} cannot happen in a dry run (no hook runs, nothing is written)")
 
 
-def check_document(ctx: Context, doc: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
-    """A scripted result must be one forgectl prints: valid against the pinned schema and
-    consistent with the argv and the input. Missing derived fields of a post (the counts and a dry
+def check_document(
+    ctx: Context, doc: dict[str, Any], *, partial: bool = False, fill: bool = True
+) -> dict[str, Any]:
+    """A result must be one forgectl prints: valid against the pinned schema and consistent with
+    the argv and the input. With ``fill``, missing derived fields of a post (the counts and a dry
     run's plan) are filled from the input; a given one must equal it."""
     command = ctx.command
     args = ctx.args
@@ -1254,14 +1275,20 @@ def check_document(ctx: Context, doc: dict[str, Any], *, partial: bool = False) 
         ):
             if key in doc and doc[key] != want:
                 raise FakeError(f"{key} is {doc[key]!r} but the input gives {want}")
-            doc.setdefault(key, want)
+            if fill:
+                doc.setdefault(key, want)
         if ctx.dry_run:
-            plan = doc.setdefault("plan", {})
+            plan = doc.setdefault("plan", {}) if fill else doc.get("plan", {})
             for key, want in prep.plan().items():
                 if key in plan and plan[key] != want:
                     raise FakeError(f"plan.{key} is {plan[key]!r} but the input gives {want!r}")
-                plan.setdefault(key, want)
-    if ctx.dry_run and command in ("review", "comment", "reply", "approve", "resolve", "unresolve"):
+                if fill:
+                    plan.setdefault(key, want)
+    if (
+        fill
+        and ctx.dry_run
+        and command in ("review", "comment", "reply", "approve", "resolve", "unresolve")
+    ):
         doc.setdefault("would_refuse", None)
     problems = schema_errors(document_schema(command), doc)
     if problems:
@@ -1372,6 +1399,95 @@ def _check_post(ctx: Context, doc: dict[str, Any], args: Namespace) -> None:
             raise FakeError("follow_up_done follows a dedupe hit (already_posted)")
     if ctx.dry_run and (doc["follow_up_done"]):
         raise FakeError("a dry run performs no state step")
+
+
+def check_call(
+    argv: list[str], stdin: bytes | None, *, hosts: Mapping[str, str] | None = None
+) -> str | None:
+    """Why forgectl would refuse this call before asking any host (its command line, the closed
+    host list, the flags it requires, the input it reads from stdin), or None."""
+    import io
+
+    try:
+        build_call(argv, hosts or {}, io.BytesIO(stdin or b""), check_config=False)
+    except Fail as err:
+        return f"forgectl refuses this call ({err.code}, exit {err.exit_code}): {err.message}"
+    except FakeError as err:
+        return str(err)
+    except SystemExit:
+        return None  # --version
+    return None
+
+
+def judge(
+    argv: list[str],
+    stdin: bytes | None,
+    exit_code: int | None,
+    stdout: bytes,
+    *,
+    hosts: Mapping[str, str] | None = None,
+) -> list[str]:
+    """What is wrong with an answer to ``argv`` (and ``stdin``) that forgectl could not have
+    given: a call it refuses, a document that breaks the pinned schema or contradicts the argv or
+    the input, an exit code that is not its error's, an error the command cannot end in. Empty
+    when the answer is one forgectl could print."""
+    import io
+
+    try:
+        ctx = build_call(argv, hosts or {}, io.BytesIO(stdin or b""), check_config=False)
+    except Fail as err:
+        return [f"forgectl refuses this call ({err.code}, exit {err.exit_code}): {err.message}"]
+    except FakeError as err:
+        return [str(err)]
+    except SystemExit:
+        return []  # --version
+    if exit_code is None or exit_code > 128:
+        return [] if not stdout else ["a run killed by a signal printed a result"]
+    try:
+        text = stdout.decode("utf-8")
+        document: Any = json.loads(text)
+    except ValueError:
+        return [f"stdout is not a JSON document (exit {exit_code})"]
+    try:
+        if exit_code == 0:
+            check_document(ctx, document, fill=False)
+        elif (
+            isinstance(document, dict)
+            and "error" in document
+            and isinstance(document["error"], dict)
+        ):
+            body: dict[str, Any] = document["error"]
+            code = body.get("code")
+            if code not in EXIT_BY_CODE:
+                return [f"unknown error code {code!r}"]
+            extra = {
+                k: body[k]
+                for k in ("retry_after", "hook", "hook_stderr", "decision_ids", "escalated_hooks")
+                if k in body
+            }
+            err = Fail(
+                code,
+                body.get("message", ""),
+                reason=body.get("reason"),
+                details=body.get("details"),
+                extra=extra,
+            )
+            if err.exit_code != exit_code:
+                return [f"{code} exits {err.exit_code}, not {exit_code}"]
+            check_error(ctx, err, scripted=False)
+            if err.code == "refused" and ctx.dry_run and ctx.command in WRITE_COMMANDS:
+                return ["a refusal on a dry run prints the plan with would_refuse, not an envelope"]
+        elif exit_code == 20 and ctx.dry_run and ctx.command in WRITE_COMMANDS:
+            check_document(ctx, document, fill=False)
+            if not document.get("would_refuse"):
+                return ["exit 20 on a dry run carries would_refuse"]
+        elif exit_code == 12 and ctx.command == "whoami":
+            check_document(ctx, document, partial=True, fill=False)
+        else:
+            return [f"exit {exit_code} prints an error envelope"]
+    except FakeError as err:
+        return [str(err)]
+    return []
 
 
 # --- the call log and the scenario ---------------------------------------------------------------
@@ -1600,53 +1716,74 @@ def _hang(hang: dict[str, Any], rec: Recorder, ctx: Context) -> None:
         time.sleep(0.02)
 
 
+def build_call(
+    argv: list[str],
+    hosts: Mapping[str, str],
+    stdin: Any,
+    *,
+    version: str = VERSION,
+    stdin_tty: bool = False,
+    stderr_tty: bool = False,
+    check_config: bool = True,
+) -> Context:
+    """Everything forgectl settles before a host is asked, in its order: parse, the config file,
+    the closed host list, the human-only and required flags, the input. Raises ``Fail`` (with the
+    parsed ``namespace`` when parsing got that far) or ``FakeError`` for what is not modeled."""
+    if any(a in ("-h", "--help") for a in argv):
+        raise FakeError("--help output is not modeled")
+    args = parse_argv(argv, version)
+    try:
+        command: str = args.command
+        if command in UNMODELED:
+            raise FakeError(f"forgectl {command} is not modeled by the fake")
+        if not args.json:
+            raise FakeError("human output is not modeled: pr-comment always passes --json")
+        if check_config:
+            _check_config(getattr(args, "config", None))
+        backend: str | None = None
+        pr_id: str | None = None
+        if command == "whoami":
+            if args.host is not None:
+                bind_host(args.host, hosts)
+        else:
+            backend, pr_id = bind_pr(args.pr, hosts)
+        prep: Prepared | None = None
+        if command in WRITE_COMMANDS:
+            human = build_context(args, stdin_tty=stdin_tty, stderr_tty=stderr_tty)
+            if human.interactive:
+                raise FakeError("an interactive run (a dialog on a terminal) is not modeled")
+            assert backend is not None
+            prep = _prepare(args, backend, stdin)
+        return Context(
+            args=args,
+            argv=argv,
+            command=command,
+            backend=backend,
+            pr=pr_id,
+            prep=prep,
+            hosts=dict(hosts),
+            version=version,
+            confirmed=bool(getattr(args, "yes", False)),
+            dry_run=bool(getattr(args, "dry_run", False)),
+        )
+    except Fail as err:
+        err.namespace = args
+        raise
+
+
 def run(argv: list[str], directory: Path, rec: Recorder, stdin_raw: Any) -> int:
     json_mode = wants_json(argv)
-    ctx: Context | None = None
-    args: Namespace | None = None
     tee = TeeStdin(rec, stdin_raw)
     try:
         try:
-            if any(a in ("-h", "--help") for a in argv):
-                raise FakeError("--help output is not modeled")
             scenario = json.loads((directory / "scenario.json").read_text(encoding="utf-8"))
-            args = parse_argv(argv, scenario.get("version", VERSION))
-            command: str = args.command
-            if command in UNMODELED:
-                raise FakeError(f"forgectl {command} is not modeled by the fake")
-            if not args.json:
-                raise FakeError("human output is not modeled: pr-comment always passes --json")
-            hosts: dict[str, str] = scenario.get("hosts", {})
-            _check_config(getattr(args, "config", None))
-            backend: str | None = None
-            pr_id: str | None = None
-            if command == "whoami":
-                if args.host is not None:
-                    bind_host(args.host, hosts)
-            else:
-                backend, pr_id = bind_pr(args.pr, hosts)
-            human: HumanContext | None = None
-            prep: Prepared | None = None
-            if command in WRITE_COMMANDS:
-                human = build_context(
-                    args, stdin_tty=_stdin_kind() == "tty", stderr_tty=os.isatty(2)
-                )
-                if human.interactive:
-                    raise FakeError("an interactive run (a dialog on a terminal) is not modeled")
-                assert backend is not None
-                prep = _prepare(args, backend, tee)
-            dry = bool(getattr(args, "dry_run", False))
-            ctx = Context(
-                args=args,
-                argv=argv,
-                command=command,
-                backend=backend,
-                pr=pr_id,
-                prep=prep,
-                hosts=hosts,
+            ctx = build_call(
+                argv,
+                scenario.get("hosts", {}),
+                tee,
                 version=scenario.get("version", VERSION),
-                confirmed=bool(getattr(args, "yes", False)),
-                dry_run=dry,
+                stdin_tty=_stdin_kind() == "tty",
+                stderr_tty=os.isatty(2),
             )
             return _answer(ctx, directory, rec, json_mode)
         except SystemExit as stop:  # argparse's --version
@@ -1654,7 +1791,7 @@ def run(argv: list[str], directory: Path, rec: Recorder, stdin_raw: Any) -> int:
             rec.event("end", exit=code, kind="version" if code == 0 else "exit")
             return code
         except Fail as err:
-            return _fail(err, ctx, args, rec, json_mode)
+            return _fail(err, rec, json_mode)
     finally:
         tee.flush_log()
 
@@ -1675,51 +1812,45 @@ def _prepare(args: Namespace, backend: str, stdin: Any) -> Prepared:
     return prepare_body(args.body_file, limit=limit_for(backend, to), key=key, stdin=stdin)
 
 
-def _fail(
-    err: Fail, ctx: Context | None, args: Namespace | None, rec: Recorder, json_mode: bool
-) -> int:
+def _early_context(args: Namespace) -> Context:
+    """A context for a refusal that came before any host or input was read."""
+    return Context(
+        args=args,
+        argv=[],
+        command=args.command,
+        backend=None,
+        pr=None,
+        prep=None,
+        hosts={},
+        version=VERSION,
+        confirmed=False,
+        dry_run=True,
+    )
+
+
+def _fail(err: Fail, rec: Recorder, json_mode: bool) -> int:
+    """Print a failure found before the host was asked (the command line, the config, the closed
+    host list, the input)."""
+    args = err.namespace
     printable: dict[str, Any] | None = None
     if (
         err.exit_code == 20
-        and ctx is not None
+        and args is not None
         and getattr(args, "dry_run", False)
-        and ctx.command in WRITE_COMMANDS
+        and args.command in WRITE_COMMANDS
     ):
-        printable = _would_refuse_result(ctx, err)
-        problems = schema_errors(document_schema(ctx.command), printable)
+        printable = _would_refuse_result(_early_context(args), err)
+        problems = schema_errors(document_schema(args.command), printable)
         if problems:
             raise FakeError(
                 "would_refuse result violates the pinned schema: " + "; ".join(problems)
             )
-    elif (
-        err.exit_code == 20 and ctx is None and args is not None and getattr(args, "dry_run", False)
-    ):
-        # refused while binding (unknown_host): the context does not exist yet
-        ctx = Context(
-            args=args,
-            argv=[],
-            command=args.command,
-            backend=None,
-            pr=None,
-            prep=None,
-            hosts={},
-            version=VERSION,
-            confirmed=False,
-            dry_run=True,
-        )
-        if args.command in WRITE_COMMANDS:
-            printable = _would_refuse_result(ctx, err)
-            problems = schema_errors(document_schema(args.command), printable)
-            if problems:
-                raise FakeError(
-                    "would_refuse result violates the pinned schema: " + "; ".join(problems)
-                )
     if printable is not None:
         write_line(sys.stdout, dumps(printable))
     elif json_mode:
         write_line(sys.stdout, dumps(err.envelope()))
     write_line(sys.stderr, error_text(err))
-    kind = "usage" if err.code in ("usage", "invalid_pr", "config_invalid") else "refusal"
+    kind = "usage" if err.exit_code == 2 else "refusal"
     rec.event("end", exit=err.exit_code, kind=kind, code=err.code, reason=err.reason)
     return err.exit_code
 
@@ -1833,6 +1964,8 @@ def _is_pre_confirmation(ctx: Context, err: Fail | None, doc: dict[str, Any] | N
     """Whether the scripted outcome happens before forgectl's confirmation step: every refusal
     and read failure does; a success does only when there is nothing to write (a dedupe hit with
     no state step left, a thread already in the requested state)."""
+    if ctx.command not in WRITE_COMMANDS:
+        return True
     if err is not None:
         return err.code not in POST_CONFIRMATION_CODES
     assert doc is not None

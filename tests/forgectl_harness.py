@@ -479,6 +479,11 @@ class FakeForgectl:
         proc.stdin.close()
         return proc
 
+    def next_call_number(self) -> int:
+        """The number the next run of the fake will log under."""
+        count = self.directory / "count"
+        return int(count.read_text()) if count.exists() else 0
+
     def wait_ready(self, n: int, timeout: float = 30.0) -> str:
         """Wait (bounded) until call ``n`` hangs; the phase it hangs in."""
         import time
