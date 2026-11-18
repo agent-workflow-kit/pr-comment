@@ -88,13 +88,29 @@ def test_actor_table(
         ("comment", "body_file"),
         ("reply", "body_file"),
         ("approve", "body_file"),
-        ("draft check", "path"),
         ("draft new", "from_draft"),
     ],
 )
 def test_dash_input_with_tty_stdin_is_refused_for_every_input_flag(command: str, attr: str) -> None:
     with pytest.raises(ActorError):
         run(ns(command=command, **{attr: "-"}), stdin_tty=True, stderr_tty=True)
+
+
+def test_draft_check_dash_with_tty_stdin_is_accepted_and_not_interactive() -> None:
+    ctx = run(ns(command="draft check", path="-"), stdin_tty=True, stderr_tty=True)
+    assert ctx.interactive is False
+    assert ctx.actor == "human:me"
+
+
+def test_allow_mention_with_dash_input_and_piped_stdin_is_refused() -> None:
+    args = ns(allow_mention=["bob"], actor="human:x", body_file="-")
+    with pytest.raises(ActorError, match="--allow-mention"):
+        run(args, stdin_tty=False, stderr_tty=True)
+
+
+def test_allow_mention_refusal_message_names_the_terminal_requirement() -> None:
+    with pytest.raises(ActorError, match="stdin and stderr must be terminals"):
+        run(ns(allow_mention=["bob"], yes=True), stdin_tty=True, stderr_tty=True)
 
 
 def test_dash_input_makes_run_non_interactive_even_with_human_actor_flag() -> None:
@@ -250,6 +266,24 @@ def test_main_allow_mention_with_yes_exits_usage(
     code, doc = _main(monkeypatch, capsys, argv, stdin_tty=True, stderr_tty=True)
     assert code == 2
     assert doc is not None and doc["error"]["code"] == "usage"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["review", "1", "--draft-file", "d.json", "--allow-mention", "bob"],
+        ["comment", "1", "--body-file", "b", "--allow-mention", "bob"],
+        ["reply", "1", "--to", "gh:ic:abc", "--body-file", "b", "--allow-mention", "bob"],
+        ["approve", "1", "--body-file", "b", "--allow-mention", "bob"],
+    ],
+)
+def test_main_allow_mention_without_tty_exits_usage(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    code, doc = _main(monkeypatch, capsys, argv, stdin_tty=False, stderr_tty=False)
+    assert code == 2
+    assert doc is not None and doc["error"]["code"] == "usage"
+    assert "--allow-mention" in doc["error"]["message"]
 
 
 def test_main_override_escalation_yes_human_actor_is_accepted(

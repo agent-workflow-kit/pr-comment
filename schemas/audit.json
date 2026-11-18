@@ -29,7 +29,7 @@
         "tty",
         "default"
       ],
-      "description": "flag (--actor), tty (the human default from a TTY stdin), default (auto:unknown)."
+      "description": "flag: --actor was given, even if equal to the default. tty: no --actor and stdin is a TTY (human:<me.name>, or human:unknown). default: no --actor and stdin is not a TTY (auto:unknown)."
     },
     "stdin_tty": {
       "type": "boolean"

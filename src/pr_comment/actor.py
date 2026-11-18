@@ -30,6 +30,9 @@ _INPUT_ATTRS = {
     "draft new": "from_draft",
 }
 
+# `draft check -` reads stdin but has no dialog: it is not interactive, yet a TTY stdin is no error.
+_REFUSE_DASH_ON_TTY = frozenset({"review", "comment", "reply", "approve", "draft new"})
+
 
 class ActorError(ValueError):
     """A flag combination the actor and interactive rules refuse (exit 2, code ``usage``)."""
@@ -95,7 +98,7 @@ def resolve_run(
 ) -> RunContext:
     """Resolve the run context and apply the flag rules. Raises ``ActorError``."""
     dash = reads_stdin(args)
-    if dash and stdin_tty:
+    if dash and stdin_tty and args.command in _REFUSE_DASH_ON_TTY:
         raise ActorError(
             "stdin is a terminal: `-` cannot be read; pipe the input or pass a file path"
         )
@@ -109,12 +112,15 @@ def resolve_run(
         actor, source = DEFAULT_AUTO, "default"
 
     human = actor.startswith("human:")
+    # `not dash` mirrors docs/interface.md; it only matters for `draft check -` on a TTY, since
+    # the other `-` inputs with a TTY stdin were refused above.
     interactive = stdin_tty and stderr_tty and human and not args.yes and not dash
 
     # --allow-mention exists only on the posting commands; --override-escalation is global.
     if getattr(args, "allow_mention", None) and not (human and interactive):
         raise ActorError(
-            "--allow-mention needs a human actor in an interactive run (no --yes, no `-` input)"
+            "--allow-mention needs a human: actor and an interactive run "
+            "(stdin and stderr must be terminals; no --yes, no `-` input)"
         )
     if args.override_escalation and not human:
         raise ActorError("--override-escalation needs a human actor (--actor human:<name>)")

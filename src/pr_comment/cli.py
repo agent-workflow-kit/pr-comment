@@ -503,6 +503,7 @@ def _check_outcome(result: object) -> Outcome:
 
 
 def _write(stream: Any, text: str) -> None:
+    # TODO(#4): tolerate None/closed stdout/stderr in _write
     """Write text that cannot fail on the stream's encoding."""
     if text:
         encoding = getattr(stream, "encoding", None) or "utf-8"
