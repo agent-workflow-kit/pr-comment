@@ -13,10 +13,11 @@ upper bounds (a URL with ``www.`` counts twice).
 No Markdown is parsed here. Mentions (step 3, #16), the markers of degraded suggestions and the
 rendering of parts (steps 4 to 6) are other modules' work.
 
-todo(#18): render.py calls ``neutralize_characters`` on each untrusted part (title before its
-backslash escaping, path before its code span, body, body file, degraded or moved suggestion
-lines through ``neutralize_suggestion_lines``) and ``count_parts`` on every untrusted part,
-suggestion lines included, before any of that.
+render.py (#18) calls ``neutralize_characters`` on each untrusted part (title before its
+backslash escaping, path before its code span, body). The caller of ``render.finding_parts``
+calls ``count_parts`` (#27) on every untrusted part, suggestion lines included, before any
+neutralizing. ``neutralize_suggestion_lines`` is called by the suggestion renderer (#19) for
+degraded or moved suggestion lines.
 """
 
 from __future__ import annotations

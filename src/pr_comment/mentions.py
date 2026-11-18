@@ -8,10 +8,10 @@ whose name is on the allowlist is kept.
 ``MentionNeutralizer`` is one run's state: call ``neutralize`` on each part in posting order (the
 review body first, then inline comments in draft order), then read ``names`` and ``count``.
 
-Callers not written yet: the renderer applies it to each untrusted part and to the attribution
-line (TODO(#18), TODO(#20)); the posting plan reports ``names`` as ``mentions_neutralized`` and
-``count`` as ``counts.mentions_neutralized`` (TODO(#27)); the review order builds it from
-``LoadedConfig.for_repo`` plus ``--allow-mention`` (TODO(#29)).
+Callers: render.py applies it to each untrusted part of finding text and sections (#18); the
+attribution line is TODO(#20). Not written yet: the posting plan reports ``names`` as
+``mentions_neutralized`` and ``count`` as ``counts.mentions_neutralized`` (TODO(#27)); the review
+order builds it from ``LoadedConfig.for_repo`` plus ``--allow-mention`` (TODO(#29)).
 """
 
 from __future__ import annotations
