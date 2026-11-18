@@ -7,10 +7,12 @@ errors exit 2 ``usage``; a command whose handler is not written yet exits 1 ``in
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import re
 import sys
-from collections.abc import Callable
+import unicodedata
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, NoReturn, cast
 
@@ -24,6 +26,7 @@ EXIT_USAGE = 2
 
 MAX_DECISION_IDS = 32
 MAX_THREADS = 100
+MAX_USAGE_MESSAGE = 200
 POSTING_COMMANDS = frozenset({"review", "comment", "reply", "approve"})
 
 _ACTOR_RE = re.compile(r"^(human|auto):[A-Za-z0-9._@-]{1,64}$")
@@ -56,7 +59,26 @@ Handler = Callable[[argparse.Namespace], Outcome]
 def error_envelope(code: str, message: str) -> dict[str, Any]:
     """A minimal error envelope (schemas/cli/error.json: only ``code`` and ``message`` required)."""
     # TODO(#4): replace with the result objects and the full envelope in errors.py and output.py.
-    return {"error": {"code": code, "message": message}}
+    return {"error": {"code": code, "message": _sanitize(message)}}
+
+
+def _sanitize(text: str) -> str:
+    """Replace control, format and surrogate characters (Cc, Cf, Cs) with ``<U+XXXX>``."""
+    return "".join(
+        f"<U+{ord(char):04X}>" if unicodedata.category(char) in ("Cc", "Cf", "Cs") else char
+        for char in text
+    )
+
+
+def _truncate(text: str, limit: int = MAX_USAGE_MESSAGE) -> str:
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def _version() -> str:
+    try:
+        return importlib.metadata.version("pr-comment")
+    except importlib.metadata.PackageNotFoundError:
+        return __version__
 
 
 # --- value types -----------------------------------------------------------------------------
@@ -102,6 +124,50 @@ class _Parser(argparse.ArgumentParser):
         raise UsageError(message, self.format_usage())
 
 
+class AppendAction(argparse.Action):
+    """Appends in place (linear time) and fails as soon as the count exceeds ``max_count``."""
+
+    def __init__(
+        self,
+        option_strings: Sequence[str],
+        dest: str,
+        max_count: int | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(option_strings, dest, **kwargs)
+        self.max_count = max_count
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str | Sequence[Any] | None,
+        option_string: str | None = None,
+    ) -> None:
+        items = getattr(namespace, self.dest, None)
+        if not isinstance(items, list) or items is self.default:
+            items = []
+            setattr(namespace, self.dest, items)
+        items.append(values)
+        if self.max_count is not None and len(items) > self.max_count:
+            parser.error(f"at most {self.max_count} {option_string} values")
+
+
+class _StoreOnce(argparse.Action):
+    """Stores a value; a second, different value is a usage error."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str | Sequence[Any] | None,
+        option_string: str | None = None,
+    ) -> None:
+        if hasattr(namespace, self.dest) and getattr(namespace, self.dest) != values:
+            parser.error(f"{option_string} given more than once with different values")
+        setattr(namespace, self.dest, values)
+
+
 @dataclass(frozen=True)
 class _GlobalFlag:
     dest: str
@@ -111,14 +177,27 @@ class _GlobalFlag:
 
     @property
     def is_list(self) -> bool:
-        return self.kwargs.get("action") == "append"
+        return self.kwargs.get("action") is AppendAction
+
+    @property
+    def is_bool(self) -> bool:
+        return self.kwargs.get("action") == "store_true"
+
+    @property
+    def takes_value(self) -> bool:
+        return not self.is_bool
 
 
 _GLOBAL_FLAGS = (
     _GlobalFlag(
         "json", ("--json",), {"action": "store_true", "help": "machine-readable JSON output"}, False
     ),
-    _GlobalFlag("config", ("--config",), {"metavar": "PATH", "help": "config file"}, None),
+    _GlobalFlag(
+        "config",
+        ("--config",),
+        {"action": _StoreOnce, "metavar": "PATH", "help": "config file"},
+        None,
+    ),
     _GlobalFlag(
         "dry_run",
         ("--dry-run",),
@@ -132,6 +211,7 @@ _GLOBAL_FLAGS = (
         "expect_plan",
         ("--expect-plan",),
         {
+            "action": _StoreOnce,
             "metavar": "SHA256",
             "type": _matching(_SHA256_RE, "plan hash (64 lowercase hex digits)"),
             "help": "refuse unless the final plan hash matches (posting commands only)",
@@ -142,7 +222,7 @@ _GLOBAL_FLAGS = (
         "override_escalation",
         ("--override-escalation",),
         {
-            "action": "append",
+            "action": AppendAction,
             "metavar": "SCOPE",
             "type": _escalation_scope,
             "help": "human-only: allow escalations of this scope (pr-comment or forgectl)",
@@ -153,6 +233,7 @@ _GLOBAL_FLAGS = (
         "actor",
         ("--actor",),
         {
+            "action": _StoreOnce,
             "metavar": "ACTOR",
             "type": _matching(_ACTOR_RE, "actor (human:<name> or auto:<name>)"),
             "help": "who acts",
@@ -163,7 +244,8 @@ _GLOBAL_FLAGS = (
         "decision_id",
         ("--decision-id",),
         {
-            "action": "append",
+            "action": AppendAction,
+            "max_count": MAX_DECISION_IDS,
             "metavar": "ID",
             "type": _matching(_DECISION_ID_RE, "decision id"),
             "help": f"repeatable, at most {MAX_DECISION_IDS}",
@@ -174,7 +256,7 @@ _GLOBAL_FLAGS = (
         "hook",
         ("--hook",),
         {
-            "action": "append",
+            "action": AppendAction,
             "metavar": "NAME=CMD",
             "type": _hook,
             "help": "per-invocation hook, run after configured hooks",
@@ -190,10 +272,14 @@ _GLOBAL_FLAGS = (
 )
 
 
+# Argparse namespaces of the three parser levels never share a destination: before the command
+# (`top_`), between `draft` and its subcommand (`draft_`) and after the command (no prefix).
+# SUPPRESS keeps an absent flag out of the namespace, so a level never overwrites another;
+# `_TopParser.parse_args` merges the levels and applies the defaults.
+_LEVELS = ("top_", "draft_", "")
+
+
 def _add_global_flags(parser: argparse.ArgumentParser, *, prefix: str = "") -> None:
-    # SUPPRESS keeps an absent flag out of the namespace, so a subcommand's namespace never
-    # overwrites a value given before the command; `_Parser.parse_args` merges both and applies
-    # the defaults.
     for spec in _GLOBAL_FLAGS:
         parser.add_argument(
             *spec.flags,
@@ -201,6 +287,7 @@ def _add_global_flags(parser: argparse.ArgumentParser, *, prefix: str = "") -> N
             default=argparse.SUPPRESS,
             **spec.kwargs,
         )
+    parser.add_argument("--version", action="version", version=f"{PROG} {_version()}")
 
 
 class _TopParser(_Parser):
@@ -209,18 +296,20 @@ class _TopParser(_Parser):
     ) -> argparse.Namespace:
         parsed = cast(argparse.Namespace, super().parse_args(args, namespace))
         for spec in _GLOBAL_FLAGS:
-            before = getattr(parsed, "top_" + spec.dest, None)
-            if hasattr(parsed, "top_" + spec.dest):
-                delattr(parsed, "top_" + spec.dest)
-            after = getattr(parsed, spec.dest, None)
+            given: list[Any] = []
+            for prefix in _LEVELS:
+                name = prefix + spec.dest
+                if hasattr(parsed, name):
+                    given.append(getattr(parsed, name))
+                    delattr(parsed, name)
             if spec.is_list:
-                value: Any = [*(before or []), *(after or [])]
-            elif after is not None:
-                value = after
-            elif before is not None:
-                value = before
+                value: Any = [item for items in given for item in items]
+            elif spec.is_bool:
+                value = any(given)
+            elif len(set(given)) > 1:
+                self.error(f"{spec.flags[0]} given more than once with different values")
             else:
-                value = spec.default
+                value = given[0] if given else spec.default
             setattr(parsed, spec.dest, value)
         return parsed
 
@@ -237,16 +326,19 @@ def _leaf(
 
 
 def _add_common_posting_flags(parser: argparse.ArgumentParser, *, base: bool = False) -> None:
+    # TODO(#6): validate the forwarded value grammars of --expected-head, --expected-base and
+    # --dedupe-key (and of the PR argument, including `invalid_pr` and a leading dash) here.
     parser.add_argument("--expected-head", metavar="SHA")
     if base:
         parser.add_argument("--expected-base", metavar="REF")
     parser.add_argument("--dedupe-key", metavar="KEY")
-    parser.add_argument("--allow-mention", action="append", default=[], metavar="NAME")
+    # TODO(#16): validate and apply the mention allowlist; TODO(#5): require a human actor and
+    # an interactive run for --allow-mention.
+    parser.add_argument("--allow-mention", action=AppendAction, default=[], metavar="NAME")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = _TopParser(prog=PROG, description=DESCRIPTION)
-    parser.add_argument("--version", action="version", version=f"{PROG} {__version__}")
     _add_global_flags(parser, prefix="top_")
     sub = parser.add_subparsers(
         dest=argparse.SUPPRESS, metavar="<command>", required=True, parser_class=_Parser
@@ -255,6 +347,7 @@ def build_parser() -> argparse.ArgumentParser:
     review = _leaf(sub, "review", "review", "post one review from a draft")
     review.add_argument("--draft-file", required=True, metavar="PATH|-")
     review.add_argument("--approve", action="store_true")
+    # TODO(#6): validate the --reanchor-to value grammar.
     review.add_argument("--reanchor-to", metavar="SHA")
     _add_common_posting_flags(review)
 
@@ -263,6 +356,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_posting_flags(comment)
 
     reply = _leaf(sub, "reply", "reply", "reply to a comment, thread or review")
+    # TODO(#6): validate the --to id grammar.
     reply.add_argument("--to", required=True, metavar="ID")
     reply.add_argument("--body-file", required=True, metavar="PATH|-")
     _add_common_posting_flags(reply)
@@ -273,9 +367,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name, text in (("resolve", "resolve review threads"), ("unresolve", "reopen threads")):
         thread = _leaf(sub, name, name, text)
-        thread.add_argument("--thread", action="append", required=True, metavar="ID")
+        # TODO(#6): validate the --thread id grammar (gh:rt: or gl:d:).
+        thread.add_argument(
+            "--thread",
+            action=AppendAction,
+            max_count=MAX_THREADS,
+            default=[],
+            required=True,
+            metavar="ID",
+        )
 
     draft = sub.add_parser("draft", help="draft tools")
+    _add_global_flags(draft, prefix="draft_")
     draft_sub = draft.add_subparsers(
         dest=argparse.SUPPRESS, metavar="<command>", required=True, parser_class=_Parser
     )
@@ -286,6 +389,7 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("--from", dest="from_draft", metavar="PATH|-")
 
     export = _leaf(sub, "export", "export", "print audit or log records", positional=())
+    # TODO(#38): validate --since (RFC 3339 or a duration such as 7d).
     export.add_argument("--since", metavar="TIME")
     export.add_argument("--log", action="store_true")
     return parser
@@ -293,8 +397,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def validate_args(args: argparse.Namespace) -> None:
     """Rules argparse cannot express. Raises ``UsageError``."""
+    # TODO(#5): resolve the actor, detect interactive runs, apply the human-only flag rules
+    # (--allow-mention, --override-escalation) and refuse `--body-file -` / `--draft-file -`
+    # when stdin is a TTY.
+    # TODO(#6): the grammars enforced at parse time (--actor, --decision-id, --expect-plan,
+    # --hook, --override-escalation and the thread cap) move into the shared validator.
     if args.expect_plan is not None and args.command not in POSTING_COMMANDS:
         raise UsageError(f"--expect-plan is only valid with {', '.join(sorted(POSTING_COMMANDS))}")
+    # The parse-time caps count per parser level; these count the merged total.
     if len(args.decision_id) > MAX_DECISION_IDS:
         raise UsageError(f"at most {MAX_DECISION_IDS} --decision-id values")
     if args.command in ("resolve", "unresolve") and len(args.thread) > MAX_THREADS:
@@ -311,8 +421,9 @@ def _not_implemented(args: argparse.Namespace) -> Outcome:
 
 
 # One handler per command path. Later issues replace the entries with real handlers.
-# TODO(#5): review, comment, reply and approve (posting); TODO(#6): resolve and unresolve;
-# TODO(#7): draft check, draft new and export.
+# TODO(#29): review; TODO(#30): comment and reply; TODO(#31): approve and review --approve;
+# TODO(#35): resolve and unresolve; TODO(#15): draft check; TODO(#37): draft new;
+# TODO(#38): export.
 HANDLERS: dict[str, Handler] = {
     key: _not_implemented
     for key in (
@@ -328,38 +439,98 @@ HANDLERS: dict[str, Handler] = {
     )
 }
 
+_VALUE_FLAGS = frozenset(flag for spec in _GLOBAL_FLAGS if spec.takes_value for flag in spec.flags)
+
 
 def _wants_json(argv: list[str]) -> bool:
-    return "--json" in argv[: argv.index("--")] if "--" in argv else "--json" in argv
+    """True when a token before ``--`` asks for JSON (``--json`` or ``--json=<anything>``)."""
+    head = argv[: argv.index("--")] if "--" in argv else argv
+    return any(token == "--json" or token.startswith("--json=") for token in head)
 
 
-def _emit(outcome: Outcome, *, as_json: bool) -> None:
+def _dash_dash_before_command(argv: list[str]) -> bool:
+    """True when ``--`` appears before the command token (or between ``draft`` and its subcommand).
+
+    argparse treats that differently across Python versions, so it is refused up front.
+    """
+    skip = False
+    seen_draft = False
+    for token in argv:
+        if token == "--":
+            return True
+        if skip:
+            skip = False
+        elif token in _VALUE_FLAGS:
+            skip = True
+        elif token.startswith("-"):
+            continue
+        elif token == "draft" and not seen_draft:
+            seen_draft = True
+        else:
+            return False
+    return False
+
+
+def _render(outcome: Outcome, *, as_json: bool) -> tuple[str, str]:
+    """The stdout and stderr text of an outcome, built before anything is written."""
     if as_json:
-        if outcome.document is not None:
-            sys.stdout.write(json.dumps(outcome.document, ensure_ascii=False) + "\n")
-    elif outcome.exit_code != 0 and outcome.document is not None:
+        if outcome.document is None:
+            return "", ""
+        return json.dumps(outcome.document, ensure_ascii=True) + "\n", ""
+    if outcome.exit_code != 0 and outcome.document is not None:
         error = outcome.document.get("error")
         if isinstance(error, dict):
-            print(f"{PROG}: {error.get('message', error.get('code'))}", file=sys.stderr)
+            message = _sanitize(str(error.get("message", error.get("code"))))
+            return "", f"{PROG}: {message}\n"
+    return "", ""
+
+
+def _check_outcome(result: object) -> Outcome:
+    if not isinstance(result, Outcome):
+        raise TypeError("handler did not return an Outcome")
+    if type(result.exit_code) is not int:
+        raise TypeError("handler exit code is not an integer")
+    if result.document is not None and not isinstance(result.document, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
+        raise TypeError("handler document is not a dict")
+    return result
+
+
+def _write(stream: Any, text: str) -> None:
+    """Write text that cannot fail on the stream's encoding."""
+    if text:
+        encoding = getattr(stream, "encoding", None) or "utf-8"
+        stream.write(text.encode(encoding, "backslashreplace").decode(encoding, "replace"))
+        stream.flush()
+
+
+def _fail_usage(argv: list[str], message: str, usage: str) -> int:
+    message = _truncate(_sanitize(message))
+    outcome = Outcome(EXIT_USAGE, error_envelope("usage", message))
+    stdout, stderr = _render(outcome, as_json=_wants_json(argv))
+    _write(sys.stderr, usage)
+    _write(sys.stderr, stderr)
+    _write(sys.stdout, stdout)
+    return outcome.exit_code
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     parser = build_parser()
+    if _dash_dash_before_command(argv):
+        return _fail_usage(argv, "'--' is not allowed before the command", parser.format_usage())
     try:
         args = parser.parse_args(argv)
         validate_args(args)
     except UsageError as exc:
-        outcome = Outcome(EXIT_USAGE, error_envelope("usage", exc.message))
-        if exc.usage:
-            sys.stderr.write(exc.usage)
-        _emit(outcome, as_json=_wants_json(argv))
-        return outcome.exit_code
+        return _fail_usage(argv, exc.message, exc.usage)
     try:
-        outcome = HANDLERS[args.command](args)
+        outcome = _check_outcome(HANDLERS[args.command](args))
+        stdout, stderr = _render(outcome, as_json=args.json)
     except Exception as exc:  # a handler bug must still honor the exit-code and envelope contract
         outcome = Outcome(
             EXIT_INTERNAL, error_envelope("internal", f"unexpected {type(exc).__name__}")
         )
-    _emit(outcome, as_json=args.json)
+        stdout, stderr = _render(outcome, as_json=args.json)
+    _write(sys.stderr, stderr)
+    _write(sys.stdout, stdout)
     return outcome.exit_code
