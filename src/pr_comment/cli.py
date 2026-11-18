@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any, NoReturn, cast
 
 from . import __version__, grammars
-from .actor import ActorError, resolve_run, stream_is_tty
+from .actor import ActorError, resolve_run, stream_is_tty, with_me_name
 from .config import ConfigError, load_config
 from .errors import sanitize
 from .grammars import MAX_DECISION_IDS, MAX_THREADS
@@ -616,7 +616,6 @@ def _load_config_into(args: argparse.Namespace) -> Outcome | None:
 
     ``draft check`` is offline and ``export`` reads local files only: neither reads config, so a
     broken config never blocks reading the audit trail (interface.md, Commands).
-    TODO(#5): the actor resolution passes ``loaded_config.config.me.name`` to ``_human_default``.
     TODO(#11): write ``loaded_config.warnings`` as ``config_warning`` log lines.
     TODO(#26) and TODO(#29): callers pass the canonical repo id to ``loaded_config.for_repo``.
     TODO(#33): merge ``loaded_config.hooks_for(name, args.hook)`` when running hooks.
@@ -631,6 +630,9 @@ def _load_config_into(args: argparse.Namespace) -> Outcome | None:
         return error_outcome(
             "config_invalid", sanitize(str(exc)), details={"key": sanitize(exc.key)}
         )
+    # The flag rules were checked in validate_args and do not depend on the name; the config's
+    # `me.name` only replaces the OS username of a TTY default actor.
+    args.run = with_me_name(args.run, args.loaded_config.config.me.name)
     return None
 
 
