@@ -1,0 +1,10 @@
+diff --git a/f.txt b/g.txt
+similarity index 97%
+rename from f.txt
+rename to g.txt
+index c6aa3e4..8357b70 100644
+--- a/f.txt
++++ b/g.txt
+@@ -1 +1,2 @@
++top
+ line01
