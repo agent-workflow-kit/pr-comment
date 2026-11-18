@@ -588,8 +588,8 @@ class LoadedConfig:
         """Global values with the ``repos.<id>`` override merged over them (key match ignores
         ASCII case; unset keys inherit; a list the override sets replaces the global one).
 
-        The posting orders (``prepare.py``) call this with the canonical repo id from ``show``.
-        TODO(#31): the automatic approval guard takes ``allow_auto_approve`` from it.
+        The posting orders (``prepare.py``) call this with the canonical repo id from ``show``;
+        the automatic approval guard (``approve.py``) takes ``allow_auto_approve`` from it.
         """
         cfg = self.config
         wanted = _fold(repo_id)

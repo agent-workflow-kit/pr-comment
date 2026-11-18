@@ -1,0 +1,21 @@
+{
+  "action": "approve",
+  "already_posted": null,
+  "base_ref": "main",
+  "dedupe_key": "<key>",
+  "dry_run": true,
+  "event": "approve",
+  "follow_up_done": null,
+  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "head_verified": null,
+  "ids": [],
+  "markers_removed": 0,
+  "mentions_neutralized": [],
+  "neutralized_lines": 0,
+  "plan": null,
+  "plan_sha256": "<plan>",
+  "pr": "github.com/acme/widgets#7",
+  "review_id": null,
+  "thread_ids": [],
+  "warnings": []
+}
