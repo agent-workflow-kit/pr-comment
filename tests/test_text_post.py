@@ -192,6 +192,31 @@ def test_a_confirmed_text_post_sends_the_plan_byte_for_byte_and_audits_the_pair(
 
 
 @pytest.mark.parametrize("kind", KINDS)
+def test_the_dedupe_key_sent_follows_the_body_and_the_reply_target(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, kind: str
+) -> None:
+    from pr_comment import keys
+
+    pr_id = h.show_doc(PR)["pr_id"]
+    first, second = "first body", "second body"
+    other = "gh:rc:RC_2"
+    runs = [(first, GH_TARGET), (second, GH_TARGET)]
+    if kind == "reply":
+        runs.append((first, other))
+    forgectl.script(*[s for _ in runs for s in (show(), dry(kind), posted(kind))])
+    for text, to in runs:
+        code, _, _ = cli(*args_for(kind, body_file(tmp_path, text), to=to))
+        assert code == 0
+    sent_keys = [flag(c, "--dedupe-key") for c in writes_of(forgectl, kind) if c.is_write]
+    expected = [
+        [keys.reply_key(pr_id, to, text) if kind == "reply" else keys.comment_key(pr_id, text)]
+        for text, to in runs
+    ]
+    assert sent_keys == expected
+    assert len({k[0] for k in sent_keys}) == len(runs)
+
+
+@pytest.mark.parametrize("kind", KINDS)
 def test_a_gitlab_text_post(
     cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path, kind: str
 ) -> None:
@@ -364,6 +389,20 @@ def test_a_bad_body_exits_2_with_nothing_sent_or_recorded(
     code, doc, _ = cli(*args_for(kind, str(body)))
     assert code == 2
     validate("pr-comment/cli/error.json", doc)
+    assert forgectl.calls() == [] and audit(state_home) == []
+
+
+@pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("text", ["\n", "\r\n", "  ", "  \n\n", "\x0b", "\u0085", "  \t"])
+def test_a_whitespace_only_body_is_empty_and_exits_2_with_nothing_sent_or_recorded(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path, kind: str, text: str
+) -> None:
+    body = tmp_path / "body.txt"
+    body.write_bytes(text.encode("utf-8"))
+    code, doc, _ = cli(*args_for(kind, str(body)))
+    assert code == 2
+    validate("pr-comment/cli/error.json", doc)
+    assert "empty" in doc["error"]["message"]
     assert forgectl.calls() == [] and audit(state_home) == []
 
 
@@ -590,12 +629,14 @@ def test_a_reply_target_with_a_bad_grammar_exits_2_before_any_call(
 # --- the strict answer ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("change", ["missing", None, "yes"])
 def test_a_reply_answer_without_threaded_is_a_contract_mismatch_that_landed(
     cli: Run,
     forgectl: FakeForgectl,
     tmp_path: Path,
     state_home: Path,
     monkeypatch: pytest.MonkeyPatch,
+    change: object,
 ) -> None:
     from pr_comment import gateway as gateway_module
 
@@ -607,7 +648,10 @@ def test_a_reply_answer_without_threaded_is_a_contract_mismatch_that_landed(
         result = original(self, subcommand, args, stdin=stdin)
         if subcommand == "reply" and "--yes" in args:
             document = json.loads(result.stdout)
-            document.pop("threaded", None)
+            if change == "missing":
+                document.pop("threaded", None)
+            else:
+                document["threaded"] = change
             result = dataclasses.replace(result, stdout=json.dumps(document).encode())
         return result
 
@@ -830,6 +874,34 @@ def test_a_signal_during_the_write_is_outcome_unknown_and_audited(
     validate_audit(records)
     assert [r["result"] for r in records] == ["attempted", "outcome_unknown"]
     assert records[1]["writes"][0]["lower"]["code"] == "outcome_unknown"
+    assert len(forgectl.writes()) == 1
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_signal_after_forgectl_printed_its_full_answer_is_still_outcome_unknown(
+    forgectl: FakeForgectl, tmp_path: Path, state_home: Path, kind: str
+) -> None:
+    body = body_file(tmp_path)
+    forgectl.script(
+        show(),
+        dry(kind),
+        ok(kind, h.post_doc(kind, ids=["gh:ic:IC_1"]), hang={"phase": "after_outcome"}),
+    )
+    n = forgectl.next_call_number() + 3
+    proc = _start_cli(forgectl, tmp_path, state_home, *args_for(kind, body))
+    forgectl.wait_ready(n)
+    os.kill(proc.pid, signal.SIGTERM)  # the exact pid this test started
+    stdout, _ = proc.communicate(timeout=60)
+    assert proc.returncode == 12
+    doc = json.loads(stdout)
+    validate("pr-comment/cli/error.json", doc)
+    error = doc["error"]
+    assert error["code"] == "outcome_unknown"
+    records = audit(state_home)
+    validate_audit(records)
+    # forgectl's own answer was a success: the record keeps it, the run still ends unknown
+    assert [r["result"] for r in records] == ["attempted", "done"]
+    assert records[0]["attempt_id"] == records[1]["attempt_id"]
     assert len(forgectl.writes()) == 1
 
 
