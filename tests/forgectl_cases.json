@@ -1,0 +1,4573 @@
+{
+ "_meta": {
+  "recorded_from": "forgectl 0.55.2",
+  "how": "real forgectl, scratch HOME, no credentials, PATH without gh or glab; every case ends before a host is read"
+ },
+ "cases": [
+  {
+   "name": "version",
+   "argv": [
+    "--version"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 0,
+    "stdout": "forgectl 0.55.2\n",
+    "stderr": ""
+   }
+  },
+  {
+   "name": "version-with-json",
+   "argv": [
+    "--json",
+    "--version"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 0,
+    "stdout": "forgectl 0.55.2\n",
+    "stderr": ""
+   }
+  },
+  {
+   "name": "version-after-command",
+   "argv": [
+    "show",
+    "--version"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "forgectl: error: usage: the following arguments are required: pr\n"
+   }
+  },
+  {
+   "name": "unknown-command",
+   "argv": [
+    "bogus",
+    "--json"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument <command>: invalid choice: 'bogus' (choose from 'prs', 'show', 'diff', 'files', 'comments', 'reviews', 'ci', 'snapshot', 'snapshots', 'poll', 'compare', 'access', 'whoami', 'merge', 'review', 'comment', 'reply', 'resolve', 'unresolve', 'approve', 'browse', 'export')"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument <command>: invalid choice: 'bogus' (choose from 'prs', 'show', 'diff', 'files', 'comments', 'reviews', 'ci', 'snapshot', 'snapshots', 'poll', 'compare', 'access', 'whoami', 'merge', 'review', 'comment', 'reply', 'resolve', 'unresolve', 'approve', 'browse', 'export')\n"
+   }
+  },
+  {
+   "name": "no-command",
+   "argv": [
+    "--json"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the following arguments are required: <command>"
+     }
+    },
+    "stderr": "forgectl: error: usage: the following arguments are required: <command>\n"
+   }
+  },
+  {
+   "name": "show-no-pr",
+   "argv": [
+    "show",
+    "--json"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the following arguments are required: pr"
+     }
+    },
+    "stderr": "forgectl: error: usage: the following arguments are required: pr\n"
+   }
+  },
+  {
+   "name": "show-extra-positional",
+   "argv": [
+    "show",
+    "--json",
+    "github.com/o/r#1",
+    "extra"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "unrecognized arguments: extra"
+     }
+    },
+    "stderr": "forgectl: error: usage: unrecognized arguments: extra\n"
+   }
+  },
+  {
+   "name": "show-rejects-dry-run",
+   "argv": [
+    "show",
+    "--json",
+    "github.com/o/r#1",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "unrecognized arguments: --dry-run"
+     }
+    },
+    "stderr": "forgectl: error: usage: unrecognized arguments: --dry-run\n"
+   }
+  },
+  {
+   "name": "show-rejects-yes",
+   "argv": [
+    "show",
+    "--json",
+    "github.com/o/r#1",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "unrecognized arguments: --yes"
+     }
+    },
+    "stderr": "forgectl: error: usage: unrecognized arguments: --yes\n"
+   }
+  },
+  {
+   "name": "show-rejects-dedupe-key",
+   "argv": [
+    "show",
+    "--json",
+    "github.com/o/r#1",
+    "--dedupe-key=x"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "unrecognized arguments: --dedupe-key=x"
+     }
+    },
+    "stderr": "forgectl: error: usage: unrecognized arguments: --dedupe-key=x\n"
+   }
+  },
+  {
+   "name": "write-flag-before-command",
+   "argv": [
+    "--yes",
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-"
+   ],
+   "stdin": {
+    "text": "x"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "--yes must follow the command (forgectl <command> ... --yes)"
+     }
+    },
+    "stderr": "forgectl: error: usage: --yes must follow the command (forgectl <command> ... --yes)\n"
+   }
+  },
+  {
+   "name": "bad-pr-leading-zero",
+   "argv": [
+    "comments",
+    "--json",
+    "github.com/o/r#01"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "invalid_pr",
+      "message": "not a pull request URL or host/<project path>#N: 'github.com/o/r#01'"
+     }
+    },
+    "stderr": "forgectl: error: invalid_pr: not a pull request URL or host/<project path>#N: 'github.com/o/r#01'\n"
+   }
+  },
+  {
+   "name": "bad-pr-leading-dash",
+   "argv": [
+    "comments",
+    "--json",
+    "-github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the following arguments are required: pr"
+     }
+    },
+    "stderr": "forgectl: error: usage: the following arguments are required: pr\n"
+   }
+  },
+  {
+   "name": "bad-pr-no-number",
+   "argv": [
+    "comments",
+    "--json",
+    "github.com/o/r"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "invalid_pr",
+      "message": "not a pull request URL or host/<project path>#N: 'github.com/o/r'"
+     }
+    },
+    "stderr": "forgectl: error: invalid_pr: not a pull request URL or host/<project path>#N: 'github.com/o/r'\n"
+   }
+  },
+  {
+   "name": "bad-pr-whitespace",
+   "argv": [
+    "comments",
+    "--json",
+    "github.com/o/r #1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "invalid_pr",
+      "message": "not a pull request URL or host/<project path>#N: 'github.com/o/r #1'"
+     }
+    },
+    "stderr": "forgectl: error: invalid_pr: not a pull request URL or host/<project path>#N: 'github.com/o/r #1'\n"
+   }
+  },
+  {
+   "name": "bad-pr-at-sign",
+   "argv": [
+    "comments",
+    "--json",
+    "https://github.com/o/r/pull/1@x"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "invalid_pr",
+      "message": "not a pull request URL or host/<project path>#N: 'https://github.com/o/r/pull/1@x'"
+     }
+    },
+    "stderr": "forgectl: error: invalid_pr: not a pull request URL or host/<project path>#N: 'https://github.com/o/r/pull/1@x'\n"
+   }
+  },
+  {
+   "name": "timeout-zero",
+   "argv": [
+    "show",
+    "--json",
+    "--timeout=0",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument --timeout: not a positive duration (seconds, or a number with ms, s, m, h or d): '0'"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument --timeout: not a positive duration (seconds, or a number with ms, s, m, h or d): '0'\n"
+   }
+  },
+  {
+   "name": "timeout-empty",
+   "argv": [
+    "show",
+    "--json",
+    "--timeout=",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument --timeout: not a positive duration (seconds, or a number with ms, s, m, h or d): ''"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument --timeout: not a positive duration (seconds, or a number with ms, s, m, h or d): ''\n"
+   }
+  },
+  {
+   "name": "timeout-exponent",
+   "argv": [
+    "show",
+    "--json",
+    "--timeout=1e3",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument --timeout: not a positive duration (seconds, or a number with ms, s, m, h or d): '1e3'"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument --timeout: not a positive duration (seconds, or a number with ms, s, m, h or d): '1e3'\n"
+   }
+  },
+  {
+   "name": "timeout-too-long",
+   "argv": [
+    "show",
+    "--json",
+    "--timeout=99999d",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument --timeout: longer than 100 years: '99999d'"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument --timeout: longer than 100 years: '99999d'\n"
+   }
+  },
+  {
+   "name": "timeout-twice",
+   "argv": [
+    "show",
+    "--json",
+    "--timeout=60s",
+    "--timeout=60s",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "--timeout given more than once"
+     }
+    },
+    "stderr": "forgectl: error: usage: --timeout given more than once\n"
+   }
+  },
+  {
+   "name": "timeout-before-and-after",
+   "argv": [
+    "--json",
+    "--timeout=5",
+    "show",
+    "--timeout=6",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "--timeout given more than once"
+     }
+    },
+    "stderr": "forgectl: error: usage: --timeout given more than once\n"
+   }
+  },
+  {
+   "name": "config-empty",
+   "argv": [
+    "show",
+    "--json",
+    "--config=",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument --config: must not be empty"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument --config: must not be empty\n"
+   }
+  },
+  {
+   "name": "config-missing",
+   "argv": [
+    "show",
+    "--json",
+    "--config=/nonexistent/x.yaml",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "config_invalid",
+      "message": "/nonexistent/x.yaml: no such file, or a symbolic link to nothing",
+      "details": {
+       "key": "/nonexistent/x.yaml"
+      }
+     }
+    },
+    "stderr": "forgectl: error: config_invalid: /nonexistent/x.yaml: no such file, or a symbolic link to nothing\n"
+   }
+  },
+  {
+   "name": "json-twice",
+   "argv": [
+    "show",
+    "--json",
+    "--json",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "--json given more than once"
+     }
+    },
+    "stderr": "forgectl: error: usage: --json given more than once\n"
+   }
+  },
+  {
+   "name": "verbose-and-quiet",
+   "argv": [
+    "show",
+    "--json",
+    "--verbose",
+    "--quiet",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "--verbose and --quiet cannot be combined"
+     }
+    },
+    "stderr": "forgectl: error: usage: --verbose and --quiet cannot be combined\n"
+   }
+  },
+  {
+   "name": "abbreviation",
+   "argv": [
+    "show",
+    "--json",
+    "--tim=5s",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "unrecognized arguments: --tim=5s"
+     }
+    },
+    "stderr": "forgectl: error: usage: unrecognized arguments: --tim=5s\n"
+   }
+  },
+  {
+   "name": "compare-no-from",
+   "argv": [
+    "compare",
+    "--json",
+    "github.com/o/r#1",
+    "--to=0123456789abcdef0123456789abcdef01234567"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the following arguments are required: --from"
+     }
+    },
+    "stderr": "forgectl: error: usage: the following arguments are required: --from\n"
+   }
+  },
+  {
+   "name": "compare-short-sha",
+   "argv": [
+    "compare",
+    "--json",
+    "github.com/o/r#1",
+    "--from=0123",
+    "--to=0123456789abcdef0123456789abcdef01234567"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "not a full 40-hex sha: '0123'"
+     }
+    },
+    "stderr": "forgectl: error: usage: not a full 40-hex sha: '0123'\n"
+   }
+  },
+  {
+   "name": "compare-flag-value-as-option",
+   "argv": [
+    "compare",
+    "--json",
+    "github.com/o/r#1",
+    "--from",
+    "--to",
+    "--to=0123456789abcdef0123456789abcdef01234567"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument --from: expected one argument"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument --from: expected one argument\n"
+   }
+  },
+  {
+   "name": "whoami-bad-host",
+   "argv": [
+    "whoami",
+    "--json",
+    "--host=bogus_host"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "not a valid host: 'bogus_host'"
+     }
+    },
+    "stderr": "forgectl: error: usage: not a valid host: 'bogus_host'\n"
+   }
+  },
+  {
+   "name": "whoami-extra",
+   "argv": [
+    "whoami",
+    "--json",
+    "extra"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "unrecognized arguments: extra"
+     }
+    },
+    "stderr": "forgectl: error: usage: unrecognized arguments: extra\n"
+   }
+  },
+  {
+   "name": "whoami-host-twice",
+   "argv": [
+    "whoami",
+    "--json",
+    "--host",
+    "github.com",
+    "--host=github.com"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "--host given more than once"
+     }
+    },
+    "stderr": "forgectl: error: usage: --host given more than once\n"
+   }
+  },
+  {
+   "name": "comment-empty-body-file-value",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file="
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument --body-file: must not be empty"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument --body-file: must not be empty\n"
+   }
+  },
+  {
+   "name": "comment-missing-body-file",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the following arguments are required: --body-file"
+     }
+    },
+    "stderr": "forgectl: error: usage: the following arguments are required: --body-file\n"
+   }
+  },
+  {
+   "name": "comment-bad-actor",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--actor=bogus"
+   ],
+   "stdin": {
+    "text": "x"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument --actor: must look like human:<user> or auto:<name>: 'bogus'"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument --actor: must look like human:<user> or auto:<name>: 'bogus'\n"
+   }
+  },
+  {
+   "name": "comment-actor-twice",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--actor=auto:a",
+    "--actor=auto:b"
+   ],
+   "stdin": {
+    "text": "x"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "--actor given more than once"
+     }
+    },
+    "stderr": "forgectl: error: usage: --actor given more than once\n"
+   }
+  },
+  {
+   "name": "comment-bad-decision-id",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--decision-id=a b"
+   ],
+   "stdin": {
+    "text": "x"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument --decision-id: not a valid decision id: 'a b'"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument --decision-id: not a valid decision id: 'a b'\n"
+   }
+  },
+  {
+   "name": "comment-empty-dedupe-key",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dedupe-key="
+   ],
+   "stdin": {
+    "text": "x"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument --dedupe-key: not a valid dedupe key: ''"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument --dedupe-key: not a valid dedupe key: ''\n"
+   }
+  },
+  {
+   "name": "comment-bad-dedupe-key",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dedupe-key=a/b"
+   ],
+   "stdin": {
+    "text": "x"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument --dedupe-key: not a valid dedupe key: 'a/b'"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument --dedupe-key: not a valid dedupe key: 'a/b'\n"
+   }
+  },
+  {
+   "name": "comment-body-file-path-missing",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "/nonexistent",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "x"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body file cannot be opened (No such file or directory)"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body file cannot be opened (No such file or directory)\n"
+   }
+  },
+  {
+   "name": "reply-bad-to",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:xx:abc",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "x"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "not a valid comment or thread id: 'gh:xx:abc'"
+     }
+    },
+    "stderr": "forgectl: error: usage: not a valid comment or thread id: 'gh:xx:abc'\n"
+   }
+  },
+  {
+   "name": "reply-gitlab-note-zero",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gl:n:0",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "x"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "not a valid comment or thread id: 'gl:n:0'"
+     }
+    },
+    "stderr": "forgectl: error: usage: not a valid comment or thread id: 'gl:n:0'\n"
+   }
+  },
+  {
+   "name": "resolve-bad-thread",
+   "argv": [
+    "resolve",
+    "--json",
+    "github.com/o/r#1",
+    "--thread=bogus"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "not a valid comment or thread id: 'bogus'"
+     }
+    },
+    "stderr": "forgectl: error: usage: not a valid comment or thread id: 'bogus'\n"
+   }
+  },
+  {
+   "name": "review-bad-expected-head",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef0123456",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "not a full 40-hex sha: '0123456789abcdef0123456789abcdef0123456'"
+     }
+    },
+    "stderr": "forgectl: error: usage: not a full 40-hex sha: '0123456789abcdef0123456789abcdef0123456'\n"
+   }
+  },
+  {
+   "name": "review-bad-base-full-ref",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=refs/heads/main"
+   ],
+   "stdin": {
+    "text": "{}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "not a valid branch name: 'refs/heads/main'"
+     }
+    },
+    "stderr": "forgectl: error: usage: not a valid branch name: 'refs/heads/main'\n"
+   }
+  },
+  {
+   "name": "review-bad-base-dash",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=-x"
+   ],
+   "stdin": {
+    "text": "{}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "not a valid branch name: '-x'"
+     }
+    },
+    "stderr": "forgectl: error: usage: not a valid branch name: '-x'\n"
+   }
+  },
+  {
+   "name": "review-bad-base-dots",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=a..b"
+   ],
+   "stdin": {
+    "text": "{}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "not a valid branch name: 'a..b'"
+     }
+    },
+    "stderr": "forgectl: error: usage: not a valid branch name: 'a..b'\n"
+   }
+  },
+  {
+   "name": "review-bad-base-bidi",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=a\u202eb"
+   ],
+   "stdin": {
+    "text": "{}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "not a valid branch name: 'a\\u202eb'"
+     }
+    },
+    "stderr": "forgectl: error: usage: not a valid branch name: 'a\\u202eb'\n"
+   }
+  },
+  {
+   "name": "review-needs-pins",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"approve\"}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review needs --expected-head and --expected-base unless the run is interactive (stdin and stderr terminals, a human actor, no --yes, no '-' input)"
+     }
+    },
+    "stderr": "forgectl: error: usage: review needs --expected-head and --expected-base unless the run is interactive (stdin and stderr terminals, a human actor, no --yes, no '-' input)\n"
+   }
+  },
+  {
+   "name": "review-needs-base",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"approve\"}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review needs --expected-base unless the run is interactive (stdin and stderr terminals, a human actor, no --yes, no '-' input)"
+     }
+    },
+    "stderr": "forgectl: error: usage: review needs --expected-base unless the run is interactive (stdin and stderr terminals, a human actor, no --yes, no '-' input)\n"
+   }
+  },
+  {
+   "name": "approve-needs-pins",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "approve needs --expected-head and --expected-base unless the run is interactive (stdin and stderr terminals, a human actor, no --yes, no '-' input)"
+     }
+    },
+    "stderr": "forgectl: error: usage: approve needs --expected-head and --expected-base unless the run is interactive (stdin and stderr terminals, a human actor, no --yes, no '-' input)\n"
+   }
+  },
+  {
+   "name": "approve-dedupe-needs-body",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--dedupe-key=k",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "--dedupe-key needs --body-file"
+     }
+    },
+    "stderr": "forgectl: error: usage: --dedupe-key needs --body-file\n"
+   }
+  },
+  {
+   "name": "auto-actor-override-escalation",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--override-escalation"
+   ],
+   "stdin": {
+    "text": "x"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "--override-escalation is human-only: it needs --actor human:<user> or a TTY"
+     }
+    },
+    "stderr": "forgectl: error: usage: --override-escalation is human-only: it needs --actor human:<user> or a TTY\n"
+   }
+  },
+  {
+   "name": "auto-actor-allow-self",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--yes",
+    "--allow-self",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "--allow-self is human-only: it needs --actor human:<user> or a TTY"
+     }
+    },
+    "stderr": "forgectl: error: usage: --allow-self is human-only: it needs --actor human:<user> or a TTY\n"
+   }
+  },
+  {
+   "name": "override-escalation-precedes-body-file",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "/nonexistent",
+    "--yes",
+    "--override-escalation"
+   ],
+   "stdin": {
+    "text": "x"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "--override-escalation is human-only: it needs --actor human:<user> or a TTY"
+     }
+    },
+    "stderr": "forgectl: error: usage: --override-escalation is human-only: it needs --actor human:<user> or a TTY\n"
+   }
+  },
+  {
+   "name": "too-many-decision-ids",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--decision-id=d0",
+    "--decision-id=d1",
+    "--decision-id=d2",
+    "--decision-id=d3",
+    "--decision-id=d4",
+    "--decision-id=d5",
+    "--decision-id=d6",
+    "--decision-id=d7",
+    "--decision-id=d8",
+    "--decision-id=d9",
+    "--decision-id=d10",
+    "--decision-id=d11",
+    "--decision-id=d12",
+    "--decision-id=d13",
+    "--decision-id=d14",
+    "--decision-id=d15",
+    "--decision-id=d16",
+    "--decision-id=d17",
+    "--decision-id=d18",
+    "--decision-id=d19",
+    "--decision-id=d20",
+    "--decision-id=d21",
+    "--decision-id=d22",
+    "--decision-id=d23",
+    "--decision-id=d24",
+    "--decision-id=d25",
+    "--decision-id=d26",
+    "--decision-id=d27",
+    "--decision-id=d28",
+    "--decision-id=d29",
+    "--decision-id=d30",
+    "--decision-id=d31",
+    "--decision-id=d32"
+   ],
+   "stdin": {
+    "text": "x"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "at most 32 distinct --decision-id values are allowed"
+     }
+    },
+    "stderr": "forgectl: error: usage: at most 32 distinct --decision-id values are allowed\n"
+   }
+  },
+  {
+   "name": "unknown-host-show",
+   "argv": [
+    "show",
+    "--json",
+    "example.test/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "host 'example.test' is not built in or declared in the config",
+      "reason": "unknown_host"
+     }
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
+   }
+  },
+  {
+   "name": "unknown-host-url",
+   "argv": [
+    "comments",
+    "--json",
+    "https://example.test/o/r/pull/3"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "host 'example.test' is not built in or declared in the config",
+      "reason": "unknown_host"
+     }
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
+   }
+  },
+  {
+   "name": "unknown-host-with-port",
+   "argv": [
+    "comments",
+    "--json",
+    "example.test:8443/o/r#3"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "host 'example.test:8443' is not built in or declared in the config",
+      "reason": "unknown_host"
+     }
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test:8443' is not built in or declared in the config\n"
+   }
+  },
+  {
+   "name": "unknown-host-comment",
+   "argv": [
+    "comment",
+    "--json",
+    "example.test/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "x"
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "host 'example.test' is not built in or declared in the config",
+      "reason": "unknown_host"
+     }
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
+   }
+  },
+  {
+   "name": "unknown-host-empty-body",
+   "argv": [
+    "comment",
+    "--json",
+    "example.test/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "host 'example.test' is not built in or declared in the config",
+      "reason": "unknown_host"
+     }
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
+   }
+  },
+  {
+   "name": "unknown-host-before-pins",
+   "argv": [
+    "review",
+    "--json",
+    "example.test/o/r#1",
+    "--file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "{}"
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "host 'example.test' is not built in or declared in the config",
+      "reason": "unknown_host"
+     }
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
+   }
+  },
+  {
+   "name": "unknown-host-before-human-only",
+   "argv": [
+    "comment",
+    "--json",
+    "example.test/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--override-escalation"
+   ],
+   "stdin": {
+    "text": "x"
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "host 'example.test' is not built in or declared in the config",
+      "reason": "unknown_host"
+     }
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
+   }
+  },
+  {
+   "name": "unknown-host-comment-dry-run",
+   "argv": [
+    "comment",
+    "--json",
+    "example.test/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "x"
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "pr": "example.test/o/r#1",
+     "action": "comment",
+     "ids": [],
+     "thread_ids": [],
+     "review_id": null,
+     "already_posted": false,
+     "follow_up_done": false,
+     "neutralized_lines": 0,
+     "markers_removed": 0,
+     "warnings": [],
+     "head_sha": null,
+     "dry_run": true,
+     "would_refuse": {
+      "reason": "unknown_host",
+      "message": "host 'example.test' is not built in or declared in the config",
+      "details": null
+     },
+     "plan": {
+      "event": null,
+      "body_sha256": null,
+      "body_bytes": 0,
+      "inline_comments": 0
+     }
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
+   }
+  },
+  {
+   "name": "unknown-host-reply-dry-run",
+   "argv": [
+    "reply",
+    "--json",
+    "example.test/o/r#1",
+    "--to=gh:rt:abc",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "x"
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "pr": "example.test/o/r#1",
+     "action": "reply",
+     "ids": [],
+     "thread_ids": [],
+     "review_id": null,
+     "already_posted": false,
+     "follow_up_done": false,
+     "neutralized_lines": 0,
+     "markers_removed": 0,
+     "warnings": [],
+     "head_sha": null,
+     "dry_run": true,
+     "would_refuse": {
+      "reason": "unknown_host",
+      "message": "host 'example.test' is not built in or declared in the config",
+      "details": null
+     },
+     "plan": {
+      "event": null,
+      "body_sha256": null,
+      "body_bytes": 0,
+      "inline_comments": 0
+     },
+     "threaded": false
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
+   }
+  },
+  {
+   "name": "unknown-host-approve-dry-run",
+   "argv": [
+    "approve",
+    "--json",
+    "example.test/o/r#1",
+    "--dry-run",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "pr": "example.test/o/r#1",
+     "action": "approve",
+     "ids": [],
+     "thread_ids": [],
+     "review_id": null,
+     "already_posted": false,
+     "follow_up_done": false,
+     "neutralized_lines": 0,
+     "markers_removed": 0,
+     "warnings": [],
+     "head_sha": null,
+     "dry_run": true,
+     "would_refuse": {
+      "reason": "unknown_host",
+      "message": "host 'example.test' is not built in or declared in the config",
+      "details": null
+     },
+     "plan": {
+      "event": null,
+      "body_sha256": null,
+      "body_bytes": 0,
+      "inline_comments": 0
+     },
+     "head_verified": null
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
+   }
+  },
+  {
+   "name": "unknown-host-review-dry-run",
+   "argv": [
+    "review",
+    "--json",
+    "example.test/o/r#1",
+    "--file",
+    "-",
+    "--dry-run",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"x\"}"
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "pr": "example.test/o/r#1",
+     "action": "review",
+     "ids": [],
+     "thread_ids": [],
+     "review_id": null,
+     "already_posted": false,
+     "follow_up_done": false,
+     "neutralized_lines": 0,
+     "markers_removed": 0,
+     "warnings": [],
+     "head_sha": null,
+     "dry_run": true,
+     "would_refuse": {
+      "reason": "unknown_host",
+      "message": "host 'example.test' is not built in or declared in the config",
+      "details": null
+     },
+     "plan": {
+      "event": null,
+      "body_sha256": null,
+      "body_bytes": 0,
+      "inline_comments": 0
+     },
+     "head_verified": null
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
+   }
+  },
+  {
+   "name": "unknown-host-resolve-dry-run",
+   "argv": [
+    "resolve",
+    "--json",
+    "example.test/o/r#1",
+    "--thread=gh:rt:abc",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "pr": "example.test/o/r#1",
+     "action": "resolve",
+     "thread_id": "gh:rt:abc",
+     "resolved": null,
+     "changed": false,
+     "dry_run": true,
+     "would_refuse": {
+      "reason": "unknown_host",
+      "message": "host 'example.test' is not built in or declared in the config",
+      "details": null
+     }
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
+   }
+  },
+  {
+   "name": "unknown-host-unresolve",
+   "argv": [
+    "unresolve",
+    "--json",
+    "example.test/o/r#1",
+    "--thread=gh:rt:abc"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "host 'example.test' is not built in or declared in the config",
+      "reason": "unknown_host"
+     }
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
+   }
+  },
+  {
+   "name": "resolve-an-issue-comment-is-not-a-thread",
+   "argv": [
+    "resolve",
+    "--json",
+    "github.com/o/r#1",
+    "--thread=gh:ic:abc",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "only review threads (gh:rt: and gl:d: ids) can be resolved",
+      "reason": "not_resolvable"
+     }
+    },
+    "stderr": "forgectl: error: refused (not_resolvable): only review threads (gh:rt: and gl:d: ids) can be resolved\n"
+   }
+  },
+  {
+   "name": "resolve-an-issue-comment-is-not-a-thread-dry-run",
+   "argv": [
+    "resolve",
+    "--json",
+    "github.com/o/r#1",
+    "--thread=gh:ic:abc",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "pr": "github.com/o/r#1",
+     "action": "resolve",
+     "thread_id": "gh:ic:abc",
+     "resolved": null,
+     "changed": false,
+     "dry_run": true,
+     "would_refuse": {
+      "reason": "not_resolvable",
+      "message": "only review threads (gh:rt: and gl:d: ids) can be resolved",
+      "details": null
+     }
+    },
+    "stderr": "forgectl: error: refused (not_resolvable): only review threads (gh:rt: and gl:d: ids) can be resolved\n"
+   }
+  },
+  {
+   "name": "resolve-a-review-comment-is-not-a-thread-without-yes",
+   "argv": [
+    "resolve",
+    "--json",
+    "github.com/o/r#1",
+    "--thread=gh:rc:abc"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "only review threads (gh:rt: and gl:d: ids) can be resolved",
+      "reason": "not_resolvable"
+     }
+    },
+    "stderr": "forgectl: error: refused (not_resolvable): only review threads (gh:rt: and gl:d: ids) can be resolved\n"
+   }
+  },
+  {
+   "name": "resolve-a-review-is-not-a-thread",
+   "argv": [
+    "resolve",
+    "--json",
+    "github.com/o/r#1",
+    "--thread=gh:r:abc",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "only review threads (gh:rt: and gl:d: ids) can be resolved",
+      "reason": "not_resolvable"
+     }
+    },
+    "stderr": "forgectl: error: refused (not_resolvable): only review threads (gh:rt: and gl:d: ids) can be resolved\n"
+   }
+  },
+  {
+   "name": "unresolve-a-gitlab-note-is-not-a-thread",
+   "argv": [
+    "unresolve",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--thread=gl:n:12",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "only review threads (gh:rt: and gl:d: ids) can be unresolved",
+      "reason": "not_resolvable"
+     }
+    },
+    "stderr": "forgectl: error: refused (not_resolvable): only review threads (gh:rt: and gl:d: ids) can be unresolved\n"
+   }
+  },
+  {
+   "name": "unresolve-a-gitlab-note-is-not-a-thread-dry-run",
+   "argv": [
+    "unresolve",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--thread=gl:n:12",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "pr": "gitlab.com/g/s/r#1",
+     "action": "unresolve",
+     "thread_id": "gl:n:12",
+     "resolved": null,
+     "changed": false,
+     "dry_run": true,
+     "would_refuse": {
+      "reason": "not_resolvable",
+      "message": "only review threads (gh:rt: and gl:d: ids) can be unresolved",
+      "details": null
+     }
+    },
+    "stderr": "forgectl: error: refused (not_resolvable): only review threads (gh:rt: and gl:d: ids) can be unresolved\n"
+   }
+  },
+  {
+   "name": "unknown-host-compare",
+   "argv": [
+    "compare",
+    "--json",
+    "example.test/o/r#1",
+    "--from=0123456789abcdef0123456789abcdef01234567",
+    "--to=0123456789abcdef0123456789abcdef01234568"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "host 'example.test' is not built in or declared in the config",
+      "reason": "unknown_host"
+     }
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
+   }
+  },
+  {
+   "name": "unknown-host-whoami",
+   "argv": [
+    "whoami",
+    "--json",
+    "--host=example.test"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "host 'example.test' is not built in or declared in the config",
+      "reason": "unknown_host"
+     }
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
+   }
+  },
+  {
+   "name": "www-github-is-not-unknown",
+   "argv": [
+    "whoami",
+    "--json",
+    "--host=www.example.test"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "host 'www.example.test' is not built in or declared in the config",
+      "reason": "unknown_host"
+     }
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'www.example.test' is not built in or declared in the config\n"
+   }
+  },
+  {
+   "name": "github-pr-with-gitlab-url",
+   "argv": [
+    "comments",
+    "--json",
+    "https://github.com/o/r/-/merge_requests/3"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "invalid_pr",
+      "message": "not a valid github pull request: 'https://github.com/o/r/-/merge_requests/3'"
+     }
+    },
+    "stderr": "forgectl: error: invalid_pr: not a valid github pull request: 'https://github.com/o/r/-/merge_requests/3'\n"
+   }
+  },
+  {
+   "name": "gitlab-pr-with-github-url",
+   "argv": [
+    "comments",
+    "--json",
+    "https://gitlab.com/g/r/pull/3"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "invalid_pr",
+      "message": "not a valid gitlab pull request: 'https://gitlab.com/g/r/pull/3'"
+     }
+    },
+    "stderr": "forgectl: error: invalid_pr: not a valid gitlab pull request: 'https://gitlab.com/g/r/pull/3'\n"
+   }
+  },
+  {
+   "name": "github-three-segments",
+   "argv": [
+    "comments",
+    "--json",
+    "github.com/o/r/x#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "invalid_pr",
+      "message": "not a valid github pull request: 'github.com/o/r/x#1'"
+     }
+    },
+    "stderr": "forgectl: error: invalid_pr: not a valid github pull request: 'github.com/o/r/x#1'\n"
+   }
+  },
+  {
+   "name": "github-one-segment",
+   "argv": [
+    "comments",
+    "--json",
+    "github.com/o#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "invalid_pr",
+      "message": "not a valid github pull request: 'github.com/o#1'"
+     }
+    },
+    "stderr": "forgectl: error: invalid_pr: not a valid github pull request: 'github.com/o#1'\n"
+   }
+  },
+  {
+   "name": "gitlab-option-like-group",
+   "argv": [
+    "comments",
+    "--json",
+    "gitlab.com/-g/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "invalid_pr",
+      "message": "not a valid gitlab pull request: 'gitlab.com/-g/r#1'"
+     }
+    },
+    "stderr": "forgectl: error: invalid_pr: not a valid gitlab pull request: 'gitlab.com/-g/r#1'\n"
+   }
+  },
+  {
+   "name": "github-option-like-owner",
+   "argv": [
+    "comments",
+    "--json",
+    "github.com/-o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "invalid_pr",
+      "message": "not a valid github pull request: 'github.com/-o/r#1'"
+     }
+    },
+    "stderr": "forgectl: error: invalid_pr: not a valid github pull request: 'github.com/-o/r#1'\n"
+   }
+  },
+  {
+   "name": "dotdot-segment",
+   "argv": [
+    "comments",
+    "--json",
+    "github.com/o/../r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "invalid_pr",
+      "message": "not a pull request URL or host/<project path>#N: 'github.com/o/../r#1'"
+     }
+    },
+    "stderr": "forgectl: error: invalid_pr: not a pull request URL or host/<project path>#N: 'github.com/o/../r#1'\n"
+   }
+  },
+  {
+   "name": "body-empty",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is empty"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is empty\n"
+   }
+  },
+  {
+   "name": "body-whitespace",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": " \n\t \n"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is empty"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is empty\n"
+   }
+  },
+  {
+   "name": "body-invalid-utf8",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "b2sg//4="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "body-too-large-github",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       262145
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the body is larger than 262144 bytes",
+      "details": {
+       "index": null,
+       "limit": 262144
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the body is larger than 262144 bytes\n"
+   }
+  },
+  {
+   "name": "body-too-large-after-marker",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--dedupe-key=k"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       262144
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the body is larger than 262144 bytes",
+      "details": {
+       "index": null,
+       "limit": 262144
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the body is larger than 262144 bytes\n"
+   }
+  },
+  {
+   "name": "body-too-large-gitlab",
+   "argv": [
+    "comment",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       1048577
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the body is larger than 1048576 bytes",
+      "details": {
+       "index": null,
+       "limit": 1048576
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the body is larger than 1048576 bytes\n"
+   }
+  },
+  {
+   "name": "body-neutralized-too-large",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "/",
+       262144
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the body is larger than 262144 bytes",
+      "details": {
+       "index": null,
+       "limit": 262144
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the body is larger than 262144 bytes\n"
+   }
+  },
+  {
+   "name": "reply-too-large-github-ic",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:ic:abc",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       262145
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the body is larger than 262144 bytes",
+      "details": {
+       "index": null,
+       "limit": 262144
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the body is larger than 262144 bytes\n"
+   }
+  },
+  {
+   "name": "reply-too-large-github-rc",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rc:abc",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       1048577
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the body is larger than 1048576 bytes",
+      "details": {
+       "index": null,
+       "limit": 1048576
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the body is larger than 1048576 bytes\n"
+   }
+  },
+  {
+   "name": "approve-empty-body",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--yes",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is empty"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is empty\n"
+   }
+  },
+  {
+   "name": "approve-too-large",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--yes",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       262145
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the body is larger than 262144 bytes",
+      "details": {
+       "index": null,
+       "limit": 262144
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the body is larger than 262144 bytes\n"
+   }
+  },
+  {
+   "name": "reply-empty-body",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:abc",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is empty"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is empty\n"
+   }
+  },
+  {
+   "name": "review-empty-file",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid JSON (JSONDecodeError)"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid JSON (JSONDecodeError)\n"
+   }
+  },
+  {
+   "name": "review-not-json",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid JSON (JSONDecodeError)"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid JSON (JSONDecodeError)\n"
+   }
+  },
+  {
+   "name": "review-not-object",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "[]"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: the top level must be an object"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: the top level must be an object\n"
+   }
+  },
+  {
+   "name": "review-no-event",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: event must be comment, request_changes or approve"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: event must be comment, request_changes or approve\n"
+   }
+  },
+  {
+   "name": "review-bad-event",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"merge\"}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: event must be comment, request_changes or approve"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: event must be comment, request_changes or approve\n"
+   }
+  },
+  {
+   "name": "review-duplicate-key",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"event\":\"comment\",\"body\":\"x\"}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid JSON (ValueError)"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid JSON (ValueError)\n"
+   }
+  },
+  {
+   "name": "review-nan",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"x\",\"comments\":[{\"path\":\"a\",\"line\":NaN,\"body\":\"x\"}]}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid JSON (ValueError)"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid JSON (ValueError)\n"
+   }
+  },
+  {
+   "name": "review-unknown-field",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"x\",\"extra\":1}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: unknown field 'extra'"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: unknown field 'extra'\n"
+   }
+  },
+  {
+   "name": "review-empty-review",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\"}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: an empty review (a comment with no body and no comments)"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: an empty review (a comment with no body and no comments)\n"
+   }
+  },
+  {
+   "name": "review-empty-body-string",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\" \"}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: body is empty (use null for none)"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: body is empty (use null for none)\n"
+   }
+  },
+  {
+   "name": "review-request-changes-needs-body",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"request_changes\",\"comments\":[{\"path\":\"a\",\"line\":1,\"body\":\"x\"}]}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: request_changes needs a body"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: request_changes needs a body\n"
+   }
+  },
+  {
+   "name": "review-comments-not-list",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"x\",\"comments\":{}}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: comments must be a list"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: comments must be a list\n"
+   }
+  },
+  {
+   "name": "review-comment-not-object",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"x\",\"comments\":[1]}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: comments[0] must be an object"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: comments[0] must be an object\n"
+   }
+  },
+  {
+   "name": "review-comment-missing-path",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"x\",\"comments\":[{\"line\":1,\"body\":\"x\"}]}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: comments[0].path is required"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: comments[0].path is required\n"
+   }
+  },
+  {
+   "name": "review-comment-empty-path",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"x\",\"comments\":[{\"path\":\"\",\"line\":1,\"body\":\"x\"}]}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: comments[0].path is empty"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: comments[0].path is empty\n"
+   }
+  },
+  {
+   "name": "review-comment-line-zero",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"x\",\"comments\":[{\"path\":\"a\",\"line\":0,\"body\":\"x\"}]}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: comments[0].line must be an integer of at least 1"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: comments[0].line must be an integer of at least 1\n"
+   }
+  },
+  {
+   "name": "review-comment-line-bool",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"x\",\"comments\":[{\"path\":\"a\",\"line\":true,\"body\":\"x\"}]}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: comments[0].line must be an integer of at least 1"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: comments[0].line must be an integer of at least 1\n"
+   }
+  },
+  {
+   "name": "review-comment-line-float",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"x\",\"comments\":[{\"path\":\"a\",\"line\":1.0,\"body\":\"x\"}]}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: comments[0].line must be an integer of at least 1"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: comments[0].line must be an integer of at least 1\n"
+   }
+  },
+  {
+   "name": "review-comment-bad-side",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"x\",\"comments\":[{\"path\":\"a\",\"line\":1,\"side\":\"both\",\"body\":\"x\"}]}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: comments[0].side must be left or right"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: comments[0].side must be left or right\n"
+   }
+  },
+  {
+   "name": "review-comment-start-zero",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"x\",\"comments\":[{\"path\":\"a\",\"line\":2,\"start_line\":0,\"body\":\"x\"}]}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: comments[0].start_line must be an integer of at least 1"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: comments[0].start_line must be an integer of at least 1\n"
+   }
+  },
+  {
+   "name": "review-comment-empty-body",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"comments\":[{\"path\":\"a\",\"line\":1,\"body\":\"\"}]}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: comments[0].body is empty"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: comments[0].body is empty\n"
+   }
+  },
+  {
+   "name": "review-comment-unknown-field",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"comments\":[{\"path\":\"a\",\"line\":1,\"body\":\"x\",\"z\":1}]}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: comments[0]: unknown field 'z'"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: comments[0]: unknown field 'z'\n"
+   }
+  },
+  {
+   "name": "review-lone-surrogate",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"\\ud800\"}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: body is not valid text (a lone surrogate)"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: body is not valid text (a lone surrogate)\n"
+   }
+  },
+  {
+   "name": "review-too-many-comments",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\": \"comment\", \"comments\": [{\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}]}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: comments holds 201 items; at most 200"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: comments holds 201 items; at most 200\n"
+   }
+  },
+  {
+   "name": "review-dedupe-key-needs-text",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dedupe-key=k"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"approve\"}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "--dedupe-key needs a review body or inline comments to carry the marker"
+     }
+    },
+    "stderr": "forgectl: error: usage: --dedupe-key needs a review body or inline comments to carry the marker\n"
+   }
+  },
+  {
+   "name": "review-body-too-large",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "parts": [
+     "{\"event\":\"comment\",\"body\":\"",
+     {
+      "repeat": [
+       "x",
+       262145
+      ]
+     },
+     "\"}"
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the review body is larger than 262144 bytes",
+      "details": {
+       "index": null,
+       "limit": 262144
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the review body is larger than 262144 bytes\n"
+   }
+  },
+  {
+   "name": "review-inline-too-large-github",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "parts": [
+     "{\"event\":\"comment\",\"comments\":[{\"path\":\"a\",\"line\":1,\"body\":\"x\"},{\"path\":\"a\",\"line\":2,\"body\":\"",
+     {
+      "repeat": [
+       "y",
+       1048577
+      ]
+     },
+     "\"}]}"
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "inline comment 1 is larger than 1048576 bytes",
+      "details": {
+       "index": 1,
+       "limit": 1048576
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: inline comment 1 is larger than 1048576 bytes\n"
+   }
+  },
+  {
+   "name": "review-file-too-large",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       " ",
+       16777217
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the review file is larger than 16777216 bytes",
+      "details": {
+       "index": null,
+       "limit": 16777216
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the review file is larger than 16777216 bytes\n"
+   }
+  },
+  {
+   "name": "review-invalid-utf8",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "b64": "eyJldmVudCI6ImNvbW1lbnQiLCJib2R5Ijoi/yJ9"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "review-gitlab-body-too-large",
+   "argv": [
+    "review",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "parts": [
+     "{\"event\":\"comment\",\"body\":\"",
+     {
+      "repeat": [
+       "x",
+       1048577
+      ]
+     },
+     "\"}"
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the review body is larger than 1048576 bytes",
+      "details": {
+       "index": null,
+       "limit": 1048576
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the review body is larger than 1048576 bytes\n"
+   }
+  },
+  {
+   "name": "accept-url-pull",
+   "argv": [
+    "show",
+    "--json",
+    "https://github.com/o/r/pull/1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-url-files",
+   "argv": [
+    "show",
+    "--json",
+    "https://github.com/o/r/pull/12/files"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-url-commit",
+   "argv": [
+    "show",
+    "--json",
+    "https://github.com/o/r/pull/1/commits/abcdef1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-url-diff-slash",
+   "argv": [
+    "show",
+    "--json",
+    "https://github.com/o/r/pull/1.diff/"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-url-query-fragment",
+   "argv": [
+    "show",
+    "--json",
+    "https://github.com/o/r/pull/1?a=b&c=d#frag"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-host-uppercase",
+   "argv": [
+    "show",
+    "--json",
+    "GitHub.COM/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-host-www",
+   "argv": [
+    "show",
+    "--json",
+    "www.github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-host-port-443",
+   "argv": [
+    "show",
+    "--json",
+    "github.com:443/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-github-repo-dash",
+   "argv": [
+    "show",
+    "--json",
+    "github.com/o/-r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-github-dots",
+   "argv": [
+    "show",
+    "--json",
+    "github.com/o.x/r_y.z#1234567890"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-gitlab-url-diffs",
+   "argv": [
+    "show",
+    "--json",
+    "https://gitlab.com/g/s/r/-/merge_requests/3/diffs"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-gitlab-url-old-form",
+   "argv": [
+    "show",
+    "--json",
+    "https://gitlab.com/g/s/r/merge_requests/3"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-gitlab-nested",
+   "argv": [
+    "show",
+    "--json",
+    "gitlab.com/a/b/c/d#7"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-gitlab-single-segment",
+   "argv": [
+    "show",
+    "--json",
+    "gitlab.com/solo#7"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-global-flags-before-command",
+   "argv": [
+    "--json",
+    "--timeout",
+    "5",
+    "--verbose",
+    "show",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-global-flags-after",
+   "argv": [
+    "show",
+    "--json",
+    "--timeout",
+    "60s",
+    "--quiet",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-timeout-ms",
+   "argv": [
+    "show",
+    "--json",
+    "--timeout=250ms",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-timeout-fraction",
+   "argv": [
+    "show",
+    "--json",
+    "--timeout=1.5",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-timeout-100-years",
+   "argv": [
+    "show",
+    "--json",
+    "--timeout=36500d",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-config-file",
+   "argv": [
+    "show",
+    "--json",
+    "--config={tmp}/forgectl.yaml",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "files": {
+    "forgectl.yaml": "{}\n"
+   },
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-double-dash",
+   "argv": [
+    "show",
+    "--json",
+    "--",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-files",
+   "argv": [
+    "files",
+    "--json",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-diff",
+   "argv": [
+    "diff",
+    "--json",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-comments",
+   "argv": [
+    "comments",
+    "--json",
+    "gitlab.com/g/s/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-compare",
+   "argv": [
+    "compare",
+    "--json",
+    "github.com/o/r#1",
+    "--from=0123456789abcdef0123456789abcdef01234567",
+    "--to=0123456789abcdef0123456789abcdef01234568"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-compare-space-form-uppercase",
+   "argv": [
+    "compare",
+    "--json",
+    "github.com/o/r#1",
+    "--from",
+    "0123456789ABCDEF0123456789ABCDEF01234567",
+    "--to",
+    "0123456789abcdef0123456789abcdef01234568",
+    "--no-diff"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-comment",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-comment-equals-stdin-flag",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file=-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-comment-no-yes",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-comment-dry-run",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-comment-all-write-flags",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--dedupe-key=prc:ab.c-d_e:1",
+    "--actor=auto:agent.x@y-1",
+    "--decision-id=a/b:c@d.e-f",
+    "--decision-id",
+    "second"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-comment-human-actor-override",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--actor=human:me",
+    "--override-escalation"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-comment-flags-before-pr",
+   "argv": [
+    "comment",
+    "--json",
+    "--yes",
+    "--body-file",
+    "-",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-32-decision-ids",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--decision-id=d0",
+    "--decision-id=d1",
+    "--decision-id=d2",
+    "--decision-id=d3",
+    "--decision-id=d4",
+    "--decision-id=d5",
+    "--decision-id=d6",
+    "--decision-id=d7",
+    "--decision-id=d8",
+    "--decision-id=d9",
+    "--decision-id=d10",
+    "--decision-id=d11",
+    "--decision-id=d12",
+    "--decision-id=d13",
+    "--decision-id=d14",
+    "--decision-id=d15",
+    "--decision-id=d16",
+    "--decision-id=d17",
+    "--decision-id=d18",
+    "--decision-id=d19",
+    "--decision-id=d20",
+    "--decision-id=d21",
+    "--decision-id=d22",
+    "--decision-id=d23",
+    "--decision-id=d24",
+    "--decision-id=d25",
+    "--decision-id=d26",
+    "--decision-id=d27",
+    "--decision-id=d28",
+    "--decision-id=d29",
+    "--decision-id=d30",
+    "--decision-id=d31"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-repeated-identical-decision-ids",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-body-exactly-at-github-limit",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       262144
+      ]
+     }
+    ]
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-body-at-limit-with-marker-room",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--dedupe-key=k"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       262109
+      ]
+     }
+    ]
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-body-exactly-at-gitlab-limit",
+   "argv": [
+    "comment",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       1048576
+      ]
+     }
+    ]
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-zero-width-body",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "\u200b"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-nul-in-body",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "a\u0000b"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "body-only-nel-and-ls-is-empty",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "\u0085\u2028 "
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is empty"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is empty\n"
+   }
+  },
+  {
+   "name": "accept-reply-gh-ic",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:ic:IC_kwDO_x=",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-reply-gh-rc",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rc:PRRC_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-reply-gh-r",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:r:PRR_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-reply-gl-d",
+   "argv": [
+    "reply",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--to=gl:d:abababababababababababababababababababab",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-reply-gl-n",
+   "argv": [
+    "reply",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--to=gl:n:12",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-reply-space-form",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to",
+    "gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-reply-to-rt-up-to-1mib",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       262145
+      ]
+     }
+    ]
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-resolve",
+   "argv": [
+    "resolve",
+    "--json",
+    "github.com/o/r#1",
+    "--thread=gh:rt:PRRT_1",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-unresolve-gitlab",
+   "argv": [
+    "unresolve",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--thread=gl:d:0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+    "--yes",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-approve",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-approve-body",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--yes",
+    "--body-file",
+    "-",
+    "--dedupe-key=k",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "lgtm"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-approve-human-allow-self",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--yes",
+    "--actor=human:me",
+    "--allow-self",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-approve-uppercase-head",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--yes",
+    "--expected-head=0123456789ABCDEF0123456789ABCDEF01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-approve-branch-with-slash-and-unicode",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=feature/\u00e9t\u00e9-x_y.v1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-approve-dry-run-pins",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--dry-run",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-approve-only",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"approve\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-body-null",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":null,\"comments\":[{\"path\":\"a b/\u00e9.py\",\"line\":3,\"body\":\"x\"}]}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-sides-and-range",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"comments\":[{\"path\":\"a\",\"line\":5,\"start_line\":2,\"side\":\"left\",\"body\":\"x\"},{\"path\":\"b\",\"line\":1,\"side\":\"right\",\"body\":\"y\"}]}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-request-changes",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"request_changes\",\"body\":\"no\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-200-comments",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\": \"comment\", \"comments\": [{\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}]}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-unicode",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\": \"comment\", \"body\": \"caf\u00e9 \u65e5\u672c \ud83d\ude00\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-equals-form",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file=-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"approve\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-gitlab-dedupe-on-comments",
+   "argv": [
+    "review",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--dedupe-key=k",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"comments\":[{\"path\":\"a\",\"line\":1,\"body\":\"x\"}]}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-human-allow-self",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--actor=human:me",
+    "--allow-self",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"approve\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "review-comment-line-too-big-is-still-valid-json-int",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"comments\":[{\"path\":\"a\",\"line\":99999999999999999999,\"body\":\"x\"}]}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  }
+ ]
+}

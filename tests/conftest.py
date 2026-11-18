@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.fakes import Tracker
+from tests.forgectl_harness import FakeForgectl
 from tests.golden_harness import check_golden, refuse_regen_in_ci, render_json
 
 
@@ -25,12 +27,13 @@ def pytest_configure(config: pytest.Config) -> None:
 
 @pytest.fixture(autouse=True)
 def private_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Every test runs with a private HOME and XDG_CONFIG_HOME and no PR_COMMENT_* variable, so
-    the developer's real config and environment never reach a test."""
+    """Every test runs with a private HOME, XDG_CONFIG_HOME and XDG_STATE_HOME and no PR_COMMENT_*
+    variable, so the developer's real config, state and environment never reach a test."""
     home = tmp_path / "private-home"
     home.mkdir(mode=0o700)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(home / ".local" / "state"))
     for name in [n for n in os.environ if n.startswith("PR_COMMENT_")]:
         monkeypatch.delenv(name)
     return home
@@ -55,3 +58,21 @@ def golden_json(golden: Callable[[str, str], None]) -> Callable[[str, Any], None
         golden(name, render_json(document))
 
     return _check
+
+
+@pytest.fixture
+def tracker() -> Iterator[Tracker]:
+    """Ends, at teardown, exactly the fake processes a test recorded (by pid and start time)."""
+    t = Tracker()
+    yield t
+    t.cleanup()
+
+
+@pytest.fixture
+def forgectl(tmp_path: Path, tracker: Tracker) -> Iterator[FakeForgectl]:
+    """The fake forgectl of one test (``tests/fakebin/forgectl``): script what the host answers,
+    put ``environ()`` in the code under test and read ``calls()``. When the test ends, a fake error,
+    an argv real forgectl would refuse, or a scripted step nobody asked for fails it."""
+    fake = FakeForgectl(tmp_path / "forgectl-fake", tracker)
+    yield fake
+    fake.assert_clean()

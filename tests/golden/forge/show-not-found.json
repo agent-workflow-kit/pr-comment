@@ -1,15 +1,21 @@
 {
   "error": {
-    "code": "internal",
+    "code": "not_found",
     "decision_ids": [],
-    "details": null,
+    "details": {
+      "id": "github.com/acme/widgets#7",
+      "what": "pr"
+    },
     "escalated_by": null,
     "escalated_hooks": null,
     "hook": null,
     "hook_stderr": null,
     "landed": null,
-    "lower_error": null,
-    "message": "export is not implemented yet",
+    "lower_error": {
+      "code": "not_found",
+      "message": "no such PR"
+    },
+    "message": "no such PR",
     "reason": null,
     "retry": null,
     "retry_after": null

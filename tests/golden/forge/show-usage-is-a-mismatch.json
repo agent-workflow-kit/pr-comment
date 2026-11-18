@@ -1,0 +1,23 @@
+{
+  "error": {
+    "code": "lower_contract_mismatch",
+    "decision_ids": [],
+    "details": {
+      "command": "show",
+      "lower_version": "forgectl 0.1.0"
+    },
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": null,
+    "hook_stderr": null,
+    "landed": false,
+    "lower_error": {
+      "code": "usage",
+      "message": "bad flag"
+    },
+    "message": "forgectl show gave an answer pr-comment cannot use (error code does not fit the exit status)",
+    "reason": null,
+    "retry": "same_command",
+    "retry_after": null
+  }
+}
