@@ -18,7 +18,7 @@ suggestion fences: ``invalid_text``) to every text field of a schema-valid draft
 refuses the first one. The draft data is not changed: the line-separator rewrite is
 ``textpipe.normalize_lines``.
 
-todo(#18): apply textpipe.normalize_lines to body and finding bodies where bodies are built
+The line-separator rewrite is applied where bodies are built, in ``render.py`` (#18)
 
 Not here: ``draft check`` output belongs to #15.
 """
