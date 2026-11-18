@@ -1,0 +1,24 @@
+[
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 19
+  },
+  "expected": {
+   "path": "f.txt",
+   "line": 19,
+   "side": "right"
+  }
+ },
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 20
+  },
+  "expected": {
+   "unmapped": "changed"
+  }
+ }
+]
