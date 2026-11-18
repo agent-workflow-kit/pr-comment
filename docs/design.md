@@ -119,7 +119,7 @@ Every failure before the first write sends nothing. forgectl's errors pass throu
 
 - `pyyaml` and `pydantic` (design guide section 3); `pydantic` also models the forgectl output fields pr-comment reads.
 - No Markdown parser: mentions, `<` and images are neutralized by character (D-6, D-22), so `markdown-it-py` is not a dependency.
-- `jsonschema` and `cmarkgfm` (tests only; `cmarkgfm` is GitHub's engine, pinned, used as the oracle for the text-safety tests).
+- `jsonschema` and `referencing` (tests only; `referencing` builds the registry over `schemas/` keyed by `$id`, so cross-file `$ref`s resolve offline) and `cmarkgfm` (tests only; `cmarkgfm` is GitHub's engine, pinned, used as the oracle for the text-safety tests).
 
 ## Test strategy
 
