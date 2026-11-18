@@ -12,10 +12,17 @@ import pytest
 
 from pr_comment import cli
 from pr_comment.errors import exit_code_for
-from pr_comment.gateway import ForgectlInterrupted, ForgectlResult, ToolMissing
+from pr_comment.gateway import (
+    ForgectlInterrupted,
+    ForgectlResult,
+    GatewayUsageError,
+    ToolMissing,
+)
 from pr_comment.lower import (
     LowerFailure,
     failure_outcome,
+    mismatch_outcome,
+    partial_document,
     require_ok,
     tool_missing_outcome,
 )
@@ -112,12 +119,7 @@ def test_dry_run_would_refuse_becomes_a_refusal_with_lower_error() -> None:
     }
     error = error_of(outcome_of(result(20, plan)))
     assert (error["code"], error["reason"], error["message"]) == ("refused", "too_large", "big")
-    assert error["lower_error"] == {
-        "code": "refused",
-        "reason": "too_large",
-        "message": "big",
-        "details": {"n": 3},
-    }
+    assert error["lower_error"] == plan  # forgectl's whole top document, not a synthesized object
 
 
 @pytest.mark.parametrize("reason", ["plan_changed", "no_head_match", None, 3])
@@ -202,9 +204,19 @@ def test_outcome_partial_needs_the_backend() -> None:
     )
     github = error_of(outcome_of(result(12, env, write=True), backend="github"))
     assert (github["landed"], github["retry"]) == (False, "new_key")
-    unknown = error_of(outcome_of(result(12, env, write=True)))
-    assert unknown["code"] == "lower_contract_mismatch"
-    assert (unknown["landed"], unknown["retry"]) == (None, "same_command")  # a write: unknown
+    # A write failure that needs the backend, lowered without one, is a caller bug, not a mismatch.
+    with pytest.raises(ValueError, match="backend"):
+        outcome_of(result(12, env, write=True))
+    with pytest.raises(ValueError, match="backend"):
+        outcome_of(result(12, env, write=True), backend="bitbucket")
+
+
+def test_gitlab_outcome_partial_without_details_landed_is_a_mismatch() -> None:
+    out = error_of(
+        outcome_of(result(12, envelope("outcome_partial"), write=True), backend="gitlab")
+    )
+    assert out["code"] == "lower_contract_mismatch"
+    assert (out["landed"], out["retry"]) == (None, "same_command")
 
 
 def test_gitlab_outcome_partial_with_malformed_landed_is_a_mismatch() -> None:
@@ -221,11 +233,100 @@ def test_host_rejected_leftover_drafts_means_no_retry() -> None:
     assert error_of(outcome_of(result(12, bad, write=True)))["code"] == "lower_contract_mismatch"
 
 
-def test_forgectl_audit_failed_landed() -> None:
-    error = error_of(
-        outcome_of(result(12, envelope("audit_failed", details={"outcome": {}}), write=True))
+@pytest.mark.parametrize(
+    ("forgectl_outcome", "pair"),
+    [
+        ("posted", (True, "none")),
+        ("approved", (True, "none")),
+        ("resolved", (True, "none")),
+        ("unresolved", (True, "none")),
+        ("quick_action_ran", (True, "none")),
+        ("failed", (False, "same_command")),
+        ("outcome_unknown", (None, "same_command")),
+        ("attempted", (None, "same_command")),
+        ("outcome_partial", (None, "same_command")),
+        ("something_new", (None, "same_command")),
+        (3, (None, "same_command")),
+        (None, (None, "same_command")),
+    ],
+)
+def test_forgectl_audit_failed_pair_follows_its_outcome(
+    forgectl_outcome: Any, pair: tuple[bool | None, str]
+) -> None:
+    env = envelope("audit_failed", details={"outcome": forgectl_outcome, "result": "x"})
+    error = error_of(outcome_of(result(12, env, write=True)))
+    assert error["code"] == "audit_failed" and (error["landed"], error["retry"]) == pair
+    assert error["lower_error"] == env["error"]  # the whole envelope, forgectl's outcome inside
+    assert error["details"] is None  # forgectl's enum string is never copied as our document
+
+
+def test_forgectl_audit_failed_without_details_is_unknown() -> None:
+    error = error_of(outcome_of(result(12, envelope("audit_failed"), write=True)))
+    assert (error["landed"], error["retry"]) == (None, "same_command")
+
+
+@pytest.mark.parametrize("code", ["tool_missing", "audit_unavailable"])
+def test_pr_comments_own_exit_12_codes_are_never_taken_from_forgectl(code: str) -> None:
+    env = envelope(code, "from forgectl")
+    error = error_of(outcome_of(result(12, env)))
+    assert error["code"] == "lower_contract_mismatch"
+    assert error["lower_error"] == env["error"]  # kept for the human
+
+
+def test_invalid_position_from_forgectl_passes_through() -> None:
+    env = envelope("invalid_position", details={"invalid": [{"index": 0}]})
+    error = error_of(outcome_of(result(12, env, write=True)))
+    assert error["code"] == "invalid_position" and error["details"] == env["error"]["details"]
+
+
+def test_timed_out_write_keeps_forgectls_verdict_but_stays_unknown() -> None:
+    env = envelope("rate_limited", "x")
+    res = result(12, env, write=True, timed_out=True)
+    error = error_of(outcome_of(res))
+    assert (error["code"], error["landed"], error["retry"]) == (
+        "outcome_unknown",
+        None,
+        "same_command",
     )
-    assert (error["code"], error["landed"], error["retry"]) == ("audit_failed", True, "none")
+    assert error["lower_error"] == env["error"]
+    junk = error_of(outcome_of(result(None, raw=b"not json", write=True, timed_out=True)))
+    assert junk["code"] == "outcome_unknown" and junk["lower_error"] is None
+
+
+def test_partial_document_returns_the_whoami_shape_for_exit_12_only() -> None:
+    document = {
+        "hosts": [{"host": "a", "backend": "github", "login": "me", "id": 1}],
+        "errors": [{"host": "b", "code": "auth_required", "message": "no"}],
+    }
+    res = ForgectlResult(
+        command="whoami", write=False, exit_code=12, stdout=json.dumps(document).encode()
+    )
+    assert partial_document(res) == document
+    assert error_of(outcome_of(res))["code"] == "lower_contract_mismatch"  # behavior unchanged
+    for bad in (
+        ForgectlResult(command="whoami", write=False, exit_code=0, stdout=res.stdout),
+        ForgectlResult(command="whoami", write=False, exit_code=12, stdout=b"[]"),
+        ForgectlResult(command="whoami", write=False, exit_code=12, stdout=b"nope"),
+        ForgectlResult(command="whoami", write=False, exit_code=12, stdout=b'{"hosts": []}'),
+        ForgectlResult(
+            command="whoami",
+            write=False,
+            exit_code=12,
+            stdout=json.dumps({**document, "error": {}}).encode(),
+        ),
+    ):
+        assert partial_document(bad) is None
+
+
+def test_mismatch_outcome_lets_an_interrupted_version_read_propagate() -> None:
+    class Interrupting(FakeGateway):
+        def lower_version(self) -> str | None:
+            raise ForgectlInterrupted(signal.SIGTERM, result(None, signal=15))
+
+    with pytest.raises(ForgectlInterrupted):
+        mismatch_outcome("show", "why", gateway=Interrupting())
+    with pytest.raises(ForgectlInterrupted):
+        failure_outcome(result(12, b"", raw=b"x"), gateway=Interrupting())
 
 
 def test_vetoed_keeps_hook_fields_in_lower_error_only() -> None:
@@ -290,10 +391,27 @@ def test_fake_gateway_validates_records_and_replies_in_order() -> None:
 
 def test_fake_gateway_refuses_what_the_real_gateway_refuses() -> None:
     fake = FakeGateway([ok("show", {})])
-    from pr_comment.gateway import GatewayUsageError
-
     with pytest.raises(GatewayUsageError):
         fake.call("show", ["--pr", "x"])
+
+
+def test_fake_gateway_gives_replies_the_calls_write_flag_and_fails_a_disagreement() -> None:
+    args = ["o/r#1", "--file", "-"]
+    fake = FakeGateway([ok("review", {}), ok("review", {}, write=False)])
+    assert fake.call("review", args, stdin=b"{}").write is True
+    with pytest.raises(AssertionError, match="write"):
+        fake.call("review", args, stdin=b"{}")  # a scripted read for a real write
+    dry = FakeGateway([ok("review", {}, write=False), ok("show", {}, write=True)])
+    assert dry.call("review", [*args, "--dry-run"], stdin=b"{}").write is False
+    with pytest.raises(AssertionError, match="write"):
+        dry.call("show", ["o/r#1"])  # a scripted write for a read
+
+
+def test_fake_gateway_resolve_can_be_scripted_to_be_missing() -> None:
+    assert FakeGateway().resolve() == "/fake/forgectl"
+    missing = FakeGateway(missing=ToolMissing("gone"))
+    with pytest.raises(ToolMissing):
+        missing.resolve()
 
 
 # --- cli ----------------------------------------------------------------------------------------

@@ -8,11 +8,14 @@ A call is an argv list run without a shell, with:
 - stdin ``/dev/null`` unless the argv carries the stdin ``-`` element, in which case the whole
   input is written once and stdin is closed, while stdout and stderr are read concurrently
   and bounded;
-- every value forwarded as ``--flag=value`` (a closed set of bare boolean flags and the ``-`` after
-  ``--file`` or ``--body-file`` excepted), so nothing a caller passes can be read as an option;
-- a deadline, SIGINT and SIGTERM forwarding to the exact child, and a child that leads its own
-  process group, which is signaled only while its leader is not yet reaped (so the group id cannot
-  have been reused) and only after its start time is verified where the platform shows it.
+- every flag drawn from a closed allowlist of forgectl's documented flag names, each value
+  forwarded as ``--flag=value`` (a closed set of bare boolean flags and the ``-`` after ``--file``
+  or ``--body-file`` excepted), so nothing a caller passes can be read as an option;
+- a deadline, and SIGINT, SIGTERM and SIGHUP forwarding to the exact child PID (the leader of a
+  new session and process group the gateway created). The deadline sends SIGTERM to that leader
+  only, waits a grace period longer than forgectl's own 2 s, then SIGKILLs the group. The group is
+  signaled only while its leader is not yet reaped (so the group id cannot have been reused) and
+  only after its start time is verified where the platform shows it.
 
 Untrusted text travels in stdin only. Nothing here reads or writes the host, a file or the audit.
 ``lower.py`` turns a result into pr-comment's own results and errors.
@@ -21,17 +24,17 @@ Untrusted text travels in stdin only. Nothing here reads or writes the host, a f
 from __future__ import annotations
 
 import contextlib
+import errno
 import os
-import re
 import selectors
 import signal
 import subprocess
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import FrameType
-from typing import IO, Final, Protocol
+from typing import IO, Any, Final, Protocol
 
 from .config import LoadedConfig
 from .errors import cut_bytes, sanitize
@@ -60,7 +63,23 @@ WRITE_SUBCOMMANDS: Final = frozenset(
 )
 # Flags the gateway adds itself; a caller passing one is a bug.
 _OWN_FLAGS: Final = ("--json", "--config", "--timeout")
+# The closed set of flags a caller may pass, from forgectl's documented commands (its interface,
+# section Commands): value flags only as ``--flag=value``, boolean flags only bare. Human-only
+# flags (``--allow-self``) are not here: pr-comment never forwards them.
 BOOLEAN_FLAGS: Final = frozenset({"--dry-run", "--yes", "--override-escalation"})
+VALUE_FLAGS: Final = frozenset(
+    {
+        "--actor",
+        "--decision-id",
+        "--dedupe-key",
+        "--expected-base",
+        "--expected-head",
+        "--from",
+        "--host",
+        "--thread",
+        "--to",
+    }
+)
 STDIN_FLAGS: Final = frozenset({"--file", "--body-file"})
 STDIN_ARG: Final = "-"
 
@@ -76,17 +95,23 @@ MAX_VERSION_CHARS: Final = 64
 DEADLINE_SLACK_SECONDS: Final = 60.0
 MAX_DEADLINE_SECONDS: Final = 10 * 365 * 86400.0
 VERSION_DEADLINE_SECONDS: Final = 10.0
-TERM_GRACE_SECONDS: Final = 2.0  # forgectl itself waits 2 s between SIGTERM and SIGKILL
+# forgectl itself waits 2 s between its SIGTERM and SIGKILL of a hook; ours is longer so a clean
+# forgectl shutdown is never cut short.
+TERM_GRACE_SECONDS: Final = 5.0
 INTERRUPT_GRACE_SECONDS: Final = 10.0
 DRAIN_GRACE_SECONDS: Final = 2.0
 DEFAULT_CHILD_PATH: Final = "/usr/bin:/bin"
 
-_FLAG_RE: Final = re.compile(r"--[a-z][a-z0-9-]*=")
 _CHUNK: Final = 65536
 
 
 class GatewayUsageError(ValueError):
     """The caller built an argv the gateway refuses (a bug in pr-comment, never user input)."""
+
+
+class GatewayInternalError(Exception):
+    """The gateway cannot run forgectl for a reason that is not "forgectl is missing" (an
+    unexpected OS error, an ignored SIGCHLD off the main thread): exit 1 ``internal``."""
 
 
 class ToolMissing(Exception):
@@ -98,8 +123,8 @@ class ToolMissing(Exception):
 
 
 class ForgectlInterrupted(Exception):
-    """SIGINT or SIGTERM arrived during a call. The signal was forwarded to the child, which has
-    ended (or was killed after a grace period); ``result`` is what it left.
+    """SIGINT, SIGTERM or SIGHUP arrived during a call. The signal was forwarded to the child,
+    which has ended (or was killed after a grace period); ``result`` is what it left.
 
     Before any write the run exits ``128 + signum`` with no envelope (``cli.main`` does that for
     a call that does not catch this); a write maps it to ``outcome_unknown``.
@@ -117,7 +142,8 @@ class ForgectlResult:
 
     command: str  # the forgectl subcommand
     write: bool  # the call could have changed the host
-    exit_code: int | None  # None when forgectl died by a signal or was killed
+    # None when forgectl died by a signal, or its status could not be read (never read as 0)
+    exit_code: int | None
     signal: int | None = None
     stdout: bytes = b""
     stderr: bytes = b""
@@ -136,6 +162,8 @@ class Gateway(Protocol):
     ) -> ForgectlResult: ...
 
     def lower_version(self) -> str | None: ...
+
+    def resolve(self) -> str: ...
 
 
 # --- argv ---------------------------------------------------------------------------------------
@@ -158,10 +186,12 @@ def _check_text(value: object, what: str) -> str:
 def validate_call(subcommand: str, args: Sequence[str], stdin: bytes | None) -> bool:
     """Check one call's shape and return whether it can write.
 
-    Every argument is one of: a positional that does not start with ``-``; ``--flag=value``; a
-    bare boolean flag from ``BOOLEAN_FLAGS``; ``--file`` or ``--body-file`` immediately followed by
-    the stdin ``-``. The stdin ``-`` appears exactly when ``stdin`` is given. The gateway adds
-    ``--json``, ``--config`` and ``--timeout`` itself. ``--dry-run`` makes a write a read.
+    Every argument is one of: a positional that does not start with ``-``; ``--flag=value`` with
+    the exact flag name in ``VALUE_FLAGS``; a bare boolean flag from ``BOOLEAN_FLAGS`` (never in
+    an ``=`` form); ``--file`` or ``--body-file`` immediately followed by the stdin ``-`` (never
+    in an ``=`` form). Abbreviations and unknown flags are refused. The stdin ``-`` appears
+    exactly when ``stdin`` is given. The gateway adds ``--json``, ``--config`` and ``--timeout``
+    itself. ``--dry-run`` makes a write a read.
     """
     if subcommand not in SUBCOMMANDS:
         raise GatewayUsageError(f"unknown forgectl subcommand {subcommand!r}")
@@ -184,11 +214,13 @@ def validate_call(subcommand: str, args: Sequence[str], stdin: bytes | None) -> 
         elif arg in BOOLEAN_FLAGS:
             continue
         elif arg.startswith("-"):
-            match = _FLAG_RE.match(arg)
-            if match is None:
-                raise GatewayUsageError("a flag must be --flag=value or a known boolean flag")
-            if match[0][:-1] in _OWN_FLAGS:
-                raise GatewayUsageError(f"{match[0][:-1]} is added by the gateway")
+            name, equals, _value = arg.partition("=")
+            if name in _OWN_FLAGS:
+                raise GatewayUsageError(f"{name} is added by the gateway")
+            if not equals or name not in VALUE_FLAGS:
+                raise GatewayUsageError(
+                    "a flag must be a known --flag=value or a known bare boolean flag"
+                )
         elif not arg:
             raise GatewayUsageError("an argument must not be empty")
     if stdin_marks > 1 or (stdin_marks == 1) != (stdin is not None):
@@ -339,59 +371,85 @@ class _Writer(threading.Thread):
                 pipe.close()
 
 
-class _Forwarder:
-    """Forwards SIGINT and SIGTERM to the exact child PID while a call runs (main thread only).
+FORWARDED_SIGNALS: Final = tuple(
+    sig for sig in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGHUP", None)) if sig
+)
+MAX_RECORDED_SIGNALS: Final = 16
 
-    The handler records the first signal and never raises. ``reaped`` is set, with the signals
-    blocked, in the same step that reaps the child, so a forwarded signal can never reach a PID
-    that was already released.
+
+class _Forwarder:
+    """Records SIGINT, SIGTERM and SIGHUP while a call runs (main thread only); the polling loops
+    forward them to the exact child PID.
+
+    The handler only records the signal number. It never signals: a Python handler runs later, in
+    the main thread, possibly after the child was reaped. Forwarding happens from the loops, while
+    the leader is still held as a zombie or running (``_Child.signal_leader`` refuses after the
+    reap), so a forwarded signal can never reach a PID that was released.
     """
 
     def __init__(self) -> None:
-        self.signum: int | None = None
-        self.pid: int | None = None
-        self.reaped = False
-        self._saved: dict[int, object] = {}
+        self.received: list[int] = []
+        self._forwarded = 0
+        # What ``signal.signal`` returned: a handler, a constant or None (a handler not installed
+        # from Python); ``Any`` because ``signal`` types the constants and callables separately.
+        self._saved: dict[int, Any] = {}
+
+    @property
+    def signum(self) -> int | None:
+        """The first signal received, or None."""
+        return self.received[0] if self.received else None
 
     def __enter__(self) -> _Forwarder:
         if threading.current_thread() is threading.main_thread():
-            for sig in (signal.SIGINT, signal.SIGTERM):
+            for sig in FORWARDED_SIGNALS:
                 self._saved[sig] = signal.signal(sig, self._handle)
         return self
 
     def __exit__(self, *exc: object) -> None:
         for sig, previous in self._saved.items():
-            if previous is not None:
-                signal.signal(sig, previous)  # type: ignore[arg-type]
-
-    def attach(self, pid: int) -> None:
-        self.pid = pid
-        if self.signum is not None:  # arrived between fork and here
-            self._forward(self.signum)
+            # None means the previous handler was not installed from Python: default is the
+            # closest restorable state.
+            signal.signal(sig, signal.SIG_DFL if previous is None else previous)
 
     def _handle(self, signum: int, _frame: FrameType | None) -> None:
-        if self.signum is None:
-            self.signum = signum
-        self._forward(signum)
+        if len(self.received) < MAX_RECORDED_SIGNALS:
+            self.received.append(signum)
 
-    def _forward(self, signum: int) -> None:
-        if self.pid is not None and not self.reaped:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.kill(self.pid, signum)
+    def forward_pending(self, child: _Child) -> None:
+        """Send each signal received so far, once, to the child's leader."""
+        while self._forwarded < len(self.received):
+            signum = self.received[self._forwarded]
+            self._forwarded += 1
+            child.signal_leader(signum)
 
 
-_BLOCKED = {signal.SIGINT, signal.SIGTERM}
+@contextlib.contextmanager
+def _sigchld_default() -> Iterator[None]:
+    """Child status needs SIGCHLD not ignored: with ``SIG_IGN`` (inherited from a parent) the
+    kernel discards the status and ``waitid`` fails. On the main thread the default disposition is
+    set for the call and restored; elsewhere an ignored SIGCHLD cannot be changed, so refuse."""
+    sigchld = getattr(signal, "SIGCHLD", None)
+    if sigchld is None or signal.getsignal(sigchld) != signal.SIG_IGN:
+        yield
+        return
+    if threading.current_thread() is not threading.main_thread():
+        raise GatewayInternalError("SIGCHLD is ignored and cannot be changed off the main thread")
+    signal.signal(sigchld, signal.SIG_DFL)
+    try:
+        yield
+    finally:
+        signal.signal(sigchld, signal.SIG_IGN)
 
 
 class _Child:
     """One started forgectl and its process group."""
 
-    def __init__(self, proc: subprocess.Popen[bytes], forwarder: _Forwarder) -> None:
+    def __init__(self, proc: subprocess.Popen[bytes]) -> None:
         self.proc = proc
         self.pid = proc.pid
         self.start = _proc_start(proc.pid)
-        self.forwarder = forwarder
         self.reaped = False
+        self.status_unknown = False  # the kernel had no status for the child (never signaled)
 
     def exited(self) -> bool:
         """Whether the leader has exited. Where ``waitid`` exists the zombie is kept (so its PID
@@ -402,20 +460,22 @@ class _Child:
             try:
                 info = os.waitid(os.P_PID, self.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
             except ChildProcessError:
+                # The child is gone and its status is not ours to read: unknown, not success. The
+                # PID may be reused, so nothing is signaled from here on.
+                self.status_unknown = True
+                self.reaped = True
                 return True
             return info is not None
+        # todo(#40): verify and harden the no-waitid fallback on macOS
         return self._reap(wait=False)
 
     def _reap(self, *, wait: bool) -> bool:
-        signal.pthread_sigmask(signal.SIG_BLOCK, _BLOCKED)
-        try:
-            code = self.proc.wait() if wait else self.proc.poll()
-            if code is not None:
-                self.reaped = True
-                self.forwarder.reaped = True
-            return code is not None
-        finally:
-            signal.pthread_sigmask(signal.SIG_UNBLOCK, _BLOCKED)
+        if self.status_unknown:
+            return True
+        code = self.proc.wait() if wait else self.proc.poll()
+        if code is not None:
+            self.reaped = True
+        return code is not None
 
     def reap(self) -> None:
         self._reap(wait=True)
@@ -426,6 +486,12 @@ class _Child:
         if self.reaped:
             return False
         return self.start is None or _proc_start(self.pid) in (None, self.start)
+
+    def signal_leader(self, signum: int) -> None:
+        """Signal the exact child PID, under the same guard as the group."""
+        if self.can_signal_group():
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(self.pid, signum)
 
     def signal_group(self, signum: int) -> None:
         if self.can_signal_group():
@@ -441,15 +507,18 @@ class _Child:
         return True
 
     def terminate(self, term_grace: float) -> None:
-        """SIGTERM to the group, SIGKILL after the grace period. Only while the leader is
-        unreaped."""
+        """SIGTERM to the leader only (forgectl ends its own hooks), then SIGKILL to the group
+        after the grace period. Only while the leader is unreaped."""
         if self.exited():
             return
-        self.signal_group(signal.SIGTERM)
+        self.signal_leader(signal.SIGTERM)
         if self.wait_exit(term_grace):
             return
         self.signal_group(signal.SIGKILL)
         self.wait_exit(5.0)
+
+
+_ERRNO_TOOL_MISSING: Final = frozenset({errno.ENOENT, errno.ENOEXEC, errno.EACCES, errno.ENOTDIR})
 
 
 def run_process(
@@ -468,11 +537,13 @@ def run_process(
 ) -> ForgectlResult:
     """Run ``argv`` (no shell) to its end and return what it left.
 
-    Raises ``ToolMissing`` when the program cannot be started, ``ForgectlInterrupted`` after
-    SIGINT or SIGTERM (once the child has ended). The child leads its own process group.
+    Raises ``ToolMissing`` when the program cannot be found or executed, ``GatewayInternalError``
+    for any other failure to start it or an ignored SIGCHLD off the main thread, and
+    ``ForgectlInterrupted`` after SIGINT, SIGTERM or SIGHUP (once the child has ended). The child
+    leads its own session and process group.
     """
     stop = threading.Event()
-    with _Forwarder() as forwarder:
+    with _sigchld_default(), _Forwarder() as forwarder:
         try:
             proc = subprocess.Popen(
                 list(argv),
@@ -485,10 +556,13 @@ def run_process(
                 close_fds=True,
                 start_new_session=True,
             )
-        except OSError:
-            raise ToolMissing("forgectl could not be started") from None
-        forwarder.attach(proc.pid)
-        child = _Child(proc, forwarder)
+        except OSError as exc:
+            if exc.errno in _ERRNO_TOOL_MISSING:
+                raise ToolMissing("forgectl could not be started") from None
+            raise GatewayInternalError(
+                f"forgectl could not be started (errno {exc.errno})"
+            ) from None
+        child = _Child(proc)
         assert proc.stdout is not None and proc.stderr is not None
         out = _Reader(proc.stdout.fileno(), stdout_limit, stop)
         err = _Reader(proc.stderr.fileno(), stderr_limit, stop)
@@ -515,12 +589,14 @@ def run_process(
             for pipe in (proc.stdout, proc.stderr):
                 with contextlib.suppress(OSError, ValueError):
                     pipe.close()
-    code = proc.returncode
+    code = None if child.status_unknown else proc.returncode
+    # A deadline kill keeps what forgectl itself left (its exit status and output): ``timed_out``
+    # says the run did not end on its own, and ``lower.failure_outcome`` stays conservative.
     result = ForgectlResult(
         command=command,
         write=write,
-        exit_code=None if timed_out or code is None or code < 0 else code,
-        signal=-code if (code is not None and code < 0 and not timed_out) else None,
+        exit_code=code if code is not None and code >= 0 else None,
+        signal=-code if (code is not None and code < 0) else None,
         stdout=out.data(),
         stderr=err.data(),
         stdout_truncated=out.truncated,
@@ -541,10 +617,12 @@ def _wait(
     term_grace: float,
     interrupt_grace: float,
 ) -> bool:
-    """Wait for the leader to exit; True when the deadline killed it."""
+    """Wait for the leader to exit, forwarding received signals to it; True when the deadline
+    killed it."""
     started = time.monotonic()
     interrupted_at: float | None = None
     while not child.exited():
+        forwarder.forward_pending(child)
         now = time.monotonic()
         if deadline is not None and now - started >= deadline:
             child.terminate(term_grace)
@@ -580,7 +658,8 @@ def _drain(
 
 class ProcessGateway:
     """Runs the real forgectl. ``call`` raises ``ToolMissing``, ``ForgectlInterrupted`` or
-    ``GatewayUsageError``; anything forgectl itself does (including failing) is a result."""
+    ``GatewayUsageError`` (and ``GatewayInternalError`` for an unexpected start failure); anything
+    forgectl itself does (including failing) is a result."""
 
     def __init__(
         self,
@@ -597,7 +676,9 @@ class ProcessGateway:
         drain_grace: float = DRAIN_GRACE_SECONDS,
     ) -> None:
         self._bin = forgectl_bin
-        self._config_path = config_path
+        # forgectl runs with cwd ``/``, so a relative path would point elsewhere: make it absolute
+        # against pr-comment's own working directory now.
+        self._config_path = os.path.abspath(config_path) if config_path else config_path
         self._timeout = timeout
         self._environ: dict[str, str] = dict(os.environ if environ is None else environ)
         self._deadline = deadline
@@ -651,7 +732,11 @@ class ProcessGateway:
 
     def lower_version(self) -> str | None:
         """The first line of ``forgectl --version``, display-sanitized, at most 64 characters, or
-        None when it cannot be read. Read once; never raises."""
+        None when it cannot be read or forgectl is missing. Read once.
+
+        A signal during the read is not swallowed: ``ForgectlInterrupted`` propagates (callers
+        building a mismatch outcome must not catch it), and so does ``GatewayInternalError``.
+        """
         if self._version_read:
             return self._version
         self._version_read = True
@@ -669,7 +754,7 @@ class ProcessGateway:
                 interrupt_grace=2.0,
                 drain_grace=0.5,
             )
-        except (ToolMissing, ForgectlInterrupted):
+        except ToolMissing:
             return None
         if result.exit_code != 0 or result.timed_out:
             return None

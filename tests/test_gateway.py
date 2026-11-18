@@ -6,6 +6,7 @@ and ended at teardown by pid, group and start time, never by pattern.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import signal
@@ -18,9 +19,10 @@ from pathlib import Path
 import pytest
 
 from pr_comment import gateway as gw_mod
-from pr_comment.config import LoadedConfig
+from pr_comment.config import Config, LoadedConfig
 from pr_comment.gateway import (
     ForgectlInterrupted,
+    GatewayInternalError,
     GatewayUsageError,
     ProcessGateway,
     ToolMissing,
@@ -29,6 +31,8 @@ from pr_comment.gateway import (
     resolve_binary,
     validate_call,
 )
+from pr_comment.lower import failure_outcome
+from tests.fake_gateway import FakeGateway
 from tests.fakes import Tracker, alive, make_fake, recorded
 
 SRC = str(Path(__file__).resolve().parent.parent / "src")
@@ -55,6 +59,20 @@ PR = "gh.example/o/r#1"
         ["\ud800"],
         ["x" * 9000],
         [PR, "--yes", "--body-file", "-", "-"],
+        # The argv rules are closed: no `=` form for the stdin and boolean flags, no unknown
+        # names, no abbreviations.
+        ["--file=/etc/passwd"],
+        ["--body-file=/etc/passwd"],
+        ["--conf=/x"],
+        ["--input=/x"],
+        ["--dry-run=1"],
+        ["--yes=true"],
+        ["--override-escalation=pr-comment"],
+        ["--dry"],
+        ["--expected-hea=" + "a" * 40],
+        ["--expected-head=" + "a" * 40 + "=x", "--allow-self"],
+        ["--allow-self"],
+        ["--no-such-flag=1"],
     ],
 )
 def test_validate_call_refuses_bad_arguments(args: list[str]) -> None:
@@ -88,6 +106,9 @@ def test_validate_call_accepts_the_documented_forms_and_reports_writes() -> None
     assert validate_call("review", [PR, "--file", "-", "--dry-run"], b"{}") is False
     assert validate_call("resolve", [PR, "--thread=gh:rt:x", "--yes"], None) is True
     assert validate_call("reply", [PR, *forms[3:], "--body-file", "-"], b"hi") is True
+    assert validate_call("compare", [PR, "--from=" + "a" * 40, "--to=" + "b" * 40], None) is False
+    assert validate_call("whoami", ["--host=gh.example"], None) is False
+    assert validate_call("approve", [PR, "--override-escalation", "--yes"], None) is True
     # A value starting with '-' is safe attached to its flag.
     assert validate_call("comment", [PR, "--dedupe-key=-x", "--body-file", "-"], b"") is True
 
@@ -161,6 +182,25 @@ def test_build_env_keeps_environment_cuts_path_and_drops_own_settings() -> None:
     assert env == {"PATH": "/usr/bin:/bin", "HOME": "/h", "MY_TOKEN": "t"}
     assert build_env({"PATH": "rel"})["PATH"] == "/usr/bin:/bin"
     assert build_env({})["PATH"] == "/usr/bin:/bin"
+
+
+def test_relative_forgectl_config_is_made_absolute_against_the_working_directory(
+    tmp_path: Path, tracker: Tracker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tracker.watch(tmp_path)
+    make_fake(tmp_path, "print('{}')")
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    gateway = _gateway(tmp_path, config_path="conf/forgectl.yaml")
+    assert gateway.call("show", [PR]).exit_code == 0  # forgectl itself runs with cwd "/"
+    seen = json.loads((tmp_path / "argv.json").read_text())
+    assert seen[2] == f"--config={work}/conf/forgectl.yaml"
+    loaded = LoadedConfig(
+        config=Config(forgectl_config="rel.yaml"), config_hash="x", config_path=None
+    )
+    from_config = ProcessGateway.from_config(loaded, environ={})
+    assert from_config._config_path == str(work / "rel.yaml")  # pyright: ignore[reportPrivateUsage]
 
 
 def test_from_config_uses_config_values(tmp_path: Path) -> None:
@@ -361,6 +401,65 @@ def test_hang_is_killed_at_the_deadline_with_its_group(tmp_path: Path, tracker: 
         assert not alive(pid, start)
 
 
+def test_deadline_terminates_the_leader_only_then_the_group_is_killed(
+    tmp_path: Path, tracker: Tracker
+) -> None:
+    tracker.watch(tmp_path)
+    (tmp_path / "grand.py").write_text(
+        "import signal, time\n"
+        f"D = {str(tmp_path)!r}\n"
+        "signal.signal(signal.SIGTERM, lambda *a: open(D + '/grand-term', 'w').close())\n"
+        "open(D + '/gready', 'w').close()\n"
+        "time.sleep(60)\n"
+    )
+    make_fake(
+        tmp_path,
+        """
+        import signal
+        grandchild(open(D + "/grand.py").read())
+        while not os.path.exists(D + "/gready"):
+            time.sleep(0.02)
+        def term(signum, frame):
+            open(D + "/leader-term", "w").close()
+            time.sleep(0.2)
+            os._exit(0)
+        signal.signal(signal.SIGTERM, term)
+        time.sleep(60)
+        """,
+    )
+    result = _gateway(tmp_path, deadline=3.0, term_grace=5.0).call("show", [PR])
+    assert result.timed_out and result.leftover
+    assert result.exit_code == 0  # forgectl's own status is kept (R7)
+    assert (tmp_path / "leader-term").exists()  # the leader got the SIGTERM
+    assert not (tmp_path / "grand-term").exists()  # the group did not; it got SIGKILL
+    for pid, _pgid, start in recorded(tmp_path):
+        assert not alive(pid, start)
+
+
+def test_deadline_kill_keeps_what_forgectl_left(tmp_path: Path, tracker: Tracker) -> None:
+    tracker.watch(tmp_path)
+    make_fake(
+        tmp_path,
+        """
+        import signal
+        def term(signum, frame):
+            sys.stdout.write(json.dumps({"error": {"code": "outcome_unknown", "message": "m"}}))
+            sys.stdout.flush()
+            os._exit(12)
+        signal.signal(signal.SIGTERM, term)
+        time.sleep(60)
+        """,
+    )
+    result = _gateway(tmp_path, deadline=2.0, term_grace=5.0).call(
+        "comment", [PR, "--body-file", "-"], stdin=b"x"
+    )
+    assert result.timed_out and result.exit_code == 12 and b"outcome_unknown" in result.stdout
+    outcome = failure_outcome(result, gateway=FakeGateway())
+    assert outcome.document is not None
+    error = outcome.document["error"]
+    assert error["code"] == "outcome_unknown" and error["lower_error"]["code"] == "outcome_unknown"
+
+
 def test_deadline_leaves_a_child_that_ends_in_time_alone(tmp_path: Path, tracker: Tracker) -> None:
     tracker.watch(tmp_path)
     make_fake(tmp_path, "time.sleep(0.2); print('{}')")
@@ -449,6 +548,28 @@ print("finished", result.exit_code)
 """
 
 
+def _require_main_thread() -> None:
+    if threading.current_thread() is not threading.main_thread():
+        pytest.skip("signals are delivered to the main thread")
+
+
+def _signal_self_when_ready(ready: Path, signum: int) -> threading.Thread:
+    """Signal this very process once the fake has started (so the gateway's handlers are
+    installed). Only our own pid is ever signaled."""
+    me = os.getpid()
+
+    def run() -> None:
+        end = time.monotonic() + 15
+        while not ready.exists() and time.monotonic() < end:
+            time.sleep(0.02)
+        if ready.exists():
+            os.kill(me, signum)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread
+
+
 def _wait_for(path: Path, seconds: float = 15.0) -> None:
     end = time.monotonic() + seconds
     while not path.exists():
@@ -472,7 +593,7 @@ def _run_driver(
     )
 
 
-@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT])
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT, signal.SIGHUP])
 def test_signal_during_a_read_is_forwarded_and_exits_128_plus_n(
     tmp_path: Path, tracker: Tracker, signum: signal.Signals
 ) -> None:
@@ -485,6 +606,7 @@ def test_signal_during_a_read_is_forwarded_and_exits_128_plus_n(
             os._exit(0)
         signal.signal(signal.SIGTERM, on)
         signal.signal(signal.SIGINT, on)
+        signal.signal(signal.SIGHUP, on)
         open(D + "/ready", "w").close()
         time.sleep(60)
         """,
@@ -545,16 +667,218 @@ def test_interrupted_exception_carries_the_result_for_writes(
     tmp_path: Path, tracker: Tracker
 ) -> None:
     """A write that was interrupted can still report what forgectl left (for outcome_unknown)."""
+    _require_main_thread()  # the test signals its own process: only the main thread handles it
     tracker.watch(tmp_path)
-    make_fake(tmp_path, "time.sleep(60)")
+    make_fake(tmp_path, "open(D + '/ready', 'w').close(); time.sleep(60)")
     gateway = _gateway(tmp_path, deadline=60.0)
-    timer = threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGTERM))
-    timer.start()
-    try:
-        with pytest.raises(ForgectlInterrupted) as info:
-            gateway.call("comment", [PR, "--body-file", "-"], stdin=b"hi")
-    finally:
-        timer.cancel()
+    thread = _signal_self_when_ready(tmp_path / "ready", signal.SIGTERM)
+    with pytest.raises(ForgectlInterrupted) as info:
+        gateway.call("comment", [PR, "--body-file", "-"], stdin=b"hi")
+    thread.join(5)
     assert info.value.signum == signal.SIGTERM
     assert info.value.result.write is True
     assert info.value.result.signal == signal.SIGTERM
+
+
+def test_sigterm_during_the_version_read_propagates(tmp_path: Path, tracker: Tracker) -> None:
+    _require_main_thread()
+    tracker.watch(tmp_path)
+    make_fake(tmp_path, "open(D + '/ready', 'w').close(); time.sleep(60)")
+    thread = _signal_self_when_ready(tmp_path / "ready", signal.SIGTERM)
+    with pytest.raises(ForgectlInterrupted) as info:
+        _gateway(tmp_path).lower_version()
+    thread.join(5)
+    assert info.value.signum == signal.SIGTERM and info.value.result.command == "--version"
+    # and a failure outcome built on that gateway does not swallow it
+    assert recorded(tmp_path)  # forgectl really ran
+
+
+def test_sighup_is_forwarded_and_reported_as_129(tmp_path: Path, tracker: Tracker) -> None:
+    _require_main_thread()
+    tracker.watch(tmp_path)
+    make_fake(
+        tmp_path,
+        """
+        import signal
+        def on(signum, frame):
+            open(D + "/got", "w").write(str(signum))
+            os._exit(0)
+        signal.signal(signal.SIGHUP, on)
+        open(D + "/ready", "w").close()
+        time.sleep(60)
+        """,
+    )
+    thread = _signal_self_when_ready(tmp_path / "ready", signal.SIGHUP)
+    previous = signal.getsignal(signal.SIGHUP)
+    with pytest.raises(ForgectlInterrupted) as info:
+        _gateway(tmp_path, deadline=60.0).call("show", [PR])
+    thread.join(5)
+    assert info.value.signum == signal.SIGHUP and 128 + info.value.signum == 129
+    assert (tmp_path / "got").read_text() == str(int(signal.SIGHUP))
+    assert signal.getsignal(signal.SIGHUP) == previous
+
+
+def test_handler_only_records_and_forwarding_stops_after_the_reap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_main_thread()
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        forwarder = gw_mod._Forwarder()  # pyright: ignore[reportPrivateUsage]
+        child = gw_mod._Child(proc)  # pyright: ignore[reportPrivateUsage]
+        forwarder._handle(signal.SIGTERM, None)  # pyright: ignore[reportPrivateUsage]
+        time.sleep(0.2)
+        assert proc.poll() is None  # recording the signal sent nothing
+        forwarder.forward_pending(child)  # the loop forwards it, to the exact pid we started
+        proc.wait(timeout=10)
+        assert proc.returncode == -signal.SIGTERM
+        child.reap()
+        sent: list[tuple[int, int]] = []
+        monkeypatch.setattr(os, "kill", lambda pid, sig: sent.append((pid, sig)))
+        forwarder._handle(signal.SIGINT, None)  # pyright: ignore[reportPrivateUsage]
+        forwarder.forward_pending(child)
+        assert sent == []  # never after the reap
+    finally:
+        monkeypatch.undo()
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def test_previous_handlers_that_python_did_not_install_are_restored_as_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_main_thread()
+    calls: list[tuple[int, object]] = []
+
+    def fake_signal(sig: int, handler: object) -> None:
+        calls.append((sig, handler))
+
+    monkeypatch.setattr(signal, "signal", fake_signal)  # every `previous` is None
+    with gw_mod._Forwarder():  # pyright: ignore[reportPrivateUsage]
+        pass
+    installed = [sig for sig, handler in calls if callable(handler)]
+    restored = [(sig, handler) for sig, handler in calls if not callable(handler)]
+    assert set(installed) == {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
+    assert sorted(restored) == sorted((sig, signal.SIG_DFL) for sig in installed)
+
+
+def test_the_signal_mask_is_left_exactly_as_it_was(tmp_path: Path, tracker: Tracker) -> None:
+    _require_main_thread()
+    tracker.watch(tmp_path)
+    make_fake(tmp_path, "print('{}')")
+    blocked = {signal.SIGINT, signal.SIGUSR2}
+    old = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
+    try:
+        assert _gateway(tmp_path).call("show", [PR]).exit_code == 0
+        assert blocked <= signal.pthread_sigmask(signal.SIG_BLOCK, set())
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, old)
+
+
+# --- start failures, ignored SIGCHLD, unreadable status -----------------------------------------
+
+
+@pytest.mark.parametrize("number", [errno.ENOENT, errno.ENOEXEC, errno.EACCES, errno.ENOTDIR])
+def test_start_errors_that_mean_the_program_is_unusable_are_tool_missing(
+    tmp_path: Path, tracker: Tracker, monkeypatch: pytest.MonkeyPatch, number: int
+) -> None:
+    tracker.watch(tmp_path)
+    make_fake(tmp_path, "print('{}')")
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise OSError(number, "x")
+
+    monkeypatch.setattr(subprocess, "Popen", boom)
+    with pytest.raises(ToolMissing):
+        _gateway(tmp_path).call("show", [PR])
+
+
+@pytest.mark.parametrize("number", [errno.EMFILE, errno.ENOMEM, errno.EPERM, errno.E2BIG])
+def test_other_start_errors_are_internal_not_tool_missing(
+    tmp_path: Path, tracker: Tracker, monkeypatch: pytest.MonkeyPatch, number: int
+) -> None:
+    tracker.watch(tmp_path)
+    make_fake(tmp_path, "print('{}')")
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise OSError(number, "x")
+
+    monkeypatch.setattr(subprocess, "Popen", boom)
+    with pytest.raises(GatewayInternalError):
+        _gateway(tmp_path).call("show", [PR])
+
+
+IGNORING_DRIVER = """\
+import signal, sys
+signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+from pr_comment.gateway import ProcessGateway
+
+gateway = ProcessGateway(environ={{"PATH": {path!r}}}, deadline=60.0)
+result = gateway.call("show", ["gh.example/o/r#1"])
+still_ignored = signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN
+print("finished", result.exit_code, result.signal, still_ignored)
+"""
+
+
+def test_an_inherited_ignored_sigchld_does_not_turn_a_failure_into_success(
+    tmp_path: Path, tracker: Tracker
+) -> None:
+    tracker.watch(tmp_path)
+    make_fake(tmp_path, "sys.exit(7)")
+    script = tmp_path / "ignoring.py"
+    script.write_text(IGNORING_DRIVER.format(path=str(tmp_path / "bin")))
+    done = subprocess.run(
+        [sys.executable, str(script)],
+        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": SRC, "HOME": str(tmp_path)},
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    assert done.stdout.strip() == b"finished 7 None True", done.stderr  # and SIG_IGN restored
+
+
+def test_an_ignored_sigchld_off_the_main_thread_is_refused(
+    tmp_path: Path, tracker: Tracker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tracker.watch(tmp_path)
+    make_fake(tmp_path, "print('{}')")
+    real = signal.getsignal
+    monkeypatch.setattr(
+        signal, "getsignal", lambda sig: signal.SIG_IGN if sig == signal.SIGCHLD else real(sig)
+    )
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            _gateway(tmp_path).call("show", [PR])
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    thread.join(20)
+    assert len(errors) == 1 and isinstance(errors[0], GatewayInternalError)
+    assert not recorded(tmp_path)  # nothing was started
+
+
+def test_an_unreadable_child_status_is_unknown_never_zero_and_never_signaled(
+    tmp_path: Path, tracker: Tracker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tracker.watch(tmp_path)
+    make_fake(tmp_path, "print('{}')")
+
+    def no_status(*_a: object, **_k: object) -> None:
+        raise ChildProcessError()
+
+    sent: list[int] = []
+    monkeypatch.setattr(os, "waitid", no_status)
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: sent.append(pgid))
+    monkeypatch.setattr(os, "kill", lambda pid, sig: sent.append(pid))
+    result = _gateway(tmp_path).call("comment", [PR, "--body-file", "-"], stdin=b"x")
+    monkeypatch.undo()
+    assert result.exit_code is None and result.signal is None and not result.timed_out
+    assert sent == []
+    outcome = failure_outcome(result, gateway=FakeGateway())
+    assert outcome.document is not None
+    assert outcome.document["error"]["code"] == "outcome_unknown"

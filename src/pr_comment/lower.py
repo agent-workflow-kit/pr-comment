@@ -3,11 +3,14 @@ forgectl edge).
 
 ``require_ok`` returns the parsed JSON document of an exit 0, or raises ``LowerFailure`` carrying
 the ``Outcome`` pr-comment ends with. ``failure_outcome`` maps any other result: forgectl's exit
-code, ``code``, ``reason``, ``details`` and ``retry_after`` are copied, its whole envelope goes in
-``lower_error``, and anything pr-comment does not know (an exit code, a code, a reason, an
-ill-typed field, output that is not UTF-8 JSON) is ``lower_contract_mismatch``. forgectl's text
-is never put in a message: ``message`` is forgectl's own on a passed-through error, otherwise a
-fixed sentence.
+code, ``code``, ``reason``, ``details`` and ``retry_after`` are copied, its envelope goes in
+``lower_error`` (for a dry-run ``would_refuse``, forgectl's whole top document), and anything
+pr-comment does not know (an exit code, a code, a reason, an ill-typed field, output that is not
+UTF-8 JSON) is ``lower_contract_mismatch``. forgectl's text is never put in a message:
+``message`` is forgectl's own on a passed-through error, otherwise a fixed sentence.
+
+``ForgectlInterrupted`` (a signal during a call, also during ``lower_version``) is never caught
+here: it reaches ``cli.main``, or the write path that maps it to ``outcome_unknown``.
 """
 
 from __future__ import annotations
@@ -29,11 +32,12 @@ MAX_ENVELOPE_BYTES: Final = 1024 * 1024
 MAX_MESSAGE_BYTES: Final = 4096
 
 _EXIT2_PASSTHROUGH: Final = frozenset({"body_too_large", "invalid_pr", "config_invalid"})
-# forgectl's exit-12 codes pr-comment passes through (its own codes are never taken from forgectl).
+# forgectl's exit-12 codes pr-comment passes through (its own codes are never taken from forgectl:
+# ``tool_missing``, ``audit_unavailable``, ``state_unsafe`` and ``lower_contract_mismatch`` are
+# pr-comment's, docs/interface.md: Exit codes). ``invalid_position`` is kept: pr-comment's own is
+# built from forgectl's real-call answer and carries forgectl's ``details.invalid``.
 _EXIT12_PASSTHROUGH: Final = frozenset(
     {
-        "tool_missing",
-        "audit_unavailable",
         "audit_failed",
         "invalid_position",
         "outcome_unknown",
@@ -83,7 +87,13 @@ class LowerFailure(Exception):
 
 
 class _Mismatch(Exception):
-    pass
+    def __init__(self, why: str, lower_error: Mapping[str, Any] | None = None) -> None:
+        super().__init__(why)
+        self.lower_error = lower_error
+
+
+class MissingBackendError(ValueError):
+    """A write failure that needs ``show``'s backend was lowered without one (a caller bug)."""
 
 
 def tool_missing_outcome(exc: ToolMissing) -> Outcome:
@@ -97,13 +107,19 @@ def mismatch_outcome(
     *,
     gateway: Gateway,
     write: tuple[bool | None, str] | None = None,
+    lower_error: Mapping[str, Any] | None = None,
 ) -> Outcome:
-    """Exit 12 ``lower_contract_mismatch``; ``write`` only when a write may have happened."""
+    """Exit 12 ``lower_contract_mismatch``; ``write`` only when a write may have happened.
+
+    Reads the lower version through the gateway, so a signal during that read raises
+    ``ForgectlInterrupted`` out of here; callers must not catch it.
+    """
     return error_outcome(
         "lower_contract_mismatch",
         f"forgectl {command} gave an answer pr-comment cannot use ({why})",
         details={"command": command, "lower_version": gateway.lower_version()},
         write=write,
+        lower_error=lower_error,
     )
 
 
@@ -161,14 +177,20 @@ def failure_outcome(
 ) -> Outcome:
     """The outcome of a forgectl call that did not succeed (or succeeded with a bad answer).
 
-    ``backend`` is ``show``'s, needed to read an ``outcome_partial``.
+    ``backend`` is ``show``'s, needed to read an ``outcome_partial``: a write failure whose
+    envelope is one without a backend raises ``MissingBackendError`` (a caller bug, never a
+    contract mismatch).
     """
     command = result.command
     if result.timed_out:
         if result.write:
+            # The deadline kill is conservative: whatever forgectl left (``result.exit_code`` and
+            # output are kept), the write's outcome is unknown. A parseable envelope it printed
+            # before it ended is kept in ``lower_error`` for the human.
             return error_outcome(
                 "outcome_unknown",
                 f"forgectl {command} did not finish in time; whether it posted is unknown",
+                lower_error=_envelope_error(result),
             )
         return error_outcome("network_error", f"forgectl {command} did not finish in time")
     if result.exit_code is None:
@@ -191,9 +213,50 @@ def failure_outcome(
     try:
         document = _load_json(result, MAX_ENVELOPE_BYTES)
         return _passthrough(result, document, allowed, backend)
+    except MissingBackendError:
+        raise
     except (_Mismatch, ValueError, TypeError) as exc:
+        # A malformed ``leftover_drafts`` on ``host_rejected`` also lands here: no allowed pair
+        # means "none" with an unknown landed, so it is (None, same_command). todo(#39)
         why = str(exc) if isinstance(exc, _Mismatch) else "malformed error envelope"
-        return mismatch_outcome(command, why, gateway=gateway, write=write)
+        lower_error = exc.lower_error if isinstance(exc, _Mismatch) else None
+        return mismatch_outcome(command, why, gateway=gateway, write=write, lower_error=lower_error)
+
+
+def _envelope_error(result: ForgectlResult) -> dict[str, Any] | None:
+    """forgectl's ``error`` object from a result, when its stdout holds a parseable envelope."""
+    try:
+        document = _load_json(result, MAX_ENVELOPE_BYTES)
+    except _Mismatch:
+        return None
+    if isinstance(document, dict):
+        error: object = document.get("error")  # pyright: ignore[reportUnknownMemberType]
+        if isinstance(error, dict):
+            return error  # pyright: ignore[reportUnknownVariableType]
+    return None
+
+
+def partial_document(result: ForgectlResult) -> dict[str, Any] | None:
+    """The ``{hosts, errors}`` document of a ``whoami`` that exited 12 ``partial_results``.
+
+    That exit prints the normal object (``hosts`` and ``errors``, no ``error`` key) and the code
+    on stderr only, so ``failure_outcome`` reads it as a mismatch. A caller that can use some
+    hosts reads it here: None unless the exit is 12 and the output is an object with a ``hosts``
+    list and an ``errors`` list and no ``error`` key.
+    """
+    if result.exit_code != 12:
+        return None
+    try:
+        document = _load_json(result, None)
+    except _Mismatch:
+        return None
+    if not isinstance(document, dict) or "error" in document:
+        return None
+    hosts: object = document.get("hosts")  # pyright: ignore[reportUnknownMemberType]
+    errors: object = document.get("errors")  # pyright: ignore[reportUnknownMemberType]
+    if not isinstance(hosts, list) or not isinstance(errors, list):
+        return None
+    return document  # pyright: ignore[reportUnknownVariableType]
 
 
 def _mapping(value: object, what: str) -> dict[str, Any]:
@@ -220,19 +283,14 @@ def _passthrough(
             cut_bytes(message, MAX_MESSAGE_BYTES),
             reason=reason,
             details=details,
-            lower_error={
-                "code": "refused",
-                "reason": reason,
-                "message": message,
-                "details": details,
-            },
+            lower_error=top,
         )
     error = _mapping(top.get("error"), "error")
     code, message = error.get("code"), error.get("message")
     if not isinstance(code, str) or not isinstance(message, str):
         raise _Mismatch("error has no code and message")
     if code not in allowed or CODE_EXIT.get(code) != exit_code:
-        raise _Mismatch("error code does not fit the exit status")
+        raise _Mismatch("error code does not fit the exit status", error)
     reason = error.get("reason")
     if code == "refused" and reason not in _EXIT20_REASONS:
         raise _Mismatch("unknown refusal")
@@ -241,14 +299,21 @@ def _passthrough(
     details = error.get("details")
     if details is not None and not isinstance(details, dict):
         raise _Mismatch("details is not an object")
+    if code == "outcome_partial" and backend not in ("github", "gitlab"):
+        raise MissingBackendError("outcome_partial needs show's backend (github or gitlab)")
     fields: dict[str, Any] = {
         "reason": reason,
         "details": details,
         "retry_after": error.get("retry_after"),
         "lower_error": error,
         "backend": backend,
-        "from_forgectl": code == "audit_failed",
     }
+    if code == "audit_failed":
+        # forgectl's details.outcome is an enum string, not pr-comment's own result document: it
+        # picks the pair and stays in lower_error only.
+        fields["from_forgectl"] = True
+        fields["write"] = _audit_failed_pair(details)
+        fields["details"] = None
     if code == "escalated":
         fields["escalated_by"] = "forgectl"
         fields["escalated_hooks"] = error.get("escalated_hooks")
@@ -257,3 +322,21 @@ def _passthrough(
         fields["decision_ids"] = decision_ids
     # ValueError and TypeError from a field the schema forbids become a contract mismatch.
     return error_outcome(code, cut_bytes(message, MAX_MESSAGE_BYTES), **fields)
+
+
+_AUDIT_LANDED: Final = frozenset(
+    {"posted", "approved", "resolved", "unresolved", "quick_action_ran"}
+)
+
+
+def _audit_failed_pair(details: Mapping[str, Any] | None) -> tuple[bool | None, str]:
+    """``(landed, retry)`` of forgectl's ``audit_failed`` from its ``details.outcome`` (the
+    audit result of the write): landed ones are done, ``failed`` did not land, anything else
+    (``outcome_unknown``, ``attempted``, a missing or unknown value) is unknown."""
+    outcome = details.get("outcome") if details is not None else None
+    if isinstance(outcome, str):
+        if outcome in _AUDIT_LANDED:
+            return True, "none"
+        if outcome == "failed":
+            return False, "same_command"
+    return None, "same_command"
