@@ -101,6 +101,7 @@ Each becomes a `live` test in the plan.
 | `plan.py` | the posting plan shown by the dialog and `--dry-run`, and its `plan_sha256` |
 | `forge.py` | the forgectl edge: argv in `=` form, stdin input, the pre-check, result and envelope parsing by the fields pr-comment uses |
 | `gateway.py` | the only subprocess boundary |
+| `files.py` | state and temporary directory checks, no-follow and exclusive creation, hook directory removal, sweeping |
 | `hooks.py` | `pre-post` and `post-post` |
 | `audit.py` | audit and log records, `export` |
 | `confirm.py` | the TTY dialog, display sanitizing and the summary |
