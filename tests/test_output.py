@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import unicodedata
 from typing import Any
 
 import pytest
@@ -91,10 +92,57 @@ def test_check_outcome_rejects_malformed_results(result: object) -> None:
         check_outcome(result)
 
 
+@pytest.mark.parametrize(
+    "result",
+    [
+        Outcome(0, {"error": {"code": "usage", "message": "x"}}),
+        Outcome(1),
+        Outcome(12, None),
+        Outcome(1, {"error": "boom"}),
+        Outcome(1, {"error": {"code": "internal"}}),
+        Outcome(1, {"error": {"message": "m"}}),
+        Outcome(1, {"error": {"code": "internal", "message": 5}}),
+        Outcome(1, {"error": {"code": 5, "message": "m"}}),
+        Outcome(1, {"error": {"code": "made_up", "message": "m"}}),
+        Outcome(1, {"error": {"code": "usage", "message": "m"}}),
+        Outcome(12, {"error": {"code": "refused", "message": "m"}}),
+        Outcome(0, {"x": float("nan")}),
+        Outcome(0, {"x": float("inf")}),
+        Outcome(0, {"x": {1, 2}}),
+    ],
+)
+def test_check_outcome_rejects_inconsistent_or_unserializable_outcomes(result: Outcome) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        check_outcome(result)
+
+
+def test_check_outcome_allows_result_documents_without_an_error_key_on_non_zero_exits() -> None:
+    outcome = Outcome(12, {"pr": PR, "action": "resolve", "threads": []})
+    assert check_outcome(outcome) is outcome
+    envelope = error_outcome("usage", "x")
+    assert check_outcome(envelope) is envelope
+
+
+def test_json_output_is_strict_and_never_nan() -> None:
+    with pytest.raises(ValueError):
+        render(Outcome(0, {"x": float("nan")}), as_json=True)
+
+
+def test_the_envelope_message_is_raw_in_json_and_marked_in_human_output() -> None:
+    outcome = error_outcome("usage", "a\x1b[31mb\u202e")
+    stdout, stderr = render(outcome, as_json=True)
+    assert json.loads(stdout)["error"]["message"] == "a\x1b[31mb\u202e"
+    assert "\x1b" not in stdout
+    assert "\x1b" not in stderr
+    assert "<U+001B>" in stderr
+    assert "<U+202E>" in stderr
+
+
 def test_check_outcome_accepts_every_defined_exit_code() -> None:
     for exit_code in (0, 1, 2, 10, 11, 12, 13, 20):
-        outcome = Outcome(exit_code)
+        outcome = Outcome(exit_code, {"x": 1})
         assert check_outcome(outcome) is outcome
+    assert check_outcome(Outcome(0)).document is None
 
 
 def test_an_uncaught_exception_is_logged_at_error_with_its_traceback(
@@ -166,3 +214,58 @@ def test_the_full_envelope_reaches_json_stdout_for_the_unimplemented_stub(
     assert len(document["error"]) == 13
     assert document["error"]["landed"] is None
     validate("pr-comment/cli/error.json", document)
+
+
+def test_an_uncaught_exception_never_leaks_control_characters_to_stderr(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(args: argparse.Namespace) -> Outcome:
+        raise RuntimeError("evil \x1b[31m \x07 \u202e text")
+
+    monkeypatch.setitem(cli.HANDLERS, "export", boom)
+    root = logging.getLogger()
+    saved = root.handlers[:]
+    root.handlers.clear()  # pytest's capture handlers hide Python's last-resort handler
+    try:
+        code = cli.main(["export", "--json"])
+    finally:
+        root.handlers[:] = saved
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "Traceback" in err
+    assert "RuntimeError" in err
+    assert not any(unicodedata.category(c) in ("Cc", "Cf") and c not in "\n\t" for c in err)
+
+
+def test_quiet_keeps_the_traceback_off_stderr(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(args: argparse.Namespace) -> Outcome:
+        raise RuntimeError("x")
+
+    monkeypatch.setitem(cli.HANDLERS, "export", boom)
+    root = logging.getLogger()
+    saved = root.handlers[:]
+    root.handlers.clear()
+    try:
+        cli.main(["export", "--quiet"])
+    finally:
+        root.handlers[:] = saved
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert err == "pr-comment: unexpected RuntimeError\n"
+
+
+def test_main_leaves_no_log_handler_behind() -> None:
+    before = list(logging.getLogger("pr_comment").handlers)
+    cli.main(["export", "--json"])
+    assert list(logging.getLogger("pr_comment").handlers) == before
+
+
+def test_a_flag_abbreviation_is_a_usage_error_and_not_taken_for_quiet(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = cli.main(["export", "--quie", "--verbose"])
+    err = capsys.readouterr().err
+    assert code == 2
+    assert "code=usage" in err

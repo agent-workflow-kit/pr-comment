@@ -604,10 +604,10 @@ def test_undecodable_and_control_characters_are_replaced_in_the_envelope(
     assert code == 2
     assert out.isascii()
     message = json.loads(out)["error"]["message"]
-    assert "<U+DCFF>" in message
-    assert "<U+001B>" in message
-    assert "<U+202E>" in message
-    assert "\x1b" not in message
+    # --json is not display-sanitized: the characters are JSON-escaped, never raw on stdout.
+    assert "\x1b" in message
+    assert "\x1b" not in out
+    assert "\\u001b" in out
 
 
 def test_control_characters_never_reach_stderr(capsys: pytest.CaptureFixture[str]) -> None:
@@ -914,10 +914,11 @@ def test_a_handler_returning_a_bad_outcome_fails_closed(
     monkeypatch.setitem(cli.HANDLERS, "export", handler)
     # Without --json the document is never serialized, so only a bad Outcome itself fails there.
     modes = (["--json"], []) if label not in ("not serializable", "circular") else (["--json"],)
-    for flags in modes:
+    for flags in [*modes, ["--json", "--quiet"]]:
         code, out, err = _run_raw(capsys, ["export", *flags])
         assert code == 1
-        assert "Traceback" not in err
+        if "--quiet" in flags:
+            assert "Traceback" not in err
         if flags:
             doc = json.loads(out)
             assert doc["error"]["code"] == "internal"

@@ -52,8 +52,40 @@ def internal_outcome(exc: BaseException) -> Outcome:
     return error_outcome("internal", f"unexpected {type(exc).__name__}")
 
 
+def _check_error_document(outcome: Outcome) -> None:
+    document = outcome.document
+    if document is None:
+        if outcome.exit_code != 0:
+            raise TypeError("handler exit code is not 0 but it has no document")
+        return
+    if "error" not in document:
+        return  # a result document on a non-zero exit (resolve, unresolve, draft check)
+    error: object = document["error"]
+    if outcome.exit_code == 0:
+        raise TypeError("handler exit code is 0 but its document is an error")
+    if (
+        not isinstance(error, dict)
+        or not isinstance(error.get("message"), str)  # pyright: ignore[reportUnknownMemberType]
+        or not isinstance(error.get("code"), str)  # pyright: ignore[reportUnknownMemberType]
+    ):
+        raise TypeError("handler error document needs an error with a string code and message")
+    try:
+        expected = exit_code_for(error["code"])
+    except ValueError as exc:
+        raise TypeError(str(exc)) from None
+    if expected != outcome.exit_code:
+        raise TypeError(
+            f"handler exit code {outcome.exit_code} does not match code {error['code']}"
+        )
+
+
 def check_outcome(result: object) -> Outcome:
-    """Return ``result`` when it is a well-formed ``Outcome``; raise ``TypeError`` otherwise."""
+    """Return ``result`` when it is a well-formed ``Outcome``; raise ``TypeError`` otherwise.
+
+    The check includes that the document serializes (so ``render`` cannot fail half-way) and that
+    an exit code agrees with the document: exit 0 never carries an error envelope, a non-zero
+    exit carries a document, and an envelope's code maps to the exit code.
+    """
     if not isinstance(result, Outcome):
         raise TypeError("handler did not return an Outcome")
     if type(result.exit_code) is not int or result.exit_code not in EXIT_CODES:
@@ -64,7 +96,14 @@ def check_outcome(result: object) -> Outcome:
         isinstance(line, str) for line in result.human
     ):
         raise TypeError("handler human lines are not a tuple of strings")
+    _check_error_document(result)
+    if result.document is not None:
+        _dumps(result.document)  # raises TypeError or ValueError for what JSON cannot hold
     return result
+
+
+def _dumps(document: Mapping[str, Any]) -> str:
+    return json.dumps(document, ensure_ascii=True, allow_nan=False)
 
 
 def _error_of(document: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
@@ -97,7 +136,7 @@ def render(
     """
     stdout = ""
     if as_json and outcome.document is not None:
-        stdout = json.dumps(outcome.document, ensure_ascii=True) + "\n"
+        stdout = _dumps(outcome.document) + "\n"
     lines: list[str] = []
     error = _error_of(outcome.document)
     if outcome.exit_code != 0 and error is not None:

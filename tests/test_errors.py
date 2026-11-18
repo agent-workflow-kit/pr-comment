@@ -92,6 +92,8 @@ def _build(code: str, **kwargs: Any) -> dict[str, Any]:
         kwargs.setdefault("escalated_hooks", [{"hook": "pre-post", "index": 0}])
     if code == "outcome_partial":
         kwargs.setdefault("backend", "github")
+    if code == "audit_failed" and not kwargs.get("from_forgectl"):
+        kwargs.setdefault("write", (True, "none"))
     if "details" not in kwargs and (details := _details_for(code)) is not None:
         kwargs["details"] = details
     return build_error(code, "boom", **kwargs)
@@ -151,7 +153,6 @@ TABLE: list[tuple[str, dict[str, Any], tuple[bool | None, str]]] = [
     ("lower_contract_mismatch", {}, (False, "same_command")),
     ("lower_contract_mismatch", {"write": (True, "none")}, (True, "none")),
     ("lower_contract_mismatch", {"write": (False, "same_command")}, (False, "same_command")),
-    ("audit_failed", {}, (False, "same_command")),
     ("audit_failed", {"write": (True, "none")}, (True, "none")),
     ("audit_failed", {"from_forgectl": True}, (True, "none")),
     ("outcome_unknown", {}, (None, "same_command")),
@@ -168,13 +169,6 @@ TABLE: list[tuple[str, dict[str, Any], tuple[bool | None, str]]] = [
     (
         "outcome_partial",
         {"backend": "gitlab", "details": {"landed": {"ids": [], "thread_ids": []}}},
-        (False, "same_command"),
-    ),
-    ("outcome_partial", {"backend": "gitlab", "details": {}}, (False, "same_command")),
-    ("outcome_partial", {"backend": "gitlab"}, (False, "same_command")),
-    (
-        "outcome_partial",
-        {"backend": "gitlab", "details": {"landed": "yes"}},
         (False, "same_command"),
     ),
     ("outcome_partial", {"backend": "github"}, (False, "new_key")),
@@ -222,8 +216,7 @@ def test_other_exits_have_landed_and_retry_null(code: str) -> None:
     validate("pr-comment/cli/error.json", {"error": error})
 
 
-def test_a_schema_violating_write_pair_is_caught_by_the_schema() -> None:
-    # The schema is the second line of defense: a hand-made envelope with a wrong pair fails.
+def test_a_hand_made_envelope_with_a_wrong_pair_fails_the_schema() -> None:
     bad = _build("tool_missing")
     bad["error"]["retry"] = "none"
     with pytest.raises(Exception, match="same_command"):
@@ -290,9 +283,9 @@ def test_hook_stderr_of_exactly_the_limit_is_kept_and_one_over_is_cut() -> None:
     assert over["hook_stderr"] == "a" * 4096
 
 
-def test_hook_stderr_with_a_lone_surrogate_stays_encodable() -> None:
+def test_hook_stderr_with_a_lone_surrogate_is_replaced_not_dropped() -> None:
     error = build_error("vetoed", "x", hook="pre-post", hook_stderr="a\ud800b")["error"]
-    error["hook_stderr"].encode("utf-8")
+    assert error["hook_stderr"] == "a?b"
 
 
 def test_a_hook_without_stderr_gets_an_empty_string() -> None:
@@ -309,10 +302,10 @@ def test_hook_rules() -> None:
         build_error("vetoed", "x", hook_stderr="orphan")
 
 
-def test_the_message_is_sanitized_and_the_details_are_copied() -> None:
+def test_the_message_is_kept_raw_in_the_envelope_and_the_details_are_copied() -> None:
     details = {"head_sha": SHA}
     error = build_error("refused", "a\nb‮", reason="stale_head", details=details)["error"]
-    assert error["message"] == "a<U+000A>b<U+202E>"
+    assert error["message"] == "a\nb‮"
     details["head_sha"] = "changed"
     assert error["details"] == {"head_sha": SHA}
 
@@ -421,3 +414,272 @@ def test_golden_envelopes_validate_against_the_error_schema(
 def test_the_goldens_cover_every_exit_code_but_zero() -> None:
     exits = {errors.exit_code_for(make()["error"]["code"]) for _, make in GOLDEN_CASES}
     assert exits == errors.EXIT_CODES - {0}
+
+
+# --- hardening (review round 1) ---------------------------------------------------------------
+
+
+def test_own_audit_failed_without_a_write_is_rejected() -> None:
+    with pytest.raises(ValueError, match="write"):
+        landed_retry("audit_failed")
+    with pytest.raises(ValueError, match="write"):
+        build_error("audit_failed", "x", details=_details_for("audit_failed"))
+
+
+def test_lower_contract_mismatch_without_a_write_is_before_any_write() -> None:
+    assert landed_retry("lower_contract_mismatch") == (False, "same_command")
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        (True, "same_command"),
+        (False, "none"),
+        (None, "none"),
+        (None, "new_key"),
+        (True, "new_key"),
+        (1, "none"),
+        (0, "same_command"),
+        ("true", "none"),
+        (True, "later"),
+        (True,),
+        True,
+        [True, "none"],
+        (True, None),
+    ],
+)
+def test_a_write_pair_outside_the_four_allowed_is_rejected(write: Any) -> None:
+    with pytest.raises(ValueError):
+        landed_retry("audit_failed", write=write)
+    with pytest.raises(ValueError):
+        landed_retry("lower_contract_mismatch", write=write)
+
+
+@pytest.mark.parametrize("write", [(True, "none"), (False, "same_command"), (False, "new_key")])
+def test_the_allowed_write_pairs_pass_through(write: tuple[bool, str]) -> None:
+    assert landed_retry("lower_contract_mismatch", write=write) == write
+    assert landed_retry("audit_failed", write=write) == write
+    assert landed_retry("audit_failed", write=(None, "same_command")) == (None, "same_command")
+
+
+@pytest.mark.parametrize("code", ["tool_missing", "host_rejected", "usage", "outcome_unknown"])
+def test_write_and_from_forgectl_are_rejected_for_codes_that_do_not_use_them(code: str) -> None:
+    with pytest.raises(ValueError, match="write"):
+        landed_retry(code, write=(True, "none"))
+    with pytest.raises(ValueError, match="from_forgectl"):
+        landed_retry(code, from_forgectl=True)
+
+
+def test_from_forgectl_is_only_for_audit_failed_and_excludes_write() -> None:
+    with pytest.raises(ValueError, match="from_forgectl"):
+        landed_retry("lower_contract_mismatch", from_forgectl=True)
+    with pytest.raises(ValueError, match="not both"):
+        landed_retry("audit_failed", from_forgectl=True, write=(True, "none"))
+
+
+def test_a_forgectl_escalation_cannot_name_a_pr_comment_hook() -> None:
+    hooks = [{"hook": "pre-post", "index": 0}]
+    with pytest.raises(ValueError, match="forgectl"):
+        build_error(
+            "escalated", "x", escalated_by="forgectl", escalated_hooks=hooks, hook="pre-post"
+        )
+    with pytest.raises(ValueError, match="forgectl"):
+        build_error(
+            "escalated",
+            "x",
+            escalated_by="forgectl",
+            escalated_hooks=hooks,
+            hook="pre-post",
+            hook_stderr="e",
+        )
+    ok = build_error("escalated", "x", escalated_by="forgectl", escalated_hooks=hooks)["error"]
+    assert ok["hook"] is None
+
+
+@pytest.mark.parametrize("value", [None, "2", 1.5, True, -1])
+def test_leftover_drafts_must_be_a_non_negative_integer(value: Any) -> None:
+    with pytest.raises(ValueError, match="leftover_drafts"):
+        landed_retry("host_rejected", details={"leftover_drafts": value})
+
+
+def test_leftover_drafts_presence_means_no_retry_even_at_zero() -> None:
+    assert landed_retry("host_rejected", details={"leftover_drafts": 0}) == (False, "none")
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        None,
+        {},
+        {"landed": "yes"},
+        {"landed": None},
+        {"landed": {"ids": "n1", "thread_ids": []}},
+        {"landed": {"ids": [], "thread_ids": "t"}},
+    ],
+)
+def test_outcome_partial_on_gitlab_needs_a_well_formed_landed(details: Any) -> None:
+    with pytest.raises(ValueError, match="landed|list"):
+        landed_retry("outcome_partial", backend="gitlab", details=details)
+
+
+@pytest.mark.parametrize("bad", [True, False, -1, float("nan"), float("inf"), "5", [5]])
+def test_retry_after_must_be_a_finite_non_negative_number(bad: Any) -> None:
+    with pytest.raises(ValueError, match="retry_after"):
+        build_error("rate_limited", "x", retry_after=bad)
+
+
+@pytest.mark.parametrize("ok", [None, 0, 0.5, 30])
+def test_retry_after_accepts_plain_numbers(ok: Any) -> None:
+    assert build_error("rate_limited", "x", retry_after=ok)["error"]["retry_after"] == ok
+
+
+@pytest.mark.parametrize(
+    "ids",
+    ["d1", [1], ["bad id"], [""], ["a" * 129], ["d"] * 33, None, [None]],
+)
+def test_decision_ids_are_validated_against_the_grammar(ids: Any) -> None:
+    with pytest.raises(ValueError, match="decision_ids"):
+        build_error("usage", "x", decision_ids=ids)
+
+
+def test_decision_ids_at_the_limits_are_accepted() -> None:
+    ids = ["a" * 128] + ["d"] * 31
+    assert build_error("usage", "x", decision_ids=ids)["error"]["decision_ids"] == ids
+
+
+@pytest.mark.parametrize(
+    "hooks",
+    [
+        "pre-post",
+        [{"hook": "pre-post"}],
+        [{"hook": "pre-post", "index": -1}],
+        [{"hook": "pre-post", "index": True}],
+        [{"hook": "pre-post", "index": "0"}],
+        [{"hook": 1, "index": 0}],
+        [{"hook": "pre-post", "index": 0, "extra": 1}],
+        ["pre-post"],
+    ],
+)
+def test_escalated_hooks_entries_are_validated(hooks: Any) -> None:
+    with pytest.raises(ValueError, match="escalated"):
+        build_error("escalated", "x", escalated_by="pr-comment", escalated_hooks=hooks)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "exc"),
+    [
+        ({"message": 5}, TypeError),
+        ({"message": None}, TypeError),
+        ({"message": b"x"}, TypeError),
+        ({"details": [1]}, TypeError),
+        ({"details": "x"}, TypeError),
+        ({"lower_error": 5}, TypeError),
+        ({"reason": ["x"]}, TypeError),
+    ],
+)
+def test_build_error_rejects_wrongly_typed_fields_with_a_clear_error(
+    kwargs: dict[str, Any], exc: type[Exception]
+) -> None:
+    args: dict[str, Any] = {"message": "m", **kwargs}
+    message = args.pop("message")
+    with pytest.raises(exc):
+        build_error("usage", message, **args)
+
+
+def test_hook_stderr_must_be_text() -> None:
+    with pytest.raises(TypeError, match="hook_stderr"):
+        build_error("vetoed", "x", hook="pre-post", hook_stderr=b"x")  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize("code", [[], {}, None, 5])
+def test_an_unhashable_or_non_string_code_is_a_value_error(code: Any) -> None:
+    with pytest.raises(ValueError, match="unknown error code"):
+        build_error(code, "x")
+    with pytest.raises(ValueError, match="unknown error code"):
+        errors.exit_code_for(code)
+    with pytest.raises(TypeError, match="reason"):
+        build_error("refused", "x", reason=[])  # pyright: ignore[reportArgumentType]
+
+
+def test_cut_bytes_and_sanitize_reject_non_strings() -> None:
+    with pytest.raises(TypeError, match="str"):
+        errors.cut_bytes(b"x")  # pyright: ignore[reportArgumentType]
+    with pytest.raises(TypeError, match="str"):
+        errors.sanitize(None)  # pyright: ignore[reportArgumentType]
+
+
+def test_cut_bytes_truncates_silently_without_a_marker() -> None:
+    cut = errors.cut_bytes("a" * 5000)
+    assert cut == "a" * 4096
+
+
+def test_the_envelope_does_not_alias_its_inputs() -> None:
+    details = {"errors": [{"pointer": "/b", "message": "m"}]}
+    lower = {"error": {"details": {"n": [1]}}}
+    hooks = [{"hook": "pre-post", "index": 0}]
+    error = build_error(
+        "escalated",
+        "x",
+        escalated_by="pr-comment",
+        escalated_hooks=hooks,
+        details=details,
+        lower_error=lower,
+    )["error"]
+    details["errors"][0]["message"] = "changed"
+    lower["error"]["details"]["n"].append(2)
+    hooks[0]["index"] = 9
+    assert error["details"]["errors"][0]["message"] == "m"
+    assert error["lower_error"]["error"]["details"]["n"] == [1]
+    assert error["escalated_hooks"] == [{"hook": "pre-post", "index": 0}]
+
+
+def test_the_code_and_landed_tables_are_read_only() -> None:
+    with pytest.raises(TypeError):
+        errors.CODE_EXIT["usage"] = 99  # type: ignore[index]  # pyright: ignore[reportIndexIssue]
+    with pytest.raises(TypeError):
+        errors._FIXED_LANDED_RETRY["tool_missing"] = (True, "none")  # type: ignore[index]  # pyright: ignore[reportIndexIssue, reportPrivateUsage]
+    assert errors.exit_code_for("usage") == 2
+    assert landed_retry("tool_missing") == (False, "same_command")
+
+
+def test_sanitize_marks_every_category_the_interface_lists() -> None:
+    cases = {
+        "\x00": "<U+0000>",
+        "\x85": "<U+0085>",
+        "\u200b": "<U+200B>",  # Cf
+        "\ud800": "<U+D800>",  # Cs
+        "\ue000": "<U+E000>",  # Co
+        "\u0378": "<U+0378>",  # Cn (unassigned)
+        "\u2028": "<U+2028>",  # Zl
+        "\u2029": "<U+2029>",  # Zp
+        "\ufe0f": "<U+FE0F>",  # variation selector
+        "\U000e0100": "<U+E0100>",  # variation selector supplement
+        "\u034f": "<U+034F>",
+        "\u17b4": "<U+17B4>",
+        "\u17b5": "<U+17B5>",
+        "\u180b": "<U+180B>",
+        "\u180f": "<U+180F>",
+        "\u115f": "<U+115F>",
+        "\u1160": "<U+1160>",
+        "\u3164": "<U+3164>",
+        "\uffa0": "<U+FFA0>",
+        "\u2800": "<U+2800>",
+    }
+    for char, marked in cases.items():
+        assert errors.sanitize(char) == marked, hex(ord(char))
+    assert errors.sanitize("plain é中 ok") == "plain é中 ok"
+
+
+def test_sanitize_keeps_tab_and_lf_only_for_multi_line_text() -> None:
+    assert errors.sanitize("a\tb\nc", one_line=False) == "a\tb\nc"
+    assert errors.sanitize("a\tb\nc") == "a<U+0009>b<U+000A>c"
+    assert errors.sanitize("a\rb", one_line=False) == "a<U+000D>b"
+
+
+@pytest.mark.parametrize("code", sorted(EXPECTED_EXIT))
+def test_minimal_schema_valid_details_build_a_schema_valid_envelope_for_every_code(
+    code: str,
+) -> None:
+    document = _build(code)
+    validate("pr-comment/cli/error.json", document)
+    assert errors.exit_code_for(document["error"]["code"]) == EXPECTED_EXIT[code]

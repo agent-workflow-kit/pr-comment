@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
+import logging
 import re
 import sys
 from collections.abc import Callable, Sequence
@@ -16,7 +17,7 @@ from typing import Any, NoReturn, cast
 
 from . import __version__
 from .errors import sanitize
-from .output import PROG, Outcome, check_outcome, error_outcome, internal_outcome, render
+from .output import LOG, PROG, Outcome, check_outcome, error_outcome, internal_outcome, render
 
 DESCRIPTION = "Posts reviews, replies and comments to PRs, safely and with attribution."
 
@@ -461,7 +462,7 @@ def _write(stream: Any, text: str) -> None:
 
 
 def _fail_usage(argv: list[str], message: str, usage: str) -> int:
-    outcome = error_outcome("usage", _truncate(sanitize(message)))
+    outcome = error_outcome("usage", _truncate(message))
     stdout, stderr = render(
         outcome,
         as_json=_wants_json(argv),
@@ -474,8 +475,33 @@ def _fail_usage(argv: list[str], message: str, usage: str) -> int:
     return outcome.exit_code
 
 
+class _StderrLogHandler(logging.Handler):
+    """Prints log records (tracebacks included) to stderr with every untrusted character marked.
+
+    Without it an uncaught exception's traceback would reach stderr raw through Python's
+    last-resort handler, and the exception text may hold untrusted data.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            _write(sys.stderr, sanitize(self.format(record), one_line=False) + "\n")
+        except Exception:
+            self.handleError(record)
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    handler: logging.Handler = (
+        logging.NullHandler() if _has_flag(argv, "--quiet") else _StderrLogHandler()
+    )
+    LOG.addHandler(handler)
+    try:
+        return _main(argv)
+    finally:
+        LOG.removeHandler(handler)
+
+
+def _main(argv: list[str]) -> int:
     parser = build_parser()
     if len(argv) > MAX_ARGV_TOKENS:  # argparse is quadratic in repeated flags
         return _fail_usage(
