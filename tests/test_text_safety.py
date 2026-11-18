@@ -119,6 +119,15 @@ def test_the_oracle_exempts_only_the_exact_written_suggestion_block() -> None:
     assert "live mention (safe rendering)" in violations(forged, expect)
 
 
+def test_the_oracle_exempts_only_the_swallowing_node_not_an_earlier_copy() -> None:
+    expect = Expect(suggestion=(("@victim",), "suggestion"))
+    earlier = "~~~suggestion\n@victim\n~~~\n\n```\nopen\n\n```suggestion\n@victim\n```\n\n" + MARKER
+    assert "live mention (safe rendering)" in violations(earlier, expect)
+    # the copy is not at the end of the node: other `@` text follows it
+    inside = "```\nopen\n\n```suggestion\n@victim\n```\n@other\n\n" + MARKER
+    assert "live mention (safe rendering)" in violations(inside, expect)
+
+
 def test_the_oracle_flags_a_marker_of_pr_comment_that_is_not_visible() -> None:
     # An ASCII `<U+202E>` outside code is dropped from view; inside code it is shown.
     assert violations("`<U+202E>`\n\n" + MARKER) == []

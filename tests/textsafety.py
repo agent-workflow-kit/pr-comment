@@ -367,6 +367,9 @@ def _unindented(text: str) -> str:
     return "\n".join(line.lstrip(" \t") for line in text.split("\n"))
 
 
+_TRAILING_OK = re.compile(r"\s*(?:`{3,}|~{3,}|<!--.*-->)?\s*")
+
+
 def live_mentions(page: Page, written: str | None = None) -> list[str]:
     """Text nodes (outside an applicable suggestion block) holding an `@` that is not preceded by
     an ASCII letter or digit within the node; the start of a node counts as a non-letter.
@@ -377,18 +380,29 @@ def live_mentions(page: Page, written: str | None = None) -> list[str]:
     requires that they are shown there). Only that block, as one run of lines of the swallowing
     ``pre`` node, is exempt."""
     found: list[str] = []
-    for node in page.nodes:
+    swallowing = -1
+    if written is not None:
+        # the swallowing node is the last ``pre`` holding the written block; an earlier ``pre``
+        # holding the same text is the body's own and gets no exemption
+        for index, node in enumerate(page.nodes):
+            holds = _unindented(written) in _unindented(node.text)
+            if node.in_pre and not node.in_applicable and holds:
+                swallowing = index
+    for index, node in enumerate(page.nodes):
         if node.in_applicable:
             continue
         text = node.text
-        if written is not None and node.in_pre:
+        if index == swallowing and written is not None:
             # only the written block itself, one contiguous run of lines (the last, as pr-comment
             # appends it after the body), is exempt; a line of the body that merely equals one of
-            # its lines is not
+            # its lines is not. Only closing fences, blank lines and the marker comments may
+            # follow it in the node.
             flat, tail = _unindented(text), _unindented(written)
             at = flat.rfind("\n" + tail)
             at = 0 if at < 0 and flat.startswith(tail) else at + 1 if at >= 0 else -1
-            if at >= 0:
+            if at >= 0 and all(
+                _TRAILING_OK.fullmatch(line) for line in flat[at + len(tail) :].split("\n")
+            ):
                 text = flat[:at] + flat[at + len(tail) :]
         if LIVE_MENTION.search(text):
             found.append(node.text)
