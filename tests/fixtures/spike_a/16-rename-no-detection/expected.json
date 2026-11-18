@@ -1,0 +1,12 @@
+[
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 10
+  },
+  "expected": {
+   "unmapped": "file_removed"
+  }
+ }
+]
