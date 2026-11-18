@@ -559,9 +559,9 @@ def _confirmed(args: argparse.Namespace, prepared: Prepared, session: _Session) 
 def _confirm_and_post(
     args: argparse.Namespace, prepared: Prepared, gateway: Gateway, session: _Session
 ) -> Outcome:
-    """Steps 8 and 9: the dialog, then the review order's write (``post.post_review``).
+    """Steps 8 and 9: the dialog, then the write (``post.post_review``, also for comment and reply).
 
-    TODO(#30): comment and reply. TODO(#31): approve and ``review --approve``, with the automatic
+    TODO(#31): approve and ``review --approve``, with the automatic
     approval guard: until then ``review --approve`` is refused before the dialog, so no approval
     is ever posted without the guard.
     """
@@ -574,7 +574,7 @@ def _confirm_and_post(
     refused = _confirmed(args, prepared, session)
     if refused is not None:
         return refused
-    if request.command != "review":
+    if request.command not in ("review", "comment", "reply"):
         stub = error_outcome(
             "internal", "posting is not implemented yet: the plan passed its pre-check"
         )

@@ -8,6 +8,8 @@ It posts exactly what the human confirmed: the call is ``prepared.plan.write_arg
     pre-post hooks (TODO(#33))  ->  audit ``attempted``  ->  forgectl review --yes  ->
     post-post hooks (TODO(#33))  ->  audit ``outcome``  ->  the result document
 
+``comment`` and ``reply`` (issue #30) take the same path: ``post_text.py`` holds their human lines.
+
 Rules that keep a post from happening twice or being lost:
 
 - **Nothing is ever retried.** A timeout, a signal, a killed or unparseable answer is
@@ -75,6 +77,8 @@ from .jsonlog import LogWriter
 from .lower import LowerFailure, require_ok, tool_missing_outcome
 from .output import LOG, Outcome, error_outcome
 from .plan import Plan
+from .post_text import TEXT_ACTIONS
+from .post_text import human_lines as text_lines
 from .precheck import DRY_RUN_REASONS
 from .prepare import Prepared, result_document
 
@@ -244,6 +248,8 @@ def _warnings(prepared: Prepared, read: PostRead) -> list[str]:
 
 def _human_lines(prepared: Prepared, read: PostRead, warnings: Sequence[str]) -> tuple[str, ...]:
     plan = prepared.plan
+    if plan.action in TEXT_ACTIONS:
+        return text_lines(prepared, read, warnings)
     head = "already posted" if read.already_posted else "posted"
     lines = [
         f"{head}: {plan.action} {(plan.event or '').upper()} on {plan.pr} at {plan.head_sha[:12]}",

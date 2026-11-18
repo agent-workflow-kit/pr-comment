@@ -1,0 +1,21 @@
+{
+  "action": "comment",
+  "already_posted": null,
+  "base_ref": "main",
+  "dedupe_key": "prc:comment:f6eea3a3e737102ddc9d",
+  "dry_run": true,
+  "follow_up_done": null,
+  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "ids": [],
+  "markers_removed": 0,
+  "mentions_neutralized": [
+    "amy"
+  ],
+  "neutralized_lines": 0,
+  "plan": null,
+  "plan_sha256": "<plan>",
+  "pr": "github.com/acme/widgets#7",
+  "review_id": null,
+  "thread_ids": [],
+  "warnings": []
+}

@@ -478,7 +478,7 @@ def result_document(
         )
     if plan.action == "reply":
         doc["to"] = plan.to
-        doc["threaded"] = pre.threaded if posted is None else None
+        doc["threaded"] = pre.threaded if posted is None else posted.threaded
     return doc
 
 
