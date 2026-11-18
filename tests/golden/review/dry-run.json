@@ -1,0 +1,36 @@
+{
+  "action": "review",
+  "already_posted": null,
+  "base_ref": "main",
+  "body_thread_id": null,
+  "body_thread_resolved": null,
+  "dedupe_key": "prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "draft_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "dry_run": true,
+  "event": "comment",
+  "file_level": [
+    "f2"
+  ],
+  "follow_up_done": null,
+  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "head_verified": null,
+  "ids": [],
+  "markers_removed": 0,
+  "mentions_neutralized": [
+    "amy"
+  ],
+  "moved": [],
+  "neutralized_lines": 0,
+  "plan": null,
+  "plan_sha256": "<plan>",
+  "posted_inline": [
+    "f1",
+    "f3"
+  ],
+  "pr": "github.com/acme/widgets#7",
+  "reanchored_draft": null,
+  "review_id": null,
+  "suggestions_degraded": [],
+  "thread_ids": [],
+  "warnings": []
+}

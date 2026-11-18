@@ -8,8 +8,8 @@ makes is a read or a ``--dry-run``. ``check_binding`` is step 6 (``--expect-plan
 not here: ``Prepared`` carries everything they need (the plan, whose ``input`` they send byte for
 byte, the pinned values and the hint of the pre-check).
 
-TODO(#5): the actor, ``interactive`` and the human-only flag rules come from the CLI layer; this
-module takes them as given. TODO(#10): the state and temporary directory checks of step 1.
+The actor, ``interactive`` and the human-only flag rules come from the CLI layer; this module takes
+them as given, and so are the state and temporary directory checks of step 1 (``Env.before_reads``).
 TODO(#31): the automatic approval guard beyond its usage check (``allow_auto_approve``, a decision
 id, ``auto_approve_reanchored``).
 
@@ -24,7 +24,7 @@ import errno
 import os
 import stat
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, BinaryIO, Final
 
@@ -33,7 +33,7 @@ from pr_comment.config import ConfigError, LoadedConfig
 from pr_comment.diffmap import DiffMapper
 from pr_comment.draft import DraftError, load_draft, read_limited
 from pr_comment.errors import cut_bytes
-from pr_comment.forge import Forge, Show, match_draft_pr
+from pr_comment.forge import Forge, PostRead, Show, match_draft_pr
 from pr_comment.gateway import Gateway
 from pr_comment.grammars import GrammarError, check_branch
 from pr_comment.lower import LowerFailure
@@ -107,6 +107,10 @@ class Env:
     tool_version: str
     stdin: BinaryIO | None = None
     on_round: RoundLog | None = None
+    # Step 1's state checks (docs/interface.md, Review order): called once the offline checks of
+    # the command passed and before the first forgectl call; it raises ``RunFailure`` (exit 12
+    # ``state_unsafe`` or ``audit_unavailable``).
+    before_reads: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +121,7 @@ class Prepared:
     show: Show
     precheck: Prechecked
     reanchored_draft: dict[str, Any] | None  # review with --reanchor-to
+    draft_sha256: str | None = None  # review: the sha256 of the draft file's bytes
 
     @property
     def plan(self) -> Plan:
@@ -270,6 +275,8 @@ def _prepare_review(req: Request, env: Env) -> Prepared:
     if req.approve and req.actor.startswith("auto:") and req.expected_head is None:
         raise _usage("--expected-head is required to approve as an automatic actor")
 
+    if env.before_reads is not None:
+        env.before_reads()
     forge = Forge(env.gateway)
     show = forge.show(req.pr)
     match_draft_pr(forge, data["pr"], show)
@@ -319,7 +326,13 @@ def _prepare_review(req: Request, env: Env) -> Prepared:
     source = review_source(data, done, head_sha=head_b, approve=req.approve)
     build = _guarded(lambda moves: build_review_plan(ctx, source, moves))
     prechecked = run_precheck(env.gateway, forge, build, on_round=env.on_round)
-    return Prepared(req, show, prechecked, done.draft if req.reanchor_to is not None else None)
+    return Prepared(
+        req,
+        show,
+        prechecked,
+        done.draft if req.reanchor_to is not None else None,
+        draft.sha256,
+    )
 
 
 def _prepare_text(req: Request, env: Env) -> Prepared:
@@ -341,6 +354,8 @@ def _prepare_text(req: Request, env: Env) -> Prepared:
     elif command != "approve":
         raise _usage(f"{command} needs --body-file")
 
+    if env.before_reads is not None:
+        env.before_reads()
     forge = Forge(env.gateway)
     show = forge.show(req.pr)
     if command == "approve" and show.state != "open":
@@ -396,33 +411,58 @@ def check_binding(prepared: Prepared) -> Outcome | None:
     )
 
 
-def result_document(prepared: Prepared, *, dry_run: bool) -> dict[str, Any]:
-    """The ``--json`` result of a dry run (docs/interface.md: Post result, On a ``--dry-run``)."""
-    if not dry_run:
-        raise ValueError("only a dry run's result is built before the post")
+def result_document(
+    prepared: Prepared,
+    *,
+    dry_run: bool,
+    posted: PostRead | None = None,
+    warnings: Sequence[str] = (),
+    body_thread_resolved: bool | None = None,
+) -> dict[str, Any]:
+    """The ``--json`` result (docs/interface.md: Post result): a dry run's (``dry_run=True``, the
+    plan in ``plan``), or a real run's from forgectl's checked answer ``posted`` (``plan`` is null).
+
+    ``warnings`` is the real run's whole list (forgectl's and pr-comment's); a dry run's are the
+    pre-check's.
+    """
+    if dry_run == (posted is not None):
+        raise ValueError("a dry run has no forgectl answer, a real run needs one")
     plan, pre = prepared.plan, prepared.precheck
     doc: dict[str, Any] = {
         "pr": plan.pr,
         "action": plan.action,
-        "dry_run": True,
+        "dry_run": dry_run,
         "dedupe_key": plan.dedupe_key,
         "head_sha": plan.head_sha,
         "base_ref": plan.base_ref,
         "mentions_neutralized": list(plan.mentions_neutralized),
         "plan_sha256": plan.plan_sha256,
-        "ids": [],
-        "thread_ids": [],
-        "review_id": None,
-        "already_posted": pre.already_posted,
-        "follow_up_done": None,
         "neutralized_lines": plan.neutralized_lines,
         "markers_removed": plan.markers_removed,
-        "warnings": list(pre.warnings),
-        "plan": plan.document(),
     }
+    if posted is None:
+        doc.update(
+            ids=[],
+            thread_ids=[],
+            review_id=None,
+            already_posted=pre.already_posted,
+            follow_up_done=None,
+            warnings=list(pre.warnings),
+            plan=plan.document(),
+        )
+    else:
+        doc.update(
+            ids=list(posted.ids),
+            thread_ids=list(posted.thread_ids),
+            review_id=posted.review_id,
+            already_posted=posted.already_posted,
+            follow_up_done=posted.follow_up_done,
+            warnings=list(warnings),
+            plan=None,
+        )
     if plan.action in ("review", "approve"):
         doc["event"] = plan.event
-        doc["head_verified"] = None
+        doc["head_verified"] = None if posted is None else posted.head_verified
     if plan.action == "review":
         doc.update(
             draft_id=plan.draft_id,
@@ -432,13 +472,13 @@ def result_document(prepared: Prepared, *, dry_run: bool) -> dict[str, Any]:
             suggestions_degraded=[
                 {"id": d.id, "reason": d.reason} for d in plan.suggestions_degraded
             ],
-            body_thread_resolved=None,
+            body_thread_resolved=body_thread_resolved,
             body_thread_id=None,
             reanchored_draft=prepared.reanchored_draft,
         )
     if plan.action == "reply":
         doc["to"] = plan.to
-        doc["threaded"] = pre.threaded
+        doc["threaded"] = pre.threaded if posted is None else None
     return doc
 
 

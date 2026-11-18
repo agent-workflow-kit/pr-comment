@@ -237,14 +237,15 @@ def test_a_precheck_failure_wins_over_expect_plan(
     assert code == 12 and error["error"]["code"] == "rate_limited"
 
 
-def test_a_real_run_that_passes_the_plan_stops_before_any_write(
+def test_a_real_comment_run_that_passes_the_plan_stops_before_any_write(
     cli: Run, forgectl: FakeForgectl, tmp_path: Path
 ) -> None:
-    # the dialog and the writes are later issues: nothing is posted and the run says so
-    draft = draft_file(tmp_path, [finding("f1")])
-    forgectl.script(show(), ok("review", h.post_doc("review", dry_run=True)))
+    # the comment and reply writes are #30's and approve is #31's: nothing is posted
+    body = tmp_path / "body.txt"
+    body.write_text("looks good", encoding="utf-8")
+    forgectl.script(show(), ok("comment", h.post_doc("comment", dry_run=True)))
     code, error, _ = cli(
-        "review", PR, "--draft-file", draft, "--json", "--actor", "human:alice", "--yes"
+        "comment", PR, "--body-file", str(body), "--json", "--actor", "human:alice", "--yes"
     )
     assert code == 1 and error["error"]["code"] == "internal"
     assert forgectl.writes() == []

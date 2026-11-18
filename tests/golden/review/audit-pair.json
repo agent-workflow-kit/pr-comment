@@ -1,0 +1,173 @@
+[
+  {
+    "action": "review",
+    "actor": "human:alice",
+    "actor_source": "flag",
+    "attempt_id": "<attempt>",
+    "decision_id": [],
+    "inputs": {
+      "allowed_mentions": [],
+      "anchor_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "base_ref": "main",
+      "bodies": [
+        {
+          "bytes": "<bytes>",
+          "role": "body",
+          "sha256": "<sha256>"
+        },
+        {
+          "bytes": "<bytes>",
+          "role": "inline:f1",
+          "sha256": "<sha256>"
+        },
+        {
+          "bytes": "<bytes>",
+          "role": "inline:f3",
+          "sha256": "<sha256>"
+        }
+      ],
+      "config_hash": "<config>",
+      "config_path": null,
+      "counts": {
+        "file_level": 1,
+        "images": 0,
+        "inline": 2,
+        "invisible": 0,
+        "links": 0,
+        "mentions_neutralized": 1,
+        "moved": {
+          "base_changed": 0,
+          "changed": 0,
+          "diff_unavailable": 0,
+          "file_removed": 0,
+          "files_incomplete": 0,
+          "invalid_position": 0
+        },
+        "raw_html": 0,
+        "severity": {
+          "blocker": 0,
+          "info": 0,
+          "major": 0,
+          "minor": 0,
+          "nit": 0
+        },
+        "suggestions_degraded": 0
+      },
+      "dedupe_key": "prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "draft_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "draft_sha256": "e26baa5abf2b81e50341288d60e5f0f00a071bff008271a8518e67a4b3241a6e",
+      "event": "comment",
+      "override_escalation": [],
+      "pinned_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "plan_sha256": "<plan>",
+      "reanchor_to": null,
+      "threads": [],
+      "to": null
+    },
+    "override": [],
+    "pr_id": "PR_kwDOAAAAAQ",
+    "result": "attempted",
+    "stdin_tty": false,
+    "target": "github.com/acme/widgets#7",
+    "tool": "pr-comment",
+    "ts": "<ts>",
+    "version": "<version>"
+  },
+  {
+    "action": "review",
+    "actor": "human:alice",
+    "actor_source": "flag",
+    "attempt_id": "<attempt>",
+    "decision_id": [],
+    "hook_decision_id": [],
+    "inputs": {
+      "allowed_mentions": [],
+      "anchor_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "base_ref": "main",
+      "bodies": [
+        {
+          "bytes": "<bytes>",
+          "role": "body",
+          "sha256": "<sha256>"
+        },
+        {
+          "bytes": "<bytes>",
+          "role": "inline:f1",
+          "sha256": "<sha256>"
+        },
+        {
+          "bytes": "<bytes>",
+          "role": "inline:f3",
+          "sha256": "<sha256>"
+        }
+      ],
+      "config_hash": "<config>",
+      "config_path": null,
+      "counts": {
+        "file_level": 1,
+        "images": 0,
+        "inline": 2,
+        "invisible": 0,
+        "links": 0,
+        "mentions_neutralized": 1,
+        "moved": {
+          "base_changed": 0,
+          "changed": 0,
+          "diff_unavailable": 0,
+          "file_removed": 0,
+          "files_incomplete": 0,
+          "invalid_position": 0
+        },
+        "raw_html": 0,
+        "severity": {
+          "blocker": 0,
+          "info": 0,
+          "major": 0,
+          "minor": 0,
+          "nit": 0
+        },
+        "suggestions_degraded": 0
+      },
+      "dedupe_key": "prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "draft_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "draft_sha256": "e26baa5abf2b81e50341288d60e5f0f00a071bff008271a8518e67a4b3241a6e",
+      "event": "comment",
+      "override_escalation": [],
+      "pinned_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "plan_sha256": "<plan>",
+      "reanchor_to": null,
+      "threads": [],
+      "to": null
+    },
+    "override": [],
+    "pr_id": "PR_kwDOAAAAAQ",
+    "result": "done",
+    "stdin_tty": false,
+    "target": "github.com/acme/widgets#7",
+    "tool": "pr-comment",
+    "ts": "<ts>",
+    "version": "<version>",
+    "writes": [
+      {
+        "action": "review",
+        "dedupe_key": "prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "index": 0,
+        "lower": {
+          "already_posted": false,
+          "code": null,
+          "exit": 0,
+          "ids": [
+            "gh:rc:RC_1",
+            "gh:rc:RC_2"
+          ],
+          "reason": null,
+          "review_id": "gh:r:R_1",
+          "thread_ids": []
+        },
+        "result": "done",
+        "thread_id": null,
+        "ts": "<ts>"
+      }
+    ]
+  }
+]

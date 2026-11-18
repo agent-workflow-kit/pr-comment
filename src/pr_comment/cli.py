@@ -19,15 +19,17 @@ from typing import Any, NoReturn, cast
 
 from . import __version__, grammars
 from .actor import ActorError, resolve_run, stream_is_tty, with_me_name
+from .audit import AuditTrail, AuditUnavailableError, audit_unavailable_error
 from .config import ConfigError, load_config
 from .confirm import Interrupted, confirm
 from .errors import sanitize
-from .files import StateUnsafeError, open_state_dirs
-from .gateway import ForgectlInterrupted, ProcessGateway, ToolMissing
+from .files import StateDirs, StateUnsafeError, open_state_dirs
+from .gateway import ForgectlInterrupted, Gateway, ProcessGateway, ToolMissing
 from .grammars import MAX_DECISION_IDS, MAX_THREADS
 from .jsonlog import LogWriter, write_config_warnings
 from .lower import LowerFailure, tool_missing_outcome
 from .output import LOG, PROG, Outcome, check_outcome, error_outcome, internal_outcome, render
+from .post import PostEnv, log_failure, post_review
 from .prepare import (
     Env,
     Prepared,
@@ -478,9 +480,60 @@ def _request(args: argparse.Namespace, actor: str) -> Request:
     )
 
 
-def _log_round(record: dict[str, Any]) -> None:
-    """A pre-check round (the ``precheck`` log event). TODO(#11): write it to ``log.jsonl``."""
-    LOG.info("precheck round %s: %s", record["round"], record["result"])
+class _Session:
+    """What a posting run opens at step 1 and closes when it ends: the state directories (checked
+    and swept), ``log.jsonl`` and the audit trail. ``open`` is Env.before_reads: it runs once the
+    offline checks passed and before the first forgectl call, and ends the run with exit 12
+    ``state_unsafe`` or ``audit_unavailable`` (nothing was sent)."""
+
+    def __init__(self, args: argparse.Namespace) -> None:
+        self._args = args
+        self.dirs: StateDirs | None = None
+        self.log = LogWriter.disabled()
+        self.trail: AuditTrail | None = None
+
+    def open(self) -> None:
+        try:
+            self.dirs = open_state_dirs()
+        except StateUnsafeError as exc:
+            raise RunFailure(
+                error_outcome("state_unsafe", sanitize(str(exc)), details=exc.details)
+            ) from None
+        self.dirs.sweep()
+        self.log = LogWriter.open(self.dirs, verbose=self._args.verbose)
+        try:
+            self.trail = AuditTrail.open(self.dirs)
+        except AuditUnavailableError as exc:
+            raise RunFailure(Outcome(12, audit_unavailable_error(exc))) from None
+
+    @property
+    def attempt_id(self) -> str | None:
+        return None if self.trail is None else self.trail.attempt_id
+
+    def close(self) -> None:
+        if self.trail is not None:
+            self.trail.close()
+        self.log.close()
+        if self.dirs is not None:
+            self.dirs.close()
+
+    def log_round(self, record: dict[str, Any]) -> None:
+        """A pre-check round: the ``precheck`` log event (ids and reasons only)."""
+        LOG.info("precheck round %s: %s", record["round"], record["result"])
+        details = {k: v for k, v in record.items() if k not in ("event", "pr")}
+        self.log.write("precheck", pr=record["pr"], attempt_id=self.attempt_id, details=details)
+
+    def log_plan(self, prepared: Prepared) -> None:
+        """The ``finding_moved`` and ``suggestion_degraded`` events of a plan."""
+        plan = prepared.plan
+        for moved in plan.moved:
+            details = {"id": moved.id, "reason": moved.reason}
+            self.log.write("finding_moved", pr=plan.pr, attempt_id=self.attempt_id, details=details)
+        for degraded in plan.suggestions_degraded:
+            details = {"id": degraded.id, "reason": degraded.reason}
+            self.log.write(
+                "suggestion_degraded", pr=plan.pr, attempt_id=self.attempt_id, details=details
+            )
 
 
 def _stdin_fd() -> int:
@@ -491,12 +544,12 @@ def _stdin_fd() -> int:
         return -1
 
 
-def _confirmed(args: argparse.Namespace, prepared: Prepared) -> Outcome | None:
+def _confirmed(args: argparse.Namespace, prepared: Prepared, session: _Session) -> Outcome | None:
     """Step 8, Confirm (docs/interface.md, Confirmation): None when the run may write, else the
     refusal. ``--yes`` skips the dialog. A run that is not interactive and has no ``--yes`` ends
     at exit 13 before any write, recording nothing. An interactive run shows the dialog on stderr
     and reads one answer from the terminal; anything but ``y`` or ``yes`` declines (exit 13,
-    message ``declined``). TODO(#11): log ``declined`` (no audit record is written)."""
+    message ``declined``, logged as ``declined``; no audit record is written)."""
     if args.yes:
         return None
     if not args.run.interactive:
@@ -506,27 +559,52 @@ def _confirmed(args: argparse.Namespace, prepared: Prepared) -> Outcome | None:
         )
     if confirm(prepared, stdin_fd=_stdin_fd(), write=lambda text: _write(sys.stderr, text)):
         return None
+    session.log.write("declined", pr=prepared.plan.pr, attempt_id=session.attempt_id)
     return error_outcome("confirmation_required", "declined")
 
 
-def _confirm_and_post(args: argparse.Namespace, prepared: Prepared) -> Outcome:
-    """The seam after the plan: the dialog and the writes. Nothing is sent from here yet.
+def _confirm_and_post(
+    args: argparse.Namespace, prepared: Prepared, gateway: Gateway, session: _Session
+) -> Outcome:
+    """Steps 8 and 9: the dialog, then the review order's write (``post.post_review``).
 
-    TODO(#29): the review order's writes. TODO(#30): comment and reply. TODO(#31): approve and
-    ``review --approve``.
+    TODO(#30): comment and reply. TODO(#31): approve and ``review --approve``, with the automatic
+    approval guard: until then ``review --approve`` is refused before the dialog, so no approval
+    is ever posted without the guard.
     """
-    refused = _confirmed(args, prepared)
+    request = prepared.request
+    if request.command == "review" and request.approve:
+        return error_outcome("internal", "review --approve is not implemented yet")
+    refused = _confirmed(args, prepared, session)
     if refused is not None:
         return refused
-    return error_outcome(
-        "internal", "posting is not implemented yet: the plan passed its pre-check"
+    if request.command != "review":
+        return error_outcome(
+            "internal", "posting is not implemented yet: the plan passed its pre-check"
+        )
+    assert session.trail is not None  # opened in step 1, before the first read
+    env = PostEnv(
+        gateway=gateway,
+        trail=session.trail,
+        log=session.log,
+        run=args.run,
+        config=args.loaded_config,
     )
+    return post_review(prepared, env)
 
 
 def _posting(args: argparse.Namespace) -> Outcome:
-    """``review``, ``comment``, ``reply`` and ``approve`` up to the plan: usage, reads, the plan,
-    the pre-check rounds, ``--expect-plan`` and ``--dry-run`` (docs/interface.md, Review order
-    steps 1 to 7)."""
+    """``review``, ``comment``, ``reply`` and ``approve``: usage, reads, the plan, the pre-check
+    rounds, ``--expect-plan`` and ``--dry-run``, then the dialog and the write
+    (docs/interface.md, Review order steps 1 to 11)."""
+    session = _Session(args)
+    try:
+        return _run_posting(args, session)
+    finally:
+        session.close()
+
+
+def _run_posting(args: argparse.Namespace, session: _Session) -> Outcome:
     loaded = args.loaded_config
     gateway = ProcessGateway.from_config(loaded)
     me_name = _me_name(loaded)
@@ -535,20 +613,24 @@ def _posting(args: argparse.Namespace) -> Outcome:
         config=loaded,
         me_name=me_name,
         tool_version=_version(),
-        on_round=_log_round,
+        on_round=session.log_round,
+        before_reads=session.open,
     )
     try:
         prepared = prepare(_request(args, _actor(args)), env)
     except (RunFailure, LowerFailure) as failure:
+        log_failure(session.log, session.attempt_id, None, failure.outcome)
         return failure.outcome
     except ToolMissing as exc:
         return tool_missing_outcome(exc)
+    session.log_plan(prepared)
     refused = check_binding(prepared)
     if refused is not None:
+        log_failure(session.log, session.attempt_id, prepared.plan.pr, refused)
         return refused
     if args.dry_run:
         return dry_run_outcome(prepared)
-    return _confirm_and_post(args, prepared)
+    return _confirm_and_post(args, prepared, gateway, session)
 
 
 # One handler per command path. Later issues replace the entries with real handlers.

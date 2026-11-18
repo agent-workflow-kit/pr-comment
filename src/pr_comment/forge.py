@@ -395,6 +395,47 @@ class _WhoamiDocument(_Model):
 
 _M = TypeVar("_M", bound=_Model)
 
+# --- a write's result ----------------------------------------------------------------------------
+
+_WARNING_RE: Final = re.compile(r"[a-z][a-z0-9_]*")
+MAX_WARNINGS: Final = 64
+Warning_ = Annotated[str, _fullmatch(_WARNING_RE, "warning", 64)]
+PostId = Annotated[str, _grammar(check_reply_target)]
+
+
+class PostRead(_Model):
+    """The fields of a real ``review`` result pr-comment uses (forgectl ``cli/review.json``)."""
+
+    pr: Pr
+    action: str
+    ids: Annotated[list[PostId], Field(max_length=MAX_ITEMS)]
+    thread_ids: Annotated[list[PostId], Field(max_length=MAX_ITEMS)]
+    review_id: PostId | None
+    already_posted: bool
+    follow_up_done: bool
+    neutralized_lines: Count
+    markers_removed: Count
+    warnings: Annotated[list[Warning_], Field(max_length=MAX_WARNINGS)]
+    head_verified: bool | None
+    dry_run: bool
+
+
+def read_post(document: Any, *, command: str, pr: str, gateway: Gateway) -> PostRead:
+    """The checked result of a write that exited 0. A document that is not a real run's answer for
+    ``command`` on ``pr`` is ``lower_contract_mismatch`` with the write's own pair (``landed:
+    true``, ``retry: none``: forgectl said it succeeded), never a retry."""
+
+    def mismatch(why: str) -> LowerFailure:
+        return LowerFailure(mismatch_outcome(command, why, gateway=gateway, write=(True, "none")))
+
+    try:
+        read = PostRead.model_validate(document)
+    except ValidationError as exc:
+        raise mismatch(_why(exc)) from None
+    if read.action != command or read.dry_run or _canonical(read.pr) != _canonical(pr):
+        raise mismatch("the document is not the real run's result for this PR")
+    return read
+
 
 def _why(exc: ValidationError) -> str:
     """The field pointers that failed (never a value: it is untrusted text)."""

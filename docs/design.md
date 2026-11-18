@@ -107,7 +107,8 @@ Each becomes a `live` test in the plan.
 | `reanchor.py` | pure re-anchoring over parsed forgectl results: compare handling (`from_sha`, `to_sha`, shape checks), left-side check, moved list and `reanchored_draft` |
 | `plan.py` | the posting plan shown by the dialog and `--dry-run`: bodies (steps 3 to 6), inline comments, the fate of every finding, follow-ups, the forgectl input and command, counts, and its `plan_sha256`; pure, one `MentionNeutralizer` per plan |
 | `precheck.py` | the pre-check rounds: forgectl's dry run of the real call, at most one `too_large` round, then at most one `invalid_position` round, each rebuilding the plan |
-| `prepare.py` | the posting orders up to the plan (usage, reads, re-anchoring, the plan, the pre-check), `--expect-plan` binding and the `--dry-run` result; the dialog and the writes are not here |
+| `prepare.py` | the posting orders up to the plan (usage, reads, re-anchoring, the plan, the pre-check), `--expect-plan` binding and the result documents; the dialog and the writes are not here |
+| `post.py` | the review order's write: audit `attempted`, the one forgectl call with the confirmed plan's input, lowering the answer (success, failure, signal, deadline), audit outcome, the result; never retries |
 | `forge.py` | the forgectl edge: argv in `=` form, stdin input, result and envelope parsing by the fields pr-comment uses |
 | `gateway.py` | the only subprocess boundary |
 | `files.py` | state and temporary directory checks, no-follow and exclusive creation, hook directory removal, sweeping |
