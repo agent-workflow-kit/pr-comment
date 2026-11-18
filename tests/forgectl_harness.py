@@ -36,6 +36,10 @@ LAUNCHER = FAKEBIN / "forgectl"
 PIN: dict[str, Any] = ff.PIN
 PINNED_VERSION: str = ff.VERSION
 
+# The developer's PATH, captured when the harness is imported (collection, before any test
+# replaces PATH with an empty one): only the live tests look the real forgectl up in it.
+REAL_PATH: str = os.environ.get("PATH", "")
+
 HEAD = "a" * 40
 OTHER_HEAD = "b" * 40
 BASE_SHA = "c" * 40

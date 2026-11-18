@@ -491,7 +491,7 @@ def _why(exc: ValidationError) -> str:
     return "invalid or missing: " + ", ".join(seen)
 
 
-def _stale_head(head_sha: str) -> LowerFailure:
+def stale_head_failure(head_sha: str) -> LowerFailure:
     return LowerFailure(
         error_outcome(
             "refused",
@@ -523,6 +523,10 @@ class Forge:
 
     def __init__(self, gateway: Gateway) -> None:
         self._gateway = gateway
+
+    @property
+    def gateway(self) -> Gateway:
+        return self._gateway
 
     def lower_version(self) -> str | None:
         return self._gateway.lower_version()
@@ -571,7 +575,7 @@ class Forge:
         head = _sha_arg(expect_head) if expect_head is not None else None
         value = self._read("diff", [check_pr(pr)], DiffRead, pr=pr)
         if head is not None and value.head_sha != head:
-            raise _stale_head(value.head_sha)
+            raise stale_head_failure(value.head_sha)
         return value
 
     def compare(self, pr: str, from_sha: str, to_sha: str) -> CompareRead:
@@ -584,7 +588,7 @@ class Forge:
         if value.from_sha != a:
             raise self._mismatch("compare", "the document compares another commit")
         if value.to_sha != b:
-            raise _stale_head(value.to_sha)
+            raise stale_head_failure(value.to_sha)
         return value
 
     def files(self, pr: str) -> FilesRead:

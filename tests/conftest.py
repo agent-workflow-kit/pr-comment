@@ -37,6 +37,11 @@ def private_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("XDG_STATE_HOME", str(home / ".local" / "state"))
     for name in [n for n in os.environ if n.startswith("PR_COMMENT_")]:
         monkeypatch.delenv(name)
+    # No test reaches the real forgectl (or any other tool on the developer's PATH) by accident:
+    # a test that runs a program sets its own PATH or passes its own environment.
+    nothing = tmp_path / "empty-path"
+    nothing.mkdir()
+    monkeypatch.setenv("PATH", str(nothing))
     return home
 
 
