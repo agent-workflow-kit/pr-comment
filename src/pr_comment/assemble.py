@@ -13,7 +13,8 @@ own recomputation agree, and forgectl's ``neutralized_lines`` and ``markers_remo
 ``has_marker`` is the normative marker detection. ``render_inline_finding`` renders an inline
 comment's finding text with its suggestion and reports why the suggestion was degraded, if it was.
 
-Not here: the dedupe key and the plan hash (TODO(#21)), the log event ``suggestion_degraded`` and
+Not here: the dedupe key and the plan hash (``keys.py``; keys hash the step-1 text, not these
+bodies), the log event ``suggestion_degraded`` and
 the ``suggestions_degraded`` list of the plan, which the posting commands write from
 ``InlineFinding.degraded`` (TODO(#27)), and the choice of ``host`` per review, which comes from
 forgectl's ``show`` (TODO(#29)).
