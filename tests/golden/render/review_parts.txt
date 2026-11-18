@@ -1,0 +1,15 @@
+Summary for ＠someone.
+
+### File-level findings
+
+` docs/＠guide.md `
+
+**info**
+
+See ！[x](u).
+
+### Findings that could not be anchored
+
+`` src/b`.py:3-5 `` (left) (at fedcba987654) — the commented line changed after this review was drafted
+
+Moved ＜b>.

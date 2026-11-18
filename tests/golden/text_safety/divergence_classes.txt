@@ -1,0 +1,739 @@
+== definition_then_indented_mention/draft_body
+-- input (default options)
+{
+  "body": "[a]: /u\n    @victim",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+[a]: /u
+    ＠victim
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<p>＠victim</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== definition_then_indented_mention/inline_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "[a]: /u\n    @victim",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "severity": "minor",
+      "suggestion": {
+        "lines": [
+          "x = 1"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+**minor**
+
+[a]: /u
+    ＠victim
+
+```suggestion
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p><strong>minor</strong></p>
+<p>＠victim</p>
+<pre lang="suggestion"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== definition_then_indented_mention/moved_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "[a]: /u\n    @victim",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py",
+        "suggestion": {
+          "lines": [
+            "x = 1"
+          ]
+        }
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+[a]: /u
+    ＠victim
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>Findings that could not be anchored</h3>
+<p><code>src/a.py:10</code> (at 89abcdef0123) — the commented line changed after this review was drafted</p>
+<p>＠victim</p>
+<p><em>Suggestion shown as code: this finding could not be posted inline.</em></p>
+<pre lang="text"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== table_rowless_pipe_then_indented_mention/draft_body
+-- input (default options)
+{
+  "body": "| a |\n|---|\n| b |\n|\n    @victim",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+| a |
+|---|
+| b |
+|
+    ＠victim
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<table>
+<thead>
+<tr>
+<th>a</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>b</td>
+</tr>
+</tbody>
+</table>
+<p>|
+＠victim</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== table_rowless_pipe_then_indented_mention/inline_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "| a |\n|---|\n| b |\n|\n    @victim",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "severity": "minor",
+      "suggestion": {
+        "lines": [
+          "x = 1"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+**minor**
+
+| a |
+|---|
+| b |
+|
+    ＠victim
+
+```suggestion
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p><strong>minor</strong></p>
+<table>
+<thead>
+<tr>
+<th>a</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>b</td>
+</tr>
+</tbody>
+</table>
+<p>|
+＠victim</p>
+<pre lang="suggestion"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== table_rowless_pipe_then_indented_mention/moved_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "| a |\n|---|\n| b |\n|\n    @victim",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py",
+        "suggestion": {
+          "lines": [
+            "x = 1"
+          ]
+        }
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+| a |
+|---|
+| b |
+|
+    ＠victim
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>Findings that could not be anchored</h3>
+<p><code>src/a.py:10</code> (at 89abcdef0123) — the commented line changed after this review was drafted</p>
+<table>
+<thead>
+<tr>
+<th>a</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>b</td>
+</tr>
+</tbody>
+</table>
+<p>|
+＠victim</p>
+<p><em>Suggestion shown as code: this finding could not be posted inline.</em></p>
+<pre lang="text"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== quote_then_tab_quote_fence_mention/draft_body
+-- input (default options)
+{
+  "body": "> x\n\t> ```\n@victim",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+> x
+	> ```
+＠victim
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<blockquote>
+<p>x
+&gt; ```
+＠victim</p>
+</blockquote>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== quote_then_tab_quote_fence_mention/inline_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "> x\n\t> ```\n@victim",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "severity": "minor",
+      "suggestion": {
+        "lines": [
+          "x = 1"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+**minor**
+
+> x
+	> ```
+＠victim
+
+```suggestion
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p><strong>minor</strong></p>
+<blockquote>
+<p>x
+&gt; ```
+＠victim</p>
+</blockquote>
+<pre lang="suggestion"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== quote_then_tab_quote_fence_mention/moved_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "> x\n\t> ```\n@victim",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py",
+        "suggestion": {
+          "lines": [
+            "x = 1"
+          ]
+        }
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+> x
+	> ```
+＠victim
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>Findings that could not be anchored</h3>
+<p><code>src/a.py:10</code> (at 89abcdef0123) — the commented line changed after this review was drafted</p>
+<blockquote>
+<p>x
+&gt; ```
+＠victim</p>
+</blockquote>
+<p><em>Suggestion shown as code: this finding could not be posted inline.</em></p>
+<pre lang="text"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== open_tilde_fence/draft_body
+-- input (default options)
+{
+  "body": "~~~\n@victim",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+~~~
+＠victim
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<pre><code>＠victim
+
+&lt;!-- pr-comment:v1 --&gt;
+&lt;!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV --&gt;
+</code></pre>
+
+== open_tilde_fence/inline_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "~~~\n@victim",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "severity": "minor",
+      "suggestion": {
+        "lines": [
+          "x = 1"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+**minor**
+
+~~~
+＠victim
+
+```suggestion
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p><strong>minor</strong></p>
+<pre><code>＠victim
+
+```suggestion
+x = 1
+```
+
+&lt;!-- pr-comment:v1 --&gt;
+&lt;!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV --&gt;
+</code></pre>
+
+== open_tilde_fence/moved_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "~~~\n@victim",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py",
+        "suggestion": {
+          "lines": [
+            "x = 1"
+          ]
+        }
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+~~~
+＠victim
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>Findings that could not be anchored</h3>
+<p><code>src/a.py:10</code> (at 89abcdef0123) — the commented line changed after this review was drafted</p>
+<pre><code>＠victim
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+&lt;!-- pr-comment:v1 --&gt;
+&lt;!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV --&gt;
+</code></pre>
+
+== tilde_fence_then_suggestion_tilde_line
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "~~~\nx",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "suggestion": {
+        "lines": [
+          "~~~",
+          "@victim"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+~~~
+x
+
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
+~~<run split>~
+＠victim
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<pre><code>x
+
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
+~~&lt;run split&gt;~
+＠victim
+```
+
+&lt;!-- pr-comment:v1 --&gt;
+&lt;!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV --&gt;
+</code></pre>
+
+== tilde_fence_then_suggestion_tilde_line_moved
+-- input (default options)
+{
+  "body": "",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "~~~\nx",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py",
+        "suggestion": {
+          "lines": [
+            "~~~"
+          ]
+        }
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+~~~
+x
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+~~<run split>~
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>Findings that could not be anchored</h3>
+<p><code>src/a.py:10</code> (at 89abcdef0123) — the commented line changed after this review was drafted</p>
+<pre><code>x
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+~~&lt;run split&gt;~
+```
+
+&lt;!-- pr-comment:v1 --&gt;
+&lt;!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV --&gt;
+</code></pre>
+
+== open_fence_in_an_earlier_part_then_moved_suggestion
+-- input (default options)
+{
+  "body": "```\nopen",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "fine",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py",
+        "suggestion": {
+          "lines": [
+            "```",
+            "@victim"
+          ]
+        }
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+```
+open
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+fine
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+``<run split>`
+＠victim
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<pre><code>open
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+fine
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+``&lt;run split&gt;`
+＠victim
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->

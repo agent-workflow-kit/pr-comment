@@ -1,0 +1,76 @@
+== comment_hostile
+-- input (default options)
+'<!-- x -->\n![](u)\n@victim\n```\nopen'
+-- comment (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+＜!-- x -->
+！[](u)
+＠victim
+```
+open
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<p>＜!-- x --&gt;
+！<a href="u"></a>
+＠victim</p>
+<pre><code>open
+
+&lt;!-- pr-comment:v1 --&gt;
+&lt;!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV --&gt;
+</code></pre>
+
+== comment_footer_off
+-- input ({'footer_human': False})
+'[a]: /u\n    @victim'
+-- comment (neutralized_lines=0)
+[a]: /u
+    ＠victim
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>＠victim</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== comment_empty
+-- input (default options)
+''
+-- comment (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== approve_body_with_slash_lines
+-- input (default options)
+'/approve\n/assign @victim'
+-- comment (neutralized_lines=2)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+ /approve
+ /assign ＠victim
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<p>/approve
+/assign ＠victim</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== comment_refused_fence
+-- input (default options)
+'```suggestion\nx\n```'
+-- refused: suggestion_fence /body

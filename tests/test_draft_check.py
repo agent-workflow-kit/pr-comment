@@ -446,5 +446,6 @@ def test_draft_check_does_not_use_the_gateway(
     def boom(*args: object, **kwargs: object) -> None:
         raise AssertionError("gateway used")
 
-    monkeypatch.setattr(gateway.ProcessGateway, "call", boom)
+    monkeypatch.setattr(gateway, "run_process", boom)
+    monkeypatch.setattr(gateway.ProcessGateway, "__init__", boom)
     assert main(["draft", "check", write(tmp_path, good()), "--json"]) == 0
