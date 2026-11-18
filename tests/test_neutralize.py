@@ -470,6 +470,22 @@ def test_huge_decimal_reference_still_lets_later_links_count() -> None:
     assert _c("&#" + "1" * 5000 + ";https://evil.example").links == 1
 
 
+def test_zero_padded_decimal_reference_does_not_crash_count_text() -> None:
+    assert _c("&#" + "0" * 5000 + "65;").links == 0
+
+
+def test_zero_padded_decimal_reference_still_decodes() -> None:
+    assert _c("&#" + "0" * 5000 + "119;ww.example.com").links == 1
+
+
+def test_zero_padded_hex_reference_still_decodes() -> None:
+    assert _c("&#x" + "0" * 5000 + "77;ww.example.com").links == 1
+
+
+def test_all_zero_padded_reference_does_not_crash_count_text() -> None:
+    count_text("&#" + "0" * 5000 + ";&#x" + "0" * 5000 + ";")
+
+
 def test_numeric_reference_with_leading_zeros_decodes_as_before() -> None:
     assert _c("&#0000000119;ww.example.com").links == 1
 

@@ -103,11 +103,11 @@ def _cap_numeric_ref(match: re.Match[str]) -> str:
         significant = hex_digits.lstrip("0")
         if len(significant) > 6:
             return f"&#{x}{_BEYOND_UNICODE_HEX}"
-        return match.group(0)
+        return f"&#{x}{significant or '0'}"
     significant = dec_digits.lstrip("0")
     if len(significant) > 7:
         return "&#" + _BEYOND_UNICODE_DEC
-    return match.group(0)
+    return f"&#{significant or '0'}"
 
 
 def count_text(text: str) -> TextCounts:
