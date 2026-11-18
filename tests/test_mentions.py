@@ -473,11 +473,28 @@ def test_an_allowed_name_overrides_the_preceding_character_rule() -> None:
     assert run("&#64@john", ("john",)) == (f"{AT}@john", (), 1)
 
 
-@pytest.mark.parametrize("entry", ["", "@john", "a b", "zz/", "/zz", "a//b", "é", "a\nb", "＠x"])
+@pytest.mark.parametrize("entry", ["@john", "a b", "zz/", "/zz", "a//b", "é", "a\nb", "＠x"])
 def test_an_allowlist_entry_outside_the_name_grammar_is_refused(entry: str) -> None:
+    with pytest.raises(ValueError, match="allow"):
+        MentionNeutralizer("neutralize", (entry,))
+
+
+def test_an_empty_allowlist_entry_is_refused_with_a_message() -> None:
+    with pytest.raises(ValueError, match="allow") as excinfo:
+        MentionNeutralizer("neutralize", ("",))
+    assert str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "entry", ["zzmarker@", "@johnmarker", "zzmarker&#64;", "zz marker\nzzmarker"]
+)
+def test_a_refused_allowlist_entry_is_not_echoed(entry: str) -> None:
     with pytest.raises(ValueError, match="allow") as excinfo:
         MentionNeutralizer("neutralize", (entry,))
-    assert entry not in str(excinfo.value) or entry == ""
+    message = str(excinfo.value)
+    assert entry not in message
+    assert "zzmarker" not in message
+    assert "johnmarker" not in message
 
 
 def test_the_name_grammar_is_defined_once() -> None:
