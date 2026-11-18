@@ -1,0 +1,15 @@
+**major · a \*\* b \*\***
+
+Body.
+
+---
+
+**major · line one\\nline two\\n\# not a heading**
+
+Body.
+
+---
+
+**major · \*\*bold\*\* \`tick\` \[l\]\(u\) ＜b\>**
+
+Body.

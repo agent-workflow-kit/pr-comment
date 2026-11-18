@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.fakes import Tracker
 from tests.golden_harness import check_golden, refuse_regen_in_ci, render_json
 
 
@@ -56,3 +57,11 @@ def golden_json(golden: Callable[[str, str], None]) -> Callable[[str, Any], None
         golden(name, render_json(document))
 
     return _check
+
+
+@pytest.fixture
+def tracker() -> Iterator[Tracker]:
+    """Ends, at teardown, exactly the fake processes a test recorded (by pid and start time)."""
+    t = Tracker()
+    yield t
+    t.cleanup()

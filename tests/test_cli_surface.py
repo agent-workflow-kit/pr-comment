@@ -795,7 +795,7 @@ def test_expect_plan_allowed_on_posting_commands(
     assert doc["error"]["code"] == "internal"
 
 
-@pytest.mark.parametrize("command", sorted(set(MINIMAL) - {"export"}))
+@pytest.mark.parametrize("command", sorted(set(MINIMAL) - {"draft check", "export"}))
 def test_unimplemented_handlers_return_internal_envelope(
     capsys: pytest.CaptureFixture[str],
     golden_json: Callable[[str, Any], None],
