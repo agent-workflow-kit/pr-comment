@@ -306,6 +306,26 @@ RULES: list[tuple[str, Mutator, str, bool]] = [
     ("title-newline", _set(["findings", 0, "title"], "a\nb"), "/findings/0/title", True),
     ("title-type", _set(["findings", 0, "title"], 1), "/findings/0/title", True),
     ("finding-body-empty", _set(["findings", 0, "body"], ""), "/findings/0/body", True),
+    ("finding-body-newline-only", _set(["findings", 0, "body"], "\n"), "/findings/0/body", False),
+    (
+        "finding-body-separators-only",
+        _set(["findings", 1, "body"], "\r\n  \t\x0b\x0c\x1c\x1d\x1e\x85 \r"),
+        "/findings/1/body",
+        False,
+    ),
+    ("finding-body-spaces-only", _set(["findings", 0, "body"], " \t  "), "/findings/0/body", False),
+    (
+        "file-level-finding-body-blank",
+        _set(["findings", 2, "body"], "\n\n"),
+        "/findings/2/body",
+        False,
+    ),
+    (
+        "unanchored-body-blank",
+        _set(["unanchored", 0, "finding", "body"], "\r\n"),
+        "/unanchored/0/finding/body",
+        False,
+    ),
     ("finding-body-type", _set(["findings", 0, "body"], 1), "/findings/0/body", True),
     ("finding-body-over-cap", _set(["findings", 0, "body"], "a" * 65537), "/findings/0/body", True),
     (
@@ -430,6 +450,23 @@ def test_rule_refuses_with_pointer(
     for error in errors:
         assert error["pointer"] == "" or error["pointer"].startswith("/")
         assert error["message"]
+
+
+@pytest.mark.parametrize("body", ["a", "\na\n", " a ", " ", "​", "　", "﻿"])
+def test_finding_body_with_a_non_blank_character_is_accepted(body: str) -> None:
+    """Only line separators, space and tab are blank; other whitespace is left to the maintainer."""
+    doc = good()
+    doc["findings"][0]["body"] = body
+    assert validate_document(doc) == []
+
+
+def test_blank_finding_body_message_is_fixed_and_never_echoes_the_body() -> None:
+    doc = good()
+    doc["findings"][0]["body"] = " \n\t"
+    errors = validate_document(doc)
+    assert errors == [
+        {"pointer": "/findings/0/body", "message": "must contain a character that is not blank"}
+    ]
 
 
 def test_boundary_values_accepted() -> None:

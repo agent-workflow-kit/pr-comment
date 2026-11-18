@@ -85,6 +85,9 @@ _DRAFT_ID_RE: Final = re.compile(DRAFT_ID_PATTERN)
 _FINDING_ID_RE: Final = re.compile(FINDING_ID_PATTERN)
 _PR_RE: Final = re.compile(PR_PATTERN)
 _ONE_LINE_RE: Final = re.compile(ONE_LINE_PATTERN)
+# A finding body of only Text pipeline step 1 line separators, ASCII space and tab is blank:
+# it renders as nothing, so an inline comment would post as the bare marker (issue #67).
+_BLANK_RE: Final = re.compile("[\n\r\x0b\x0c\x1c\x1d\x1e\x85   \t]*")
 
 _TOP_KEYS: Final = frozenset(
     {
@@ -448,12 +451,15 @@ def _check_text(
     max_bytes: int,
     non_empty: bool = False,
     blank_ok: bool = True,
+    visible: bool = False,
     one_line: bool = False,
 ) -> None:
     if type(value) is not str:
         issues.add(pointer, "must be a string")
     elif non_empty and (not value or (not blank_ok and not value.strip())):
         issues.add(pointer, "must not be empty")
+    elif visible and _BLANK_RE.fullmatch(value):
+        issues.add(pointer, "must contain a character that is not blank")
     elif _utf8_len(value) > max_bytes:
         issues.add(pointer, f"is longer than {max_bytes} bytes of UTF-8")
     elif one_line and not _ONE_LINE_RE.fullmatch(value):
@@ -576,7 +582,12 @@ def _check_finding(value: object, pointer: str, issues: _Issues, seen: set[str])
             issues.add(f"{pointer}/title", "must be one line")
     if "body" in finding:
         _check_text(
-            finding["body"], f"{pointer}/body", issues, max_bytes=MAX_TEXT_BYTES, non_empty=True
+            finding["body"],
+            f"{pointer}/body",
+            issues,
+            max_bytes=MAX_TEXT_BYTES,
+            non_empty=True,
+            visible=True,
         )
     if "suggestion" in finding and not file_level:
         if side_ok and finding.get("side") == "left":

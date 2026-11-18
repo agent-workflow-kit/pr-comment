@@ -79,7 +79,7 @@ The integer fields (`schema_version`, `line`, `start_line`) must be written as J
 | `side` | string | no | `right` (default; the head's version) or `left` (the base's version at the merge-base). |
 | `severity` | string | no | `blocker`, `major`, `minor`, `nit`, `info`. |
 | `title` | string | no | One line, at most 256 characters; stripped of leading and trailing whitespace, and an empty title counts as absent. |
-| `body` | string | yes | Non-empty. |
+| `body` | string | yes | Non-empty, and with at least one character that is not blank. Blank characters are the line separators of [Text pipeline](#text-pipeline) step 1 (LF, CR, VT, FF, FS, GS, RS, NEL, LS, PS), ASCII space and tab. A body of blank characters only renders as nothing (trailing line feeds are dropped), so its inline comment would be the bare marker: it is `invalid_draft` at `/findings/<i>/body` (or `/unanchored/<i>/finding/body`) with the fixed message `must contain a character that is not blank`, never echoing the text, in draft loading and `draft check`. Other Unicode whitespace (no-break space, ideographic space) and invisible characters are not blank under this rule. The `comment` and `reply` body-file rule (`usage`, exit 2, a body that is empty or only whitespace after step 1) is the same idea, kept consistent; it is wider (Python `str.strip` whitespace) and is a `usage` error because the body is not a draft field. The review `body` is not affected: it may be empty. |
 | `suggestion` | object | no | `{"lines": [string, ...]}`: replacement code for `start_line..line`, one string per line; see [Suggestions](#suggestions). `lines: []` suggests deleting the range. Only on `side: right`; on `left` the draft is invalid. |
 
 ### Draft versioning
@@ -354,7 +354,7 @@ On GitLab an approval with a body is a note followed by the approval, so a failu
 
 ## Comment and reply order
 
-1. **Usage; the body:** as the draft in Review order step 1, at most 64 KiB, non-empty, Text pipeline steps 1 and 2; `--to` and `--expected-head` validated.
+1. **Usage; the body:** as the draft in Review order step 1, at most 64 KiB, non-empty and not only whitespace after step 1 (exit 2 `usage`; the same idea as a draft finding `body`, see [Findings](#findings)), Text pipeline steps 1 and 2; `--to` and `--expected-head` validated.
 2. **Read:** `forgectl show <pr>`. With `--expected-head`, a different head exits 20 `stale_head` (`details.head_sha`). The head shown and recorded is the expected or `show`'s head. Hosts enforce no head on a comment, so a push between this read and the post goes undetected ([Residual risks](#residual-risks)).
 3. **Render:** Text pipeline steps 3 to 6, dedupe key ([Dedupe keys](#dedupe-keys)), plan.
 4. **Pre-check** (an unknown `--to` exits 10, `details.what: to`), **plan binding, dry run, confirm, post** (`forgectl comment <pr> --body-file -` or `forgectl reply <pr> --to=<id> --body-file -`, each with `--dedupe-key=<key> --json --yes --actor=<actor> [--decision-id=<id>]... [--override-escalation]`, the last only with scope `forgectl`), **finish:** as Review order steps 5 to 9 and 11.
