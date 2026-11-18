@@ -21,6 +21,7 @@ from pr_comment.config import (
     ConfigError,
     HookEntry,
     LoadedConfig,
+    RepoOverride,
     config_hash,
     load_config,
 )
@@ -28,6 +29,7 @@ from pr_comment.config import (
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA = json.loads((ROOT / "schemas" / "config.json").read_text(encoding="utf-8"))
 SECRET = "SECRET-marker-9f3a"
+PINNED_HASH = "6a8048cdeffe0f581918afef16bc211e258eb1d49233a90dfadf4fc79434ec02"
 
 Write = Callable[..., Path]
 
@@ -731,6 +733,175 @@ def test_hash_follows_the_environment(env: dict[str, str]) -> None:
     assert config_hash(Config()) == LoadedConfig.defaults().config_hash
 
 
+def hash_of(write: Write, tmp_path: Path, env: dict[str, str], name: str, doc: object) -> str:
+    return load_config(str(write(tmp_path / name, doc)), env=env).config_hash
+
+
+@pytest.mark.parametrize(
+    ("empty", "explicit"),
+    [
+        ({}, {"allow_auto_approve": False}),
+        ({}, {"mentions": {"policy": "neutralize"}}),
+        ({}, {"mentions": {"allow": []}}),
+        ({}, {"footer": {"auto": config_module.DEFAULT_FOOTER_AUTO}}),
+        ({}, {"gitlab": {"resolve_body_thread": "non_blocking"}}),
+    ],
+)
+def test_hash_tells_an_unset_repo_key_from_one_set_to_the_default(
+    write: Write, tmp_path: Path, env: dict[str, str], empty: object, explicit: object
+) -> None:
+    a = hash_of(write, tmp_path, env, "a.yaml", {"repos": {REPO: empty}})
+    b = hash_of(write, tmp_path, env, "b.yaml", {"repos": {REPO: explicit}})
+    assert a != b
+
+
+def test_hash_tells_apart_repo_overrides_that_resolve_differently(
+    write: Write, tmp_path: Path, env: dict[str, str]
+) -> None:
+    base = {"allow_auto_approve": True, "mentions": {"policy": "allow"}}
+    docs = [
+        {**base, "repos": {REPO: {}}},
+        {**base, "repos": {REPO: {"allow_auto_approve": False}}},
+        {**base, "repos": {REPO: {"mentions": {"policy": "neutralize"}}}},
+    ]
+    loaded = [
+        load_config(str(write(tmp_path / f"{i}.yaml", d)), env=env) for i, d in enumerate(docs)
+    ]
+    assert len({item.config_hash for item in loaded}) == 3
+    assert len({item.for_repo(REPO) for item in loaded}) == 3
+
+
+def test_hash_ignores_key_order(write: Write, tmp_path: Path, env: dict[str, str]) -> None:
+    a = {"timeout": "5s", "me": {"name": "x"}, "repos": {REPO: {"allow_auto_approve": True}}}
+    b = {"repos": {REPO: {"allow_auto_approve": True}}, "me": {"name": "x"}, "timeout": "5s"}
+    assert hash_of(write, tmp_path, env, "a.yaml", a) == hash_of(write, tmp_path, env, "b.yaml", b)
+
+
+def test_hash_is_the_same_for_one_file_and_a_drop_in_split(
+    cfg_dir: Path, write: Write, tmp_path: Path, env: dict[str, str]
+) -> None:
+    one = {
+        "timeout": "5s",
+        "hook_env_deny": ["A"],
+        "hooks": {
+            "pre-post": [{"cmd": "a"}, {"cmd": "b"}],
+            "post-post": [{"cmd": "c", "async": True}, {"cmd": "d"}],
+        },
+        "repos": {REPO: {"footer": {"human": "x {user}"}, "allow_auto_approve": True}},
+    }
+    expected = hash_of(write, tmp_path, env, "one.yaml", one)
+    write(
+        cfg_dir / "config.yaml",
+        {
+            "timeout": "5s",
+            "hooks": {"pre-post": [{"cmd": "a"}], "post-post": [{"cmd": "c", "async": True}]},
+        },
+    )
+    write(
+        cfg_dir / "config.d" / "1.yaml",
+        {"hooks": {"pre-post": [{"cmd": "b"}]}, "repos": {REPO: {"footer": {"human": "x {user}"}}}},
+    )
+    write(
+        cfg_dir / "config.d" / "2.yaml",
+        {
+            "hook_env_deny": ["A"],
+            "hooks": {"post-post": [{"cmd": "d"}]},
+            "repos": {REPO: {"allow_auto_approve": True}},
+        },
+    )
+    assert load_config(None, env=env).config_hash == expected
+
+
+def test_hash_pinned_vector(write: Write, tmp_path: Path, env: dict[str, str]) -> None:
+    document = {
+        "timeout": "1m",
+        "me": {"name": "carol"},
+        "hooks": {"pre-post": [{"cmd": "true"}]},
+        "repos": {"example.test/o/r": {"allow_auto_approve": False}},
+    }
+    assert hash_of(write, tmp_path, env, "p.yaml", document) == PINNED_HASH
+
+
+def test_repo_lookup_is_ascii_case_folding_only(
+    cfg_dir: Path, write: Write, env: dict[str, str]
+) -> None:
+    write(cfg_dir / "config.yaml", {"repos": {"example.test/o/k": {"allow_auto_approve": True}}})
+    loaded = load_config(None, env=env)
+    assert loaded.for_repo("example.test/o/K").allow_auto_approve is True
+    assert loaded.for_repo("example.test/o/\u212a").allow_auto_approve is False  # Kelvin sign
+
+
+def test_repo_spellings_differing_by_case_merge_across_files(
+    cfg_dir: Path, write: Write, env: dict[str, str]
+) -> None:
+    write(cfg_dir / "config.yaml", {"repos": {"example.test/O/R": {"allow_auto_approve": True}}})
+    write(
+        cfg_dir / "config.d" / "1.yaml",
+        {"repos": {"example.test/o/r": {"gitlab": {"resolve_body_thread": "never"}}}},
+    )
+    loaded = load_config(None, env=env)
+    repo = loaded.for_repo("example.test/o/r")
+    assert (repo.allow_auto_approve, repo.resolve_body_thread) == (True, "never")
+    assert len(loaded.config.repos) == 1
+
+
+def test_a_later_file_wins_over_another_spelling_of_the_same_repo(
+    cfg_dir: Path, write: Write, env: dict[str, str]
+) -> None:
+    write(cfg_dir / "config.yaml", {"repos": {"example.test/O/R": {"allow_auto_approve": True}}})
+    write(
+        cfg_dir / "config.d" / "1.yaml",
+        {"repos": {"example.test/o/r": {"allow_auto_approve": False}}},
+    )
+    assert load_config(None, env=env).for_repo("example.test/o/r").allow_auto_approve is False
+
+
+def test_two_spellings_in_one_drop_in_are_refused(
+    cfg_dir: Path, write: Write, env: dict[str, str]
+) -> None:
+    write(
+        cfg_dir / "config.d" / "1.yaml",
+        {"repos": {"example.test/o/R": {}, "example.test/o/r": {}}},
+    )
+    assert error_of(None, env).key == "repos.example.test/o/r"
+
+
+def test_invalid_repo_id_keeps_its_spelling_in_the_error(
+    cfg_dir: Path, write: Write, env: dict[str, str]
+) -> None:
+    write(cfg_dir / "config.yaml", {"repos": {"EXAMPLE.test/o/r": {}}})
+    assert error_of(None, env).key == "repos.EXAMPLE.test/o/r"
+
+
+def test_files_are_opened_without_a_controlling_terminal(
+    cfg_dir: Path, write: Write, env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write(cfg_dir / "config.yaml", {})
+    flags: list[int] = []
+    real_open = os.open
+
+    def spy(path: Any, flag: int, *args: Any, **kwargs: Any) -> int:
+        flags.append(flag)
+        return real_open(path, flag, *args, **kwargs)
+
+    monkeypatch.setattr(config_module.os, "open", spy)
+    load_config(None, env=env)
+    assert flags
+    assert all(flag & os.O_NOCTTY for flag in flags)
+
+
+def test_relative_config_path_with_a_removed_cwd_is_config_invalid(
+    tmp_path: Path, env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    monkeypatch.chdir(gone)
+    gone.rmdir()
+    with pytest.raises(ConfigError) as caught:
+        load_config("config.yaml", env=env)
+    assert caught.value.key == "config.yaml"
+
+
 # --- hostile YAML -------------------------------------------------------------------------------
 
 HOSTILE_YAML = [
@@ -987,6 +1158,8 @@ def test_dangling_drop_in_directory_is_refused(
 def test_files_owned_by_another_user_are_refused(
     cfg_dir: Path, write: Write, env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("root-owned files are always accepted")
     write(cfg_dir / "config.yaml", {})
     other = os.geteuid() + 1
     monkeypatch.setattr(config_module.os, "geteuid", lambda: other)
@@ -997,6 +1170,8 @@ def test_files_owned_by_another_user_are_refused(
 def test_directory_owned_by_another_user_is_refused(
     cfg_dir: Path, write: Write, env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("root-owned directories are always accepted")
     write(cfg_dir / "config.d" / "x.yaml", {})
     other = os.geteuid() + 1
     monkeypatch.setattr(config_module.os, "geteuid", lambda: other)
@@ -1043,6 +1218,17 @@ def test_returned_config_is_immutable(env: dict[str, str]) -> None:
         config.timeout = "1s"  # type: ignore[misc]
     assert isinstance(config.mentions.allow, tuple)
     assert isinstance(config.hooks.pre_post, tuple)
+
+
+def test_returned_repos_map_is_read_only(cfg_dir: Path, write: Write, env: dict[str, str]) -> None:
+    write(cfg_dir / "config.yaml", {"repos": {REPO: {"allow_auto_approve": True}}})
+    loaded = load_config(None, env=env)
+    with pytest.raises(TypeError):
+        loaded.config.repos["example.test/o/x"] = RepoOverride()  # type: ignore[index]
+    with pytest.raises(TypeError):
+        del loaded.config.repos[REPO]  # type: ignore[attr-defined]
+    assert loaded.for_repo(REPO).allow_auto_approve is True
+    assert not isinstance(Config().repos, dict)
 
 
 def test_yaml_loader_is_safe_loader_only() -> None:

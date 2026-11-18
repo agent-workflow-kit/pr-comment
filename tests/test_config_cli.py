@@ -62,7 +62,7 @@ def test_environment_timeout_is_config_invalid_naming_the_variable(
 def test_missing_config_flag_file_is_config_invalid(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    code, out, _ = run(capsys, "--json", "--config", str(tmp_path / "nope.yaml"), "export")
+    code, out, _ = run(capsys, "--json", "--config", str(tmp_path / "nope.yaml"), "approve", PR)
     assert code == 2
     assert json.loads(out)["error"]["code"] == "config_invalid"
 
@@ -71,7 +71,7 @@ def test_world_writable_config_is_config_invalid(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     config = write_config(tmp_path, "{}\n", mode=0o666)
-    code, out, err = run(capsys, "--json", "--config", config, "export")
+    code, out, err = run(capsys, "--json", "--config", config, "approve", PR)
     assert code == 2
     assert json.loads(out)["error"]["code"] == "config_invalid"
     assert "writable by everyone" in err
@@ -81,7 +81,7 @@ def test_human_message_is_one_sanitized_line(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     config = write_config(tmp_path, '"bad\\u202ekey": 1\n')
-    code, _, err = run(capsys, "--config", config, "export")
+    code, _, err = run(capsys, "--config", config, "approve", PR)
     assert code == 2
     assert "‮" not in err
     assert len(err.splitlines()) == 1
@@ -91,7 +91,7 @@ def test_valid_config_loads_and_the_handler_runs(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     config = write_config(tmp_path, "timeout: 5s\n")
-    code, out, _ = run(capsys, "--json", "--config", config, "export")
+    code, out, _ = run(capsys, "--json", "--config", config, "approve", PR)
     # No handler is written yet: the dispatch reaches it and reports `internal`.
     assert code == 1
     assert json.loads(out)["error"]["code"] == "internal"
@@ -102,6 +102,40 @@ def test_draft_check_reads_no_config(tmp_path: Path, capsys: pytest.CaptureFixtu
     code, out, _ = run(capsys, "--json", "--config", config, "draft", "check", "x.json")
     assert code == 1  # the unwritten handler ran: the invalid config was never read
     assert json.loads(out)["error"]["code"] == "internal"
+
+
+def test_export_reads_no_config(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    config = write_config(tmp_path, "timeout: -5s\n")
+    code, out, _ = run(capsys, "--json", "--config", config, "export")
+    assert code == 1  # the unwritten handler ran: the invalid config was never read
+    assert json.loads(out)["error"]["code"] == "internal"
+
+
+def test_hostile_key_is_sanitized_in_message_and_details(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = write_config(tmp_path, '"bad\\u202e\\u001b[2Jkey": 1\n')
+    code, out, err = run(capsys, "--json", "--config", config, "approve", PR)
+    error = json.loads(out)["error"]
+    assert code == 2
+    for text in (error["message"], error["details"]["key"], err):
+        assert "\u202e" not in text
+        assert "\x1b" not in text
+    assert "<U+202E>" in error["details"]["key"]
+
+
+def test_non_utf8_config_path_is_sanitized(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = str(tmp_path / "no\udcffpe.yaml")  # the str form of the bytes \xff
+    code, out, err = run(capsys, "--json", "--config", path, "approve", PR)
+    error = json.loads(out)["error"]
+    assert code == 2
+    assert error["code"] == "config_invalid"
+    assert "<U+DCFF>" in error["details"]["key"]
+    assert "<U+DCFF>" in error["message"]
+    out.encode("utf-8")
+    err.encode("utf-8")
 
 
 def test_usage_errors_win_before_config_is_read(
@@ -124,9 +158,9 @@ def test_config_is_loaded_once_into_the_namespace(
         seen.append(args.loaded_config)
         return cli.Outcome(0)
 
-    monkeypatch.setitem(cli.HANDLERS, "export", handler)
+    monkeypatch.setitem(cli.HANDLERS, "approve", handler)
     config = write_config(tmp_path, "timeout: 5s\nme: {name: carol}\n")
-    code, _, _ = run(capsys, "--config", config, "export")
+    code, _, _ = run(capsys, "--config", config, "approve", PR)
     assert code == 0
     assert len(seen) == 1
     assert seen[0].config.timeout == "5s"

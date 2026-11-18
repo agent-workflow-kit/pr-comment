@@ -22,10 +22,12 @@ import os
 import pwd
 import re
 import stat
+import string
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -34,6 +36,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    PlainSerializer,
     TypeAdapter,
     ValidationError,
 )
@@ -201,8 +204,30 @@ PreHooks = Annotated[tuple["PreHook", ...], BeforeValidator(_as_tuple)]
 PostHooks = Annotated[tuple["PostHook", ...], BeforeValidator(_as_tuple)]
 ForgectlConfig = Annotated[str | None, BeforeValidator(_forgectl_config)]
 MeName = Annotated[str | None, BeforeValidator(_me_name)]
+
+
+def _read_only(value: dict[str, Any]) -> Mapping[str, Any]:
+    return MappingProxyType(value)
+
+
+def _plain_dict(value: Mapping[str, Any]) -> dict[str, Any]:
+    return dict(value)
+
+
+def _empty_repos() -> Mapping[str, Any]:
+    return MappingProxyType({})
+
+
 Policy = Literal["neutralize", "allow"]
 ResolveBodyThread = Literal["non_blocking", "never", "always"]
+
+
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+
+
+def _fold(repo_id: str) -> str:
+    """Lowercase ASCII letters only: ``str.lower`` would also match U+212A (Kelvin) to ``k``."""
+    return repo_id.translate(_ASCII_LOWER)
 
 
 class _Model(BaseModel):
@@ -268,6 +293,11 @@ class RepoOverride(_Model):
     allow_auto_approve: bool = False
 
 
+RepoMap = Annotated[
+    Mapping[str, RepoOverride], AfterValidator(_read_only), PlainSerializer(_plain_dict)
+]
+
+
 class Config(_Model):
     forgectl_bin: BinName = "forgectl"
     forgectl_config: ForgectlConfig = None
@@ -279,7 +309,7 @@ class Config(_Model):
     allow_auto_approve: bool = False
     hook_env_deny: EnvNames = ()
     hooks: Hooks = Field(default_factory=Hooks)
-    repos: dict[str, RepoOverride] = Field(default_factory=dict)
+    repos: RepoMap = Field(default_factory=_empty_repos)
 
 
 # --- reading one file ---------------------------------------------------------------------------
@@ -311,14 +341,15 @@ def _check_mode(path: Path, info: os.stat_result, what: str) -> None:
 def _read_bytes(path: Path, *, required: bool) -> bytes | None:
     """The file's bytes, or None when no entry exists at the path and it is not required.
 
-    Opened non-blocking so a FIFO cannot hang the open. Symbolic links are followed (dotfile
-    managers use them) and the target is judged: a regular file, owned by the user or root, not
-    world-writable, at most ``MAX_FILE_BYTES``. A dangling link is refused, never skipped.
+    Opened non-blocking so a FIFO cannot hang the open, and never as a controlling terminal.
+    Symbolic links are followed (dotfile managers use them) and the target is judged: a regular
+    file, owned by the user or root, not world-writable, at most ``MAX_FILE_BYTES``. A dangling
+    link is refused, never skipped.
     """
     if not required and not _entry_exists(path):
         return None
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC)
     except FileNotFoundError:
         raise _invalid(str(path), "no such file, or a symbolic link to nothing") from None
     except OSError as err:
@@ -399,6 +430,25 @@ def _merge(base: Any, over: Any, path: tuple[str, ...] = ()) -> Any:
     return over
 
 
+def _fold_repo_keys(layer: dict[str, Any]) -> None:
+    """Lowercase (ASCII) the ``repos`` keys of one file, so spellings in different files merge.
+
+    Two spellings in the same file are refused. A key that is not a valid repo id is left as
+    written, so ``_validate`` names it as the user spelled it.
+    """
+    repos: Any = layer.get("repos")
+    if not isinstance(repos, dict):
+        return
+    folded: dict[str, Any] = {}
+    for key, value in repos.items():  # pyright: ignore[reportUnknownVariableType]
+        name = str(key)  # pyright: ignore[reportUnknownArgumentType]
+        new = _fold(name) if _REPO_RE.fullmatch(name) else name
+        if new in folded:
+            raise _invalid(f"repos.{name}", "differs from another repo key only by case")
+        folded[new] = value
+    layer["repos"] = folded
+
+
 def _key_of(loc: tuple[int | str, ...]) -> str:
     return ".".join(str(part) for part in loc) or "(config)"
 
@@ -416,14 +466,9 @@ def _validate(raw: dict[str, Any]) -> Config:
         raise _first_error(err) from None
     except RecursionError:
         raise _invalid("(config)", "nested too deeply") from None
-    seen: set[str] = set()
     for repo in config.repos:
-        key = f"repos.{repo}"
         if not _REPO_RE.fullmatch(repo):
-            raise _invalid(key, "not a valid repo id: host/path")
-        if repo.lower() in seen:  # the lookup ignores case, so these would collide
-            raise _invalid(key, "differs from another repo key only by case")
-        seen.add(repo.lower())
+            raise _invalid(f"repos.{repo}", "not a valid repo id: host/path")
     return config
 
 
@@ -476,11 +521,19 @@ def _config_home(env: Mapping[str, str]) -> Path:
 # --- the result ---------------------------------------------------------------------------------
 
 
+def _set_only(override: RepoOverride) -> dict[str, Any]:
+    dumped = override.model_dump(mode="json", by_alias=True, exclude_unset=True)
+    return {k: v for k, v in dumped.items() if v != {}}
+
+
 def config_hash(config: Config) -> str:
     """sha256 hex of the sorted-key, compact, ASCII-escaped JSON, in UTF-8, of the config after
     files, environment and defaults (no flags), with schema key spellings and durations in
     seconds, so ``60``, ``"60"``, ``"60s"`` and ``"1m"`` hash alike."""
-    document = config.model_dump(mode="json", by_alias=True)
+    document = config.model_dump(mode="json", by_alias=True, exclude={"repos"})
+    # A repo override hashes only what it sets: an unset key inherits the global value, which is
+    # not the same as a key set to the default.
+    document["repos"] = {repo: _set_only(override) for repo, override in config.repos.items()}
     document["timeout"] = float(grammars.duration_seconds(config.timeout))
     text = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -533,10 +586,14 @@ class LoadedConfig:
 
     def for_repo(self, repo_id: str) -> RepoSettings:
         """Global values with the ``repos.<id>`` override merged over them (key match ignores
-        case; unset keys inherit; a list the override sets replaces the global one)."""
+        ASCII case; unset keys inherit; a list the override sets replaces the global one).
+
+        TODO(#26): the forgectl reads call this with the canonical repo id from ``show``.
+        TODO(#29): the review order takes the footer, mentions and approval settings from it.
+        """
         cfg = self.config
-        wanted = repo_id.lower()
-        over = next((r for key, r in cfg.repos.items() if key.lower() == wanted), None)
+        wanted = _fold(repo_id)
+        over = next((r for key, r in cfg.repos.items() if _fold(key) == wanted), None)
         human: str | Literal[False] = cfg.footer.human
         auto = cfg.footer.auto
         policy = cfg.mentions.policy
@@ -614,7 +671,10 @@ def load_config(config_path: str | None, *, env: Mapping[str, str]) -> LoadedCon
         main = _config_home(env) / APP / "config.yaml"
         required = False
     else:
-        main = Path(os.path.abspath(config_path))
+        try:
+            main = Path(os.path.abspath(config_path))
+        except OSError as err:  # the working directory was removed and the path is relative
+            raise _invalid(config_path, _reason(err)) from None
         required = True
     raw: dict[str, Any] = {}
     warnings: list[ConfigWarning] = []
@@ -625,6 +685,7 @@ def load_config(config_path: str | None, *, env: Mapping[str, str]) -> LoadedCon
         if layer is None:
             continue
         keys = _warning_keys(layer)
+        _fold_repo_keys(layer)
         if keys:
             warnings.append(ConfigWarning(str(path), keys))
         raw = _merge(raw, layer)
