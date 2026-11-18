@@ -230,6 +230,28 @@ def test_a_bad_answer_after_exit_0_is_a_mismatch_that_landed(
     assert [r["result"] for r in rig.audit()] == ["attempted", "done"]
 
 
+def test_a_review_answer_without_head_verified_is_a_mismatch_that_landed(rig: Rig) -> None:
+    doc = posted_doc()
+    doc.pop("head_verified", None)
+    outcome = rig.post(ForgectlResult("review", True, 0, stdout=json.dumps(doc).encode()))
+    error = error_of(outcome)
+    assert outcome.exit_code == 12 and error["code"] == "lower_contract_mismatch"
+    assert (error["landed"], error["retry"]) == (True, "none")
+    assert [r["result"] for r in rig.audit()] == ["attempted", "done"]
+
+
+@pytest.mark.parametrize("command", ["review", "approve"])
+def test_read_post_needs_head_verified_for_review_and_approve(command: str) -> None:
+    from pr_comment.forge import read_post
+    from pr_comment.lower import LowerFailure
+
+    doc = h.post_doc("review", PR)
+    doc.update(action=command, neutralized_lines=0, markers_removed=0)
+    doc.pop("head_verified", None)
+    with pytest.raises(LowerFailure):
+        read_post(doc, command=command, pr=PR, gateway=FakeGateway([]))
+
+
 @pytest.mark.parametrize("stdout", [b"", b"[]", b'{"a": 1, "a": 2}', b"\xff"])
 def test_no_usable_document_after_exit_0_is_a_mismatch_that_landed(rig: Rig, stdout: bytes) -> None:
     error = error_of(rig.post(raw(0, stdout)))

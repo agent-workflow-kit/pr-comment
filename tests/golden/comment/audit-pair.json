@@ -1,0 +1,152 @@
+[
+  {
+    "action": "comment",
+    "actor": "human:alice",
+    "actor_source": "flag",
+    "attempt_id": "<attempt>",
+    "decision_id": [],
+    "inputs": {
+      "allowed_mentions": [],
+      "anchor_head": null,
+      "base_ref": "main",
+      "bodies": [
+        {
+          "bytes": "<bytes>",
+          "role": "body",
+          "sha256": "<sha256>"
+        }
+      ],
+      "config_hash": "<config>",
+      "config_path": null,
+      "counts": {
+        "file_level": 0,
+        "images": 0,
+        "inline": 0,
+        "invisible": 0,
+        "links": 0,
+        "mentions_neutralized": 1,
+        "moved": {
+          "base_changed": 0,
+          "changed": 0,
+          "diff_unavailable": 0,
+          "file_removed": 0,
+          "files_incomplete": 0,
+          "invalid_position": 0
+        },
+        "raw_html": 0,
+        "severity": {
+          "blocker": 0,
+          "info": 0,
+          "major": 0,
+          "minor": 0,
+          "nit": 0
+        },
+        "suggestions_degraded": 0
+      },
+      "dedupe_key": "prc:comment:f6eea3a3e737102ddc9d",
+      "draft_id": null,
+      "draft_sha256": null,
+      "event": null,
+      "override_escalation": [],
+      "pinned_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "plan_sha256": "<plan>",
+      "reanchor_to": null,
+      "threads": [],
+      "to": null
+    },
+    "override": [],
+    "pr_id": "PR_kwDOAAAAAQ",
+    "result": "attempted",
+    "stdin_tty": false,
+    "target": "github.com/acme/widgets#7",
+    "tool": "pr-comment",
+    "ts": "<ts>",
+    "version": "<version>"
+  },
+  {
+    "action": "comment",
+    "actor": "human:alice",
+    "actor_source": "flag",
+    "attempt_id": "<attempt>",
+    "decision_id": [],
+    "hook_decision_id": [],
+    "inputs": {
+      "allowed_mentions": [],
+      "anchor_head": null,
+      "base_ref": "main",
+      "bodies": [
+        {
+          "bytes": "<bytes>",
+          "role": "body",
+          "sha256": "<sha256>"
+        }
+      ],
+      "config_hash": "<config>",
+      "config_path": null,
+      "counts": {
+        "file_level": 0,
+        "images": 0,
+        "inline": 0,
+        "invisible": 0,
+        "links": 0,
+        "mentions_neutralized": 1,
+        "moved": {
+          "base_changed": 0,
+          "changed": 0,
+          "diff_unavailable": 0,
+          "file_removed": 0,
+          "files_incomplete": 0,
+          "invalid_position": 0
+        },
+        "raw_html": 0,
+        "severity": {
+          "blocker": 0,
+          "info": 0,
+          "major": 0,
+          "minor": 0,
+          "nit": 0
+        },
+        "suggestions_degraded": 0
+      },
+      "dedupe_key": "prc:comment:f6eea3a3e737102ddc9d",
+      "draft_id": null,
+      "draft_sha256": null,
+      "event": null,
+      "override_escalation": [],
+      "pinned_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "plan_sha256": "<plan>",
+      "reanchor_to": null,
+      "threads": [],
+      "to": null
+    },
+    "override": [],
+    "pr_id": "PR_kwDOAAAAAQ",
+    "result": "done",
+    "stdin_tty": false,
+    "target": "github.com/acme/widgets#7",
+    "tool": "pr-comment",
+    "ts": "<ts>",
+    "version": "<version>",
+    "writes": [
+      {
+        "action": "comment",
+        "dedupe_key": "prc:comment:f6eea3a3e737102ddc9d",
+        "index": 0,
+        "lower": {
+          "already_posted": false,
+          "code": null,
+          "exit": 0,
+          "ids": [
+            "gh:ic:IC_1"
+          ],
+          "reason": null,
+          "review_id": null,
+          "thread_ids": []
+        },
+        "result": "done",
+        "thread_id": null,
+        "ts": "<ts>"
+      }
+    ]
+  }
+]

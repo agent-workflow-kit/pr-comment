@@ -370,7 +370,7 @@ def _prepare_text(req: Request, env: Env) -> Prepared:
         text = _read_body_file(req.body_file, env.stdin)
         if command == "approve" and not textpipe.normalize_lines(text).strip():
             text = None  # an empty or blank body file counts as no body file
-        elif command != "approve" and not text:
+        elif command != "approve" and not textpipe.normalize_lines(text).strip():
             raise _usage("the body is empty")
     elif command != "approve":
         raise _usage(f"{command} needs --body-file")
@@ -500,7 +500,7 @@ def result_document(
         )
     if plan.action == "reply":
         doc["to"] = plan.to
-        doc["threaded"] = pre.threaded if posted is None else None
+        doc["threaded"] = pre.threaded if posted is None else posted.threaded
     return doc
 
 

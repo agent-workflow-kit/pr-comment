@@ -417,7 +417,10 @@ class PostRead(_Model):
     neutralized_lines: Count
     markers_removed: Count
     warnings: list[Warning_]
-    head_verified: bool | None
+    # ``review`` and ``approve`` carry ``head_verified``, ``reply`` carries ``threaded``: required
+    # for those commands by ``read_post``, ignored for the others
+    head_verified: bool | None = None
+    threaded: bool | None = None
     dry_run: bool
 
 
@@ -435,6 +438,11 @@ def read_post(document: Any, *, command: str, pr: str, gateway: Gateway) -> Post
         raise mismatch(_why(exc)) from None
     if read.action != command or read.dry_run or _canonical(read.pr) != _canonical(pr):
         raise mismatch("the document is not the real run's result for this PR")
+    # a field the command's own schema requires, missing or null, is a bad answer
+    if command in ("review", "approve") and "head_verified" not in document:
+        raise mismatch("invalid or missing: /head_verified")
+    if command == "reply" and read.threaded is None:
+        raise mismatch("invalid or missing: /threaded")
     return read
 
 

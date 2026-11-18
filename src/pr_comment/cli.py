@@ -561,13 +561,12 @@ def _confirmed(args: argparse.Namespace, prepared: Prepared, session: _Session) 
 def _confirm_and_post(
     args: argparse.Namespace, prepared: Prepared, gateway: Gateway, session: _Session
 ) -> Outcome:
-    """Steps 8 and 9: the dialog, then the review order's write (``post.post_review``).
+    """Steps 8 and 9: the dialog, then the write (``post.post_review``, also for comment and reply).
 
-    TODO(#30): comment and reply. ``approve`` and ``review --approve`` go through the same write;
-    the automatic approval guard (``approve.py``) is applied to the confirmed plan itself before the
-    dialog and any write, as well as by ``prepare``.
+    ``approve`` and ``review --approve`` go through the same write; the automatic approval guard
+    (``approve.py``) is applied to the confirmed plan itself before the dialog and any write, as
+    well as by ``prepare``.
     """
-    request = prepared.request
     pr = prepared.plan.pr
     guarded = guard_prepared(prepared, args.loaded_config)
     if guarded is not None:
@@ -576,12 +575,6 @@ def _confirm_and_post(
     refused = _confirmed(args, prepared, session)
     if refused is not None:
         return refused
-    if request.command not in ("review", "approve"):
-        stub = error_outcome(
-            "internal", "posting is not implemented yet: the plan passed its pre-check"
-        )
-        log_failure(session.log, session.attempt_id, pr, stub)
-        return stub
     assert session.trail is not None  # opened in step 1, before the first read
     env = PostEnv(
         gateway=gateway,
