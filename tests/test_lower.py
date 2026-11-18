@@ -283,6 +283,23 @@ def test_pr_comments_own_exit_12_codes_are_never_taken_from_forgectl(code: str) 
     assert error["lower_error"] == env["error"]  # kept for the human
 
 
+def test_tool_missing_passes_through_only_when_a_read_allows_it() -> None:
+    env = envelope("tool_missing", details={"install": "brew install gh"})
+    codes = frozenset({"tool_missing"})
+    error = error_of(outcome_of(result(12, env), codes=codes))
+    assert error["code"] == "tool_missing" and error["details"] == {"install": "brew install gh"}
+    error = error_of(outcome_of(result(12, env), codes=frozenset({"internal"})))
+    assert error["code"] == "lower_contract_mismatch"
+
+
+def test_a_would_refuse_form_is_a_mismatch_when_the_call_is_a_read() -> None:
+    plan = {"would_refuse": {"reason": "too_large", "message": "x"}}
+    error = error_of(
+        outcome_of(result(20, plan), codes=frozenset({"refused"}), reasons=frozenset({"too_large"}))
+    )
+    assert error["code"] == "lower_contract_mismatch" and error["lower_error"] == plan
+
+
 def test_invalid_position_from_forgectl_passes_through() -> None:
     env = envelope("invalid_position", details={"invalid": [{"index": 0}]})
     error = error_of(outcome_of(result(12, env, write=True)))
@@ -326,6 +343,24 @@ def test_partial_document_returns_the_whoami_shape_for_exit_12_only() -> None:
         ),
     ):
         assert partial_document(bad) is None
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [{"timed_out": True}, {"stdout_truncated": True}, {"exit_code": None}],
+)
+def test_partial_document_is_none_for_a_killed_cut_or_signalled_result(
+    fields: dict[str, Any],
+) -> None:
+    document = {"hosts": [], "errors": []}
+    base: dict[str, Any] = {
+        "command": "whoami",
+        "write": False,
+        "exit_code": 12,
+        "stdout": json.dumps(document).encode(),
+    }
+    assert partial_document(ForgectlResult(**base)) == document
+    assert partial_document(ForgectlResult(**{**base, **fields})) is None
 
 
 def test_mismatch_outcome_lets_an_interrupted_version_read_propagate() -> None:
@@ -438,3 +473,88 @@ def test_cli_exits_128_plus_n_with_no_output_when_a_call_is_interrupted(
     code = cli.main(["comment", "o/r#1", f"--body-file={body}", "--json"])
     captured = capsys.readouterr()
     assert code == 128 + 15 and captured.out == ""
+
+
+# --- reads: duplicate keys, read-only code filters, the version text (#26) ----------------------
+
+
+def test_a_document_with_a_duplicate_key_is_a_contract_mismatch() -> None:
+    raw = b'{"head_sha": "' + b"a" * 40 + b'", "head_sha": "' + b"b" * 40 + b'"}'
+    with pytest.raises(LowerFailure) as caught:
+        require_ok(result(0, raw=raw), gateway=GATEWAY)
+    assert caught.value.outcome.document["error"]["code"] == "lower_contract_mismatch"  # type: ignore[index]
+
+
+def test_a_duplicate_key_in_an_error_envelope_is_a_mismatch() -> None:
+    raw = b'{"error": {"code": "not_found", "code": "internal", "message": "m"}}'
+    outcome = outcome_of(result(10, raw=raw))
+    assert outcome.document["error"]["code"] == "lower_contract_mismatch"
+
+
+def test_lower_version_in_a_mismatch_is_sanitized_and_cut_to_64_characters() -> None:
+    gateway = FakeGateway(version="forgectl \x1b[31m0.1‮" + "x" * 200)
+    outcome = mismatch_outcome("show", "why", gateway=gateway)
+    version = outcome.document["error"]["details"]["lower_version"]  # type: ignore[index]
+    assert len(version) <= 64 and "\x1b" not in version and "‮" not in version
+    assert "<U+001B>" in version
+
+
+def test_lower_version_cut_never_leaves_part_of_a_marker() -> None:
+    for pad in range(54, 64):
+        gateway = FakeGateway(version="a" * pad + "\x01tail")
+        outcome = mismatch_outcome("show", "why", gateway=gateway)
+        version = outcome.document["error"]["details"]["lower_version"]  # type: ignore[index]
+        assert len(version) <= 64
+        assert "<" not in version or version.count("<U+0001>") == 1, version
+        assert version.startswith("a" * pad)
+    gateway = FakeGateway(version="a" * 60 + "\x01tail")
+    version = mismatch_outcome("show", "why", gateway=gateway).document["error"]["details"][  # type: ignore[index]
+        "lower_version"
+    ]
+    assert version == "a" * 60
+
+
+def test_lower_version_of_none_stays_none() -> None:
+    outcome = mismatch_outcome("show", "why", gateway=FakeGateway(version=None))
+    assert outcome.document["error"]["details"]["lower_version"] is None  # type: ignore[index]
+
+
+READ_CODES = frozenset({"not_found", "internal"})
+
+
+def test_a_code_outside_the_allowed_set_is_a_mismatch_not_a_passthrough() -> None:
+    allowed = outcome_of(result(10, envelope("not_found")), codes=READ_CODES)
+    assert allowed.document["error"]["code"] == "not_found"
+    outcome = outcome_of(result(11, envelope("vetoed", hook="h", hook_stderr="")), codes=READ_CODES)
+    assert outcome.document["error"]["code"] == "lower_contract_mismatch"
+    assert outcome.document["error"]["lower_error"]["code"] == "vetoed"
+
+
+def test_outcome_partial_on_a_read_is_a_mismatch_without_needing_a_backend() -> None:
+    outcome = outcome_of(
+        result(12, envelope("outcome_partial", details={"landed": {}, "failed": "note"})),
+        codes=READ_CODES,
+    )
+    assert outcome.document["error"]["code"] == "lower_contract_mismatch"
+
+
+def test_a_refusal_reason_outside_the_allowed_set_is_a_mismatch() -> None:
+    refused = envelope("refused", reason="stale_head")
+    outcome = outcome_of(result(20, refused), codes=frozenset({"refused"}), reasons=frozenset())
+    assert outcome.document["error"]["code"] == "lower_contract_mismatch"
+    allowed = outcome_of(
+        result(20, envelope("refused", reason="too_large")),
+        codes=frozenset({"refused"}),
+        reasons=frozenset({"too_large"}),
+    )
+    assert allowed.document["error"]["reason"] == "too_large"
+
+
+def test_require_ok_passes_the_filters_to_a_failure() -> None:
+    with pytest.raises(LowerFailure) as caught:
+        require_ok(
+            result(11, envelope("vetoed", hook="h", hook_stderr="")),
+            gateway=GATEWAY,
+            codes=READ_CODES,
+        )
+    assert caught.value.outcome.document["error"]["code"] == "lower_contract_mismatch"  # type: ignore[index]

@@ -19,7 +19,7 @@ import json
 from collections.abc import Mapping
 from typing import Any, Final
 
-from .errors import CODE_EXIT, cut_bytes
+from .errors import CODE_EXIT, cut_bytes, sanitize
 from .gateway import (
     INSTALL_COMMAND,
     ForgectlResult,
@@ -30,6 +30,7 @@ from .output import Outcome, error_outcome
 
 MAX_ENVELOPE_BYTES: Final = 1024 * 1024
 MAX_MESSAGE_BYTES: Final = 4096
+MAX_VERSION_CHARS: Final = 64
 
 _EXIT2_PASSTHROUGH: Final = frozenset({"body_too_large", "invalid_pr", "config_invalid"})
 # forgectl's exit-12 codes pr-comment passes through (its own codes are never taken from forgectl:
@@ -54,6 +55,9 @@ _EXIT12_PASSTHROUGH: Final = frozenset(
         "wrong_host_response",
     }
 )
+# forgectl's own ``tool_missing`` (gh or glab absent, ``details.install``) passes through on a host
+# read only: a read gives ``codes``, a write never lists it, so there it stays pr-comment's own.
+_EXIT12_READ_ONLY: Final = frozenset({"tool_missing"})
 _EXIT20_REASONS: Final = frozenset(
     {
         "stale_head",
@@ -117,10 +121,36 @@ def mismatch_outcome(
     return error_outcome(
         "lower_contract_mismatch",
         f"forgectl {command} gave an answer pr-comment cannot use ({why})",
-        details={"command": command, "lower_version": gateway.lower_version()},
+        details={"command": command, "lower_version": _display_version(gateway.lower_version())},
         write=write,
         lower_error=lower_error,
     )
+
+
+def _display_version(version: str | None) -> str | None:
+    """The version text as ``details.lower_version``: display-sanitized (whatever the gateway
+    did), cut to 64 characters, or None when nothing is left."""
+    if version is None:
+        return None
+    kept: list[str] = []
+    size = 0
+    for char in version:
+        piece = sanitize(char)  # one character gives a character or one whole ``<U+XXXX>`` marker
+        if size + len(piece) > MAX_VERSION_CHARS:
+            break
+        kept.append(piece)
+        size += len(piece)
+    return cut_bytes("".join(kept)) or None
+
+
+def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """An object with a repeated key is ambiguous (parsers disagree on which wins): a mismatch."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate key")
+        result[key] = value
+    return result
 
 
 def _load_json(result: ForgectlResult, limit: int | None) -> Any:
@@ -135,7 +165,7 @@ def _load_json(result: ForgectlResult, limit: int | None) -> Any:
         raise ValueError("non-finite number")
 
     try:
-        return json.loads(text, parse_constant=_reject)
+        return json.loads(text, parse_constant=_reject, object_pairs_hook=_no_duplicates)
     except (ValueError, RecursionError):
         raise _Mismatch("output is not JSON") from None
 
@@ -144,14 +174,25 @@ def _unknown_write(result: ForgectlResult) -> tuple[bool | None, str] | None:
     return (None, "same_command") if result.write else None
 
 
-def require_ok(result: ForgectlResult, *, gateway: Gateway, backend: str | None = None) -> Any:
+def require_ok(
+    result: ForgectlResult,
+    *,
+    gateway: Gateway,
+    backend: str | None = None,
+    codes: frozenset[str] | None = None,
+    reasons: frozenset[str] | None = None,
+) -> Any:
     """The JSON document (an object) of a successful call; ``LowerFailure`` otherwise.
+
+    ``codes`` and ``reasons`` narrow what a failure may pass through (see ``failure_outcome``).
 
     Exit 0 with output that is not one JSON object is ``lower_contract_mismatch``; so is a
     forgectl that exits 0 and left stdout cut at the limit.
     """
     if result.timed_out or result.exit_code != 0:
-        raise LowerFailure(failure_outcome(result, gateway=gateway, backend=backend))
+        raise LowerFailure(
+            failure_outcome(result, gateway=gateway, backend=backend, codes=codes, reasons=reasons)
+        )
     try:
         document = _load_json(result, None)
     except _Mismatch as exc:
@@ -173,13 +214,23 @@ def _landed(result: ForgectlResult) -> tuple[bool | None, str] | None:
 
 
 def failure_outcome(
-    result: ForgectlResult, *, gateway: Gateway, backend: str | None = None
+    result: ForgectlResult,
+    *,
+    gateway: Gateway,
+    backend: str | None = None,
+    codes: frozenset[str] | None = None,
+    reasons: frozenset[str] | None = None,
 ) -> Outcome:
     """The outcome of a forgectl call that did not succeed (or succeeded with a bad answer).
 
     ``backend`` is ``show``'s, needed to read an ``outcome_partial``: a write failure whose
     envelope is one without a backend raises ``MissingBackendError`` (a caller bug, never a
     contract mismatch).
+
+    ``codes`` (error codes) and ``reasons`` (``refused`` reasons) are what the command can give:
+    a read never answers ``vetoed``, ``outcome_partial`` or ``stale_head``, so a forgectl that
+    does is a contract mismatch, not a passthrough (and no backend is needed to say so).
+    ``None`` means no narrowing.
     """
     command = result.command
     if result.timed_out:
@@ -206,13 +257,15 @@ def failure_outcome(
         )
     allowed = _PASSTHROUGH.get(result.exit_code)
     write = _unknown_write(result)
+    if allowed is not None and result.exit_code == 12 and codes is not None:
+        allowed = allowed | (_EXIT12_READ_ONLY & codes)
     if allowed is None:
         return mismatch_outcome(
             command, f"unknown exit status {result.exit_code}", gateway=gateway, write=write
         )
     try:
         document = _load_json(result, MAX_ENVELOPE_BYTES)
-        return _passthrough(result, document, allowed, backend)
+        return _passthrough(result, document, allowed, backend, codes, reasons)
     except MissingBackendError:
         raise
     except (_Mismatch, ValueError, TypeError) as exc:
@@ -244,7 +297,7 @@ def partial_document(result: ForgectlResult) -> dict[str, Any] | None:
     hosts reads it here: None unless the exit is 12 and the output is an object with a ``hosts``
     list and an ``errors`` list and no ``error`` key.
     """
-    if result.exit_code != 12:
+    if result.exit_code != 12 or result.timed_out or result.stdout_truncated:
         return None
     try:
         document = _load_json(result, None)
@@ -266,7 +319,12 @@ def _mapping(value: object, what: str) -> dict[str, Any]:
 
 
 def _passthrough(
-    result: ForgectlResult, document: object, allowed: frozenset[str], backend: str | None
+    result: ForgectlResult,
+    document: object,
+    allowed: frozenset[str],
+    backend: str | None,
+    codes: frozenset[str] | None,
+    reasons: frozenset[str] | None,
 ) -> Outcome:
     top = _mapping(document, "output")
     exit_code = result.exit_code
@@ -276,6 +334,10 @@ def _passthrough(
         details = refusal.get("details")
         if reason not in _EXIT20_REASONS or not isinstance(message, str):
             raise _Mismatch("unknown refusal")
+        if codes is not None:  # a read never runs with --dry-run
+            raise _Mismatch("dry-run refusal on a read", top)
+        if reasons is not None and reason not in reasons:
+            raise _Mismatch("refusal this command cannot give", top)
         if details is not None and not isinstance(details, dict):
             raise _Mismatch("details is not an object")
         return error_outcome(
@@ -294,6 +356,10 @@ def _passthrough(
     reason = error.get("reason")
     if code == "refused" and reason not in _EXIT20_REASONS:
         raise _Mismatch("unknown refusal")
+    if codes is not None and code not in codes:
+        raise _Mismatch("error code this command cannot give", error)
+    if code == "refused" and reasons is not None and reason not in reasons:
+        raise _Mismatch("refusal this command cannot give", error)
     if code != "refused":
         reason = None
     details = error.get("details")
