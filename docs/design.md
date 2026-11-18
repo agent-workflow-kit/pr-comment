@@ -97,6 +97,8 @@ Each becomes a `live` test in the plan.
 | `yamlstrict.py` | the strict YAML reader `config.py` uses (core-schema scalars, no anchors, aliases, merge keys, duplicate or non-string keys; node and depth caps) |
 | `draft.py` | draft loading (no-follow, caps), schema, version and consistency checks, `draft check`, `draft new` |
 | `diffmap.py` | unified-diff parser and hunk mapping for re-anchoring |
+| `textpipe.py` | text pipeline steps 1 and 2 on one untrusted text: line separators to LF, refusal of control and surrogate characters, refusal of suggestion fences |
+| `mentions.py` | mention neutralizing (`@` and its entity forms become `＠`, allowlist kept); `MentionNeutralizer` holds one run's state and names |
 | `render.py` | text pipeline, mentions; calls `neutralize.py` for `<`, `![` and the counts, finding text, suggestions, layout, attribution line and marker, dedupe keys |
 | `neutralize.py` | the character pass of the text pipeline (`<` and `![`, never on applicable suggestion lines) and the body counts (`raw_html`, `images`, `links`, `invisible`); `render.py` calls it |
 | `plan.py` | the posting plan shown by the dialog and `--dry-run`, and its `plan_sha256` |

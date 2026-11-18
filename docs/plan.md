@@ -26,7 +26,8 @@ Status: planned, 2026-11-03. Implements [interface.md](interface.md) (normative)
 | `audit.py`, `jsonlog.py` | 0 | `audit.jsonl` record pairs with `writes`, `log.jsonl`, `export` |
 | `display.py` | 0 | Human output: display sanitizing with forgectl's rules |
 | `draft.py` | 1 | draft loading, schema, version, caps and consistency checks, `draft check` |
-| `render.py` | 1 | Text pipeline: input checks, character neutralizing, mentions, suggestions and their degrading, finding text, body assembly, attribution line and marker, pre-applied forgectl neutralizing |
+| `neutralize.py` | 1 | Text pipeline character pass (`<` and `![`) and the body counts |
+| `render.py` | 1 | Text pipeline: input checks, mentions via mentions.py, calls neutralize.py, suggestions and their degrading, finding text, body assembly, attribution line and marker, pre-applied forgectl neutralizing |
 | `keys.py` | 1 | dedupe keys and `plan_sha256` |
 | `diffmap.py` | 2 | unified-diff parser and hunk mapping, left-side merge-base rule, `unanchored` |
 | `forge.py` | 3 | forgectl calls, field checks of its output, `lower_error`, `lower_contract_mismatch` |

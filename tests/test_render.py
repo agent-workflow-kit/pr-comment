@@ -95,6 +95,19 @@ def test_empty_or_blank_title_counts_as_absent(title: str) -> None:
     assert render_prefix(finding(severity="minor", title=title), mn()) == "**minor**"
 
 
+@pytest.mark.parametrize("sep", [" ", "\n", "\r", "\x1c"])
+@pytest.mark.parametrize("shape", ["{}a", "a{}", "{}"])
+def test_a_title_with_a_leading_or_trailing_separator_is_refused(sep: str, shape: str) -> None:
+    with pytest.raises(ValueError):
+        render_prefix(finding(title=shape.format(sep)), mn())
+
+
+@pytest.mark.parametrize("path", [" ", "\t", "  \t "])
+def test_a_whitespace_only_path_is_refused(path: str) -> None:
+    with pytest.raises(ValueError):
+        render_path_span(path, mn())
+
+
 def test_no_severity_and_no_title_has_no_prefix() -> None:
     assert render_prefix(finding(), mn()) is None
     assert render_prefix(finding(title=None), mn()) is None
@@ -288,7 +301,6 @@ def test_the_span_uses_one_more_backtick_than_the_longest_run(path: str, fence: 
         "a b  c",
         " lead",
         "trail ",
-        "   ",
         "back\\slash\\",
         "tab\there",
         "@octocat/@all",

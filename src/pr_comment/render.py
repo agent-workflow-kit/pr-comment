@@ -79,10 +79,10 @@ def _title(finding: Mapping[str, Any]) -> str | None:
     raw = _str_field(finding, "title")
     if raw is None:
         return None
-    title = raw.strip()
+    title = _one_line(raw, "title").strip()
     if not title:
         return None
-    return _one_line(title, "title")
+    return title
 
 
 def finding_parts(finding: Mapping[str, Any]) -> list[str]:
@@ -150,6 +150,8 @@ def render_path_span(
         raise ValueError("line must be a positive integer")
     if start_line is not None and (not _is_int(start_line) or line is None or start_line >= line):
         raise ValueError("start_line must be a positive integer below line")
+    if not path.strip():
+        raise ValueError("path must not be empty")
     shown = sanitize_line(_clean(_one_line(path, "path"), mentions))
     if line is None:
         suffix = ""
@@ -215,7 +217,10 @@ def last_known_anchor(a: Anchor, b: Anchor | None, *, failed_validation_at_b: bo
 @dataclass(frozen=True)
 class MovedFinding:
     """A finding that went to the review body, its reason, its last anchor and its rendered
-    suggestion block, if any (TODO(#19))."""
+    suggestion block, if any (TODO(#19)).
+
+    ``anchor.line=None`` renders as a file-level span. The caller must pass the line for a finding
+    that was inline (TODO(#22): the re-anchoring that decides the anchor)."""
 
     finding: Mapping[str, Any]
     reason: str
