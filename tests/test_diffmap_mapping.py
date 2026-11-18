@@ -45,14 +45,15 @@ def modified(old: str, new: str, hunks: str, *, extra: str = "") -> str:
     )
 
 
-# --- spike A: 22 hand cases, 52 findings, every context size ------------------------------
+# --- spike A: 22 hand cases, 55 findings, every context size ------------------------------
 
 
 def test_spike_a_has_22_cases_and_every_recorded_finding() -> None:
+    # The 22 case directories each hold an expected.json; scenario/ is not a case.
     cases = [c for c in CASES if c.name[:2].isdigit()]
+    assert len(CASES) == 22
     assert len(cases) == 22
-    # The design counts 52 findings; the recorded expected.json files hold 55.
-    assert sum(len(json.loads((c / "expected.json").read_text())) for c in cases) >= 52
+    assert sum(len(json.loads((c / "expected.json").read_text())) for c in cases) == 55
 
 
 @pytest.mark.parametrize("size", SIZES)
@@ -229,15 +230,75 @@ def test_quoted_non_ascii_and_spaced_paths() -> None:
 
 
 def test_paths_compare_in_forgectls_printed_form() -> None:
-    # git quotes U+202E as octal; forgectl prints findings' paths with a marker.
+    # git quotes U+202E as octal; forgectl prints a path with a marker.
     text = (
         'diff --git "a/x\\342\\200\\256y" "b/x\\342\\200\\256y"\nindex 1..2 100644\n'
         '--- "a/x\\342\\200\\256y"\n+++ "b/x\\342\\200\\256y"\n@@ -1 +1,2 @@\n+n\n x\n'
     )
     mapper = mapper_for(text)
-    assert mapper.map_right("x<U+202E>y", 1) == Mapped("x<U+202E>y", 2, None)
-    # The raw character is not how a finding's path arrives; it simply is another path.
+    assert mapper.map_right("x\u202ey", 1) == Mapped("x<U+202E>y", 2, None)
+    assert mapper.follow_file("x\u202ey") == ("x<U+202E>y", False)
+    # Another spelling of the same printed path proves nothing: fail closed.
+    assert mapper.map_right("x<U+202E>y", 1) == Moved(MovedReason.DIFF_UNAVAILABLE)
+    assert mapper.follow_file("x<U+202E>y") == ("x<U+202E>y", False)
     assert mapper.map_right("xy", 1) == Mapped("xy", 1, None)
+
+
+def literal_diff(name: str) -> str:
+    return modified(name, name, "@@ -1 +1,2 @@\n+n\n x\n")
+
+
+def test_literal_marker_in_the_diff_against_the_real_character_fails_closed() -> None:
+    mapper = mapper_for(literal_diff("x<U+202E>y"))
+    assert mapper.map_right("x\u202ey", 1) == Moved(MovedReason.DIFF_UNAVAILABLE)
+    assert mapper.follow_file("x\u202ey") == ("x\u202ey", False)
+
+
+def test_a_single_spelling_of_a_marked_path_maps() -> None:
+    literal = mapper_for(literal_diff("x<U+202E>y"))
+    assert literal.map_right("x<U+202E>y", 1) == Mapped("x<U+202E>y", 2, None)
+    quoted = "t\\tx"
+    text = f'diff --git "a/{quoted}" "b/{quoted}"\nindex 1..2 100644\n'
+    text += f'--- "a/{quoted}"\n+++ "b/{quoted}"\n@@ -1 +1,2 @@\n+n\n x\n'
+    tab = mapper_for(text)
+    assert tab.map_right("t\tx", 1) == Mapped("t<U+0009>x", 2, None)
+
+
+def test_crlf_in_a_name_prints_as_one_marker_and_fails_closed_against_the_literal() -> None:
+    text = 'diff --git "a/c\\r\\nd" "b/c\\r\\nd"\nindex 1..2 100644\n'
+    text += '--- "a/c\\r\\nd"\n+++ "b/c\\r\\nd"\n@@ -1 +1,2 @@\n+n\n x\n'
+    mapper = mapper_for(text)
+    assert mapper.map_right("c\r\nd", 1) == Mapped("c<U+000A>d", 2, None)
+    assert mapper.map_right("c<U+000A>d", 1) == Moved(MovedReason.DIFF_UNAVAILABLE)
+
+
+def test_mapped_path_is_printed_for_a_file_outside_the_diff() -> None:
+    mapper = mapper_for(modified("a", "a", "@@ -1 +1 @@\n-x\n+y\n"))
+    assert mapper.map_right("t\tx", 4) == Mapped("t<U+0009>x", 4, None)
+
+
+BAD_LINES = [(1.0, None), (True, None), (3, 1.0), (3, True), ("3", None)]
+
+
+@pytest.mark.parametrize("line,start", BAD_LINES)
+def test_non_int_lines_are_rejected(line: object, start: object) -> None:
+    with pytest.raises(TypeError):
+        mapper_for("").map_right("f", line, start)  # type: ignore[arg-type]
+
+
+def test_many_hunks_map_by_lookup() -> None:
+    # Hunk k replaces old line 10k with two lines; every later line shifts by k.
+    parts = []
+    for k in range(1, 2001):
+        parts.append(f"@@ -{10 * k} +{10 * k + k - 1},2 @@\n-o{k}\n+a{k}\n+b{k}\n")
+    mapper = mapper_for(modified("f", "f", "".join(parts)))
+    assert mapper.map_right("f", 5) == Mapped("f", 5, None)
+    assert mapper.map_right("f", 10) == Moved(MovedReason.CHANGED)
+    assert mapper.map_right("f", 11) == Mapped("f", 12, None)
+    assert mapper.map_right("f", 10 * 1500 + 3) == Mapped("f", 10 * 1500 + 3 + 1500, None)
+    assert mapper.map_right("f", 20003, 20001) == Mapped("f", 20003 + 2000, 20001 + 2000)
+    assert mapper.map_right("f", 20003, 19995) == Moved(MovedReason.CHANGED)
+    assert mapper.map_right("f", 12, 9) == Moved(MovedReason.CHANGED)
 
 
 def test_a_literal_marker_path_colliding_with_a_real_one_fails_closed() -> None:
@@ -278,7 +339,7 @@ def test_printed_path_marks_what_forgectl_marks() -> None:
     assert printed_path("x<U+202E>y") == "x<U+202E>y"  # idempotent
 
 
-# --- property test against a reference mapper ---------------------------------------------
+# --- property test against a reference mapper (pairs: seeded RNG + difflib) ---------------
 
 
 def git_style_diff(old: list[str], new: list[str], context: int) -> str:
