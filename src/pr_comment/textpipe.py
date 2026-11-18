@@ -47,6 +47,8 @@ def text_problem(text: str) -> str | None:
     """The kind of the first problem of ``text`` (step 1 before step 2), or None when fine.
 
     The kind is ``CONTROL_CHARACTER`` or ``SUGGESTION_FENCE``.
+
+    todo(#29): body-file check (pointer /body) calls text_problem
     """
     normalized = normalize_lines(text)
     if has_forbidden_character(normalized):

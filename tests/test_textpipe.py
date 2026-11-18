@@ -30,6 +30,10 @@ def test_crlf_is_one_line_break_and_lone_cr_is_another() -> None:
     assert normalize_lines("a\r\nb\rc\n\rd") == "a\nb\nc\n\nd"
 
 
+def test_ls_vt_and_nel_become_line_breaks() -> None:
+    assert normalize_lines("a\u2028b\x0bc\x85d") == "a\nb\nc\nd"
+
+
 def test_normalize_leaves_tab_and_plain_text() -> None:
     assert normalize_lines("a\tb é 😀") == "a\tb é 😀"
 

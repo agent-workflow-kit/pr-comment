@@ -16,7 +16,9 @@ out here; tests/test_draft.py checks them against the schema.
 ``text_issues`` applies Text pipeline steps 1 and 2 (control characters, lone surrogates and
 suggestion fences: ``invalid_text``) to every text field of a schema-valid draft; ``parse_draft``
 refuses the first one. The draft data is not changed: the line-separator rewrite is
-``textpipe.normalize_lines``, applied where bodies are built.
+``textpipe.normalize_lines``.
+
+todo(#18): apply textpipe.normalize_lines to body and finding bodies where bodies are built
 
 Not here: ``draft check`` output belongs to #15.
 """
@@ -104,7 +106,10 @@ class _Reader(Protocol):
 
 
 class DraftError(Exception):
-    """A draft that cannot be used: exit 2 ``invalid_draft`` or ``unsupported_draft_version``.
+    """A draft that cannot be used: exit 2 ``invalid_draft``, ``unsupported_draft_version`` or
+    ``invalid_text``.
+
+    ``invalid_text`` carries ``details`` of ``{pointer, kind}``.
 
     ``message`` and ``details`` hold fixed text only (never draft content).
     """

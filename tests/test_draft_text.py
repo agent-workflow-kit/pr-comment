@@ -6,11 +6,13 @@ Refusals carry fixed text, a pointer and a kind, and never any draft content.
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import pytest
 
 from pr_comment.draft import DraftError, parse_draft, text_issues
+from pr_comment.textpipe import text_problem
 from tests.test_draft import CANARY, good
 
 Doc = dict[str, Any]
@@ -157,6 +159,35 @@ def test_a_title_and_path_are_not_multi_line_text() -> None:
     assert parse_draft(dumps(doc))
 
 
+def test_a_fence_in_a_finding_path_loads() -> None:
+    doc = good()
+    doc["findings"][0]["path"] = "a/```suggestion"
+    assert parse_draft(dumps(doc))
+
+
+def test_a_fence_in_an_unanchored_finding_path_and_title_loads() -> None:
+    doc = with_unanchored(good())
+    doc["unanchored"][0]["finding"]["path"] = "a/```suggestion"
+    doc["unanchored"][0]["finding"]["title"] = "~~~suggestion"
+    assert parse_draft(dumps(doc))
+
+
+def test_a_fence_in_an_anchored_finding_title_loads() -> None:
+    doc = good()
+    doc["findings"][0]["title"] = "```suggestion"
+    assert parse_draft(dumps(doc))
+
+
+@pytest.mark.parametrize(
+    "separator", ["\n", "\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"]
+)
+def test_a_fence_split_by_a_separator_is_not_a_fence(separator: str) -> None:
+    assert text_problem(f"```{separator}suggestion") is None
+    doc = good()
+    doc["body"] = f"```{separator}suggestion"
+    assert parse_draft(dumps(doc)).data["body"] == doc["body"]
+
+
 def test_ordinary_code_fences_in_a_body_load() -> None:
     doc = good()
     doc["body"] = "see\n```python\nx = 1\n```\n\n~~~\nraw\n~~~\n"
@@ -183,6 +214,12 @@ def test_text_issues_lists_every_problem_in_document_order() -> None:
     ]
 
 
+def test_a_control_character_and_a_fence_in_one_field_report_once() -> None:
+    doc = good()
+    doc["body"] = "a\x00\n```suggestion"
+    assert text_issues(doc) == [{"pointer": "/body", "kind": "control_character"}]
+
+
 def test_text_issues_is_empty_for_a_clean_draft() -> None:
     assert text_issues(good()) == []
 
@@ -205,4 +242,6 @@ def test_a_huge_hostile_draft_is_bounded() -> None:
     doc["findings"] = [
         {"id": f"f{i}", "path": "a", "line": 1, "body": "`~" * 30000} for i in range(200)
     ]
+    start = time.perf_counter()
     assert parse_draft(dumps(doc))
+    assert time.perf_counter() - start < 5
