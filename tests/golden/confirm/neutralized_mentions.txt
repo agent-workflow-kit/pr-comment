@@ -1,0 +1,30 @@
+== plan ==
+plan_sha256 3bc95efc8305c2c77cdffc6358d8d53b46c229d725493866444bac4e50e7d0b5
+--- body, 185 bytes
+  | Drafted with AI assistance · posted by `alice` after review · aaaaaaaaaaaa
+  | 
+  | ---
+  | 
+  | Overall: see below.
+  | 
+  | <!-- pr-comment:v1 -->
+  | <!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV -->
+--- inline:f1 at a.py:3 (right), 137 bytes
+  | ping ＠amy and ＠bob about ＜b>this＜/b> ！[x](u)
+  | 
+  | <!-- pr-comment:v1 -->
+  | <!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV -->
+== summary ==
+REVIEW: COMMENT
+PR github.com/acme/widgets#7
+head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, base main
+actor human:alice
+inline 1, file-level 0, moved 0
+findings by severity: none
+suggestions degraded 0, mentions neutralized 2
+links at most 0 (not every link form is counted), images at most 1, raw HTML at most 2
+invisible characters marked 0
+text: `<` and `![` are neutralized in what is posted (replaced by look-alike characters; 0 command lines spaced, 0 markers removed)
+mentions neutralized: amy, bob
+mentions allowed this run: carol
+forgectl reports this may already be posted; confirming posts nothing again and completes any pending approval or change request

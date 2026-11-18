@@ -20,6 +20,7 @@ from typing import Any, NoReturn, cast
 from . import __version__, grammars
 from .actor import ActorError, resolve_run, stream_is_tty
 from .config import ConfigError, load_config
+from .confirm import Interrupted, confirm
 from .errors import sanitize
 from .gateway import ForgectlInterrupted, ProcessGateway, ToolMissing
 from .grammars import MAX_DECISION_IDS, MAX_THREADS
@@ -482,13 +483,41 @@ def _log_round(record: dict[str, Any]) -> None:
     LOG.info("precheck round %s: %s", record["round"], record["result"])
 
 
+def _stdin_fd() -> int:
+    """The descriptor the answer is read from: the process's stdin; -1 when it has none."""
+    try:
+        return int(sys.stdin.fileno())
+    except (AttributeError, ValueError, OSError):
+        return -1
+
+
+def _confirmed(args: argparse.Namespace, prepared: Prepared) -> Outcome | None:
+    """Step 8, Confirm (docs/interface.md, Confirmation): None when the run may write, else the
+    refusal. ``--yes`` skips the dialog. A run that is not interactive and has no ``--yes`` ends
+    at exit 13 before any write, recording nothing. An interactive run shows the dialog on stderr
+    and reads one answer from the terminal; anything but ``y`` or ``yes`` declines (exit 13,
+    message ``declined``). TODO(#11): log ``declined`` (no audit record is written)."""
+    if args.yes:
+        return None
+    if not args.run.interactive:
+        return error_outcome(
+            "confirmation_required",
+            "confirmation required: run on a terminal to answer, or pass --yes",
+        )
+    if confirm(prepared, stdin_fd=_stdin_fd(), write=lambda text: _write(sys.stderr, text)):
+        return None
+    return error_outcome("confirmation_required", "declined")
+
+
 def _confirm_and_post(args: argparse.Namespace, prepared: Prepared) -> Outcome:
     """The seam after the plan: the dialog and the writes. Nothing is sent from here yet.
 
-    TODO(#28): the confirmation dialog and ``confirmation_required``. TODO(#29): the review order's
-    writes. TODO(#30): comment and reply. TODO(#31): approve and ``review --approve``.
+    TODO(#29): the review order's writes. TODO(#30): comment and reply. TODO(#31): approve and
+    ``review --approve``.
     """
-    del args, prepared
+    refused = _confirmed(args, prepared)
+    if refused is not None:
+        return refused
     return error_outcome(
         "internal", "posting is not implemented yet: the plan passed its pre-check"
     )
@@ -752,7 +781,7 @@ def _main(argv: list[str]) -> int:
     try:
         outcome = _load_config_into(args) or check_outcome(HANDLERS[args.command](args))
         stdout, stderr = render(outcome, as_json=args.json, quiet=args.quiet, verbose=args.verbose)
-    except ForgectlInterrupted as exc:  # a read, or a run before any write: no envelope
+    except (ForgectlInterrupted, Interrupted) as exc:  # before any write: no envelope
         return 128 + exc.signum
     except Exception as exc:  # a handler bug must still honor the exit-code and envelope contract
         outcome = internal_outcome(exc)

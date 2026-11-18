@@ -1,0 +1,22 @@
+== plan ==
+plan_sha256 92f70de8d2c5f7adf541cd14e3fdab96ced3168af02a13f0a1380e0123229799
+--- body, 176 bytes
+  | Drafted with AI assistance · posted by `alice` after review · aaaaaaaaaaaa
+  | 
+  | ---
+  | 
+  | Looks fine.
+  | 
+  | <!-- pr-comment:v1 -->
+  | <!-- forgectl:dedupe:prc:comment:5ee0807483f369c9feb8 -->
+== summary ==
+COMMENT
+PR github.com/acme/widgets#7
+head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, base main
+actor human:alice
+inline 0, file-level 0, moved 0
+findings by severity: none
+suggestions degraded 0, mentions neutralized 0
+links at most 0 (not every link form is counted), images at most 0, raw HTML at most 0
+invisible characters marked 0
+text: `<` and `![` are neutralized in what is posted (replaced by look-alike characters; 0 command lines spaced, 0 markers removed)
