@@ -16,8 +16,11 @@ from dataclasses import dataclass
 from typing import Any, NoReturn, cast
 
 from . import __version__, grammars
+from .actor import ActorError, resolve_run, stream_is_tty
 from .config import ConfigError, load_config
+from .draft import run_check
 from .errors import sanitize
+from .gateway import ForgectlInterrupted
 from .grammars import MAX_DECISION_IDS, MAX_THREADS
 from .output import LOG, PROG, Outcome, check_outcome, error_outcome, internal_outcome, render
 
@@ -315,7 +318,7 @@ def _add_common_posting_flags(parser: argparse.ArgumentParser, *, base: bool = F
     )
     # The value grammar is checked here; the names are applied by the renderer (mentions.py),
     # which the review, comment, reply and approve orders build from the config and these values.
-    # TODO(#5): require a human actor and an interactive run for --allow-mention.
+    # The human-only, interactive-only rule for --allow-mention is enforced in actor.resolve_run.
     parser.add_argument(
         "--allow-mention",
         action=AppendAction,
@@ -391,9 +394,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def validate_args(args: argparse.Namespace) -> None:
     """Rules argparse cannot express. Raises ``UsageError``."""
-    # TODO(#5): resolve the actor, detect interactive runs, apply the human-only flag rules
-    # (--allow-mention, --override-escalation) and refuse `--body-file -` / `--draft-file -`
-    # when stdin is a TTY.
     # Value grammars live in grammars.py and run as argparse types, so argparse names the flag;
     # the PR argument is checked here because its error code differs (`invalid_pr`).
     pr = getattr(args, "pr", None)
@@ -402,6 +402,14 @@ def validate_args(args: argparse.Namespace) -> None:
             grammars.check_pr(pr)
         except grammars.GrammarError as exc:
             raise UsageError(str(exc), code="invalid_pr") from None
+    try:
+        args.run = resolve_run(
+            args, stdin_tty=stream_is_tty(sys.stdin), stderr_tty=stream_is_tty(sys.stderr)
+        )
+    except ActorError as exc:
+        raise UsageError(str(exc)) from exc
+    # TODO(#6): the grammars enforced at parse time (--actor, --decision-id, --expect-plan,
+    # --hook, --override-escalation and the thread cap) move into the shared validator.
     if args.expect_plan is not None and args.command not in POSTING_COMMANDS:
         raise UsageError(f"--expect-plan is only valid with {', '.join(sorted(POSTING_COMMANDS))}")
     # The parse-time caps count per parser level; these count the merged total.
@@ -420,21 +428,27 @@ def _not_implemented(args: argparse.Namespace) -> Outcome:
 
 # One handler per command path. Later issues replace the entries with real handlers.
 # TODO(#29): review; TODO(#30): comment and reply; TODO(#31): approve and review --approve;
-# TODO(#35): resolve and unresolve; TODO(#15): draft check; TODO(#37): draft new;
-# TODO(#38): export.
+# TODO(#35): resolve and unresolve; TODO(#37): draft new; TODO(#38): export.
+def _draft_check(args: argparse.Namespace) -> Outcome:
+    # TODO(#5): `-` with a TTY stdin exits 2 usage (the TTY rule is not in this base).
+    return run_check(args.path)
+
+
 HANDLERS: dict[str, Handler] = {
-    key: _not_implemented
-    for key in (
-        "review",
-        "comment",
-        "reply",
-        "approve",
-        "resolve",
-        "unresolve",
-        "draft check",
-        "draft new",
-        "export",
-    )
+    **{
+        key: _not_implemented
+        for key in (
+            "review",
+            "comment",
+            "reply",
+            "approve",
+            "resolve",
+            "unresolve",
+            "draft new",
+            "export",
+        )
+    },
+    "draft check": _draft_check,
 }
 
 _VALUE_FLAGS = frozenset(flag for spec in _GLOBAL_FLAGS if spec.takes_value for flag in spec.flags)
@@ -566,6 +580,7 @@ def _leading_dash_pr(argv: list[str]) -> bool:
 
 
 def _write(stream: Any, text: str) -> None:
+    # TODO(#4): tolerate None/closed stdout/stderr in _write
     """Write text that cannot fail on the stream's encoding."""
     if text:
         encoding = getattr(stream, "encoding", None) or "utf-8"
@@ -656,6 +671,8 @@ def _main(argv: list[str]) -> int:
     try:
         outcome = _load_config_into(args) or check_outcome(HANDLERS[args.command](args))
         stdout, stderr = render(outcome, as_json=args.json, quiet=args.quiet, verbose=args.verbose)
+    except ForgectlInterrupted as exc:  # a read, or a run before any write: no envelope
+        return 128 + exc.signum
     except Exception as exc:  # a handler bug must still honor the exit-code and envelope contract
         outcome = internal_outcome(exc)
         stdout, stderr = render(outcome, as_json=args.json, quiet=args.quiet, verbose=args.verbose)

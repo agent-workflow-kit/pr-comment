@@ -1,0 +1,26 @@
+[
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 10
+  },
+  "expected": {
+   "path": "g.txt",
+   "line": 11,
+   "side": "right"
+  }
+ },
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 1
+  },
+  "expected": {
+   "path": "g.txt",
+   "line": 2,
+   "side": "right"
+  }
+ }
+]
