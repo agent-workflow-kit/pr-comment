@@ -1,4 +1,4 @@
-"""Unified-diff parser for re-anchoring (docs/interface.md, Re-anchoring, "Reading the diff").
+"""Unified-diff parser and right-side line mapping (docs/interface.md, Re-anchoring).
 
 ``parse_diff`` splits the diff text that forgectl prints into file sections. Paths come from
 the ``---`` and ``+++`` lines and the ``rename from`` and ``rename to`` lines. A section that
@@ -8,14 +8,19 @@ exactly one reading exists, because those lines cannot be split reliably when a 
 or a space followed by ``b/``. Anything the parser cannot read with certainty raises
 ``AmbiguousDiffError``; the caller moves every right-side finding with ``diff_unavailable``.
 
-The parser only reads. It maps no lines (TODO(#24): right-side mapping over these sections).
-Paths are decoded, not sanitized: a decoded path can hold characters that forgectl prints as
-``<U+XXXX>`` markers elsewhere (TODO(#24): compare paths in forgectl's printed form).
+``DiffMapper`` maps right-side findings from the older head A to the newer head B through the
+parsed sections (step 2 of Re-anchoring). It is exact and never guesses: a line the diff removes,
+a range that is not contiguous afterwards, a binary file and an unreadable diff all move the
+finding with a reason. Paths are decoded, not sanitized, by the parser; the mapper compares them
+in forgectl's printed form (``printed_path``), so a bidi character shows as ``<U+202E>`` on both
+sides.
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import NamedTuple
@@ -488,3 +493,245 @@ def _parse_hunks(lines: list[str], j: int, end: int) -> list[Hunk]:
             j += 1
         hunks.append(Hunk(old_start, old_count, new_start, new_count, tuple(body)))
     return hunks
+
+
+# --- right-side mapping --------------------------------------------------------------------
+
+_MARKED_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
+_MARKED_POINTS = frozenset(
+    {0x034F, 0x17B4, 0x17B5, 0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800}
+    | set(range(0x180B, 0x1810))
+    | set(range(0xFE00, 0xFE10))
+    | set(range(0xE0100, 0xE01F0))
+)
+
+
+def printed_path(path: str) -> str:
+    """A path as forgectl prints a one-line field: marked characters become ``<U+XXXX>``.
+
+    Idempotent, so it is safe on a path that forgectl already printed. forgectl's Sanitizing
+    section lists the marked categories and code points; tab, LF and CR are Cc and are marked,
+    except that a CR immediately followed by LF prints as the single marker ``<U+000A>``.
+    """
+    return "".join(
+        f"<U+{ord(c):04X}>"
+        if unicodedata.category(c) in _MARKED_CATEGORIES or ord(c) in _MARKED_POINTS
+        else c
+        for c in path.replace("\r\n", "\n")
+    )
+
+
+class MovedReason(StrEnum):
+    """The reasons right-side mapping moves a finding (docs/interface.md, Moved findings)."""
+
+    CHANGED = "changed"
+    FILE_REMOVED = "file_removed"
+    DIFF_UNAVAILABLE = "diff_unavailable"
+
+
+@dataclass(frozen=True, slots=True)
+class Mapped:
+    """A finding's place at B. ``start_line`` is ``None`` for a single-line finding."""
+
+    path: str
+    line: int
+    start_line: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class Moved:
+    reason: MovedReason
+
+
+class FileFate(NamedTuple):
+    """Where a file of A went: its path at B, and whether the diff deletes it."""
+
+    path: str
+    removed: bool
+
+
+class _Prepared:
+    """A file's hunks indexed for logarithmic lookups of the mapping of A's lines to B's."""
+
+    def __init__(self, hunks: tuple[Hunk, ...]) -> None:
+        self.hunks = hunks
+        self.firsts: list[int] = []
+        self.delta_after: list[int] = []  # net change after each hunk, itself included
+        self.removed: list[int] = []  # lines of A that the diff removes, ascending
+        delta = 0
+        for hunk in hunks:
+            first = _first_line(hunk.old_start, hunk.old_count)
+            self.firsts.append(first)
+            old = first
+            for tag, _ in hunk.lines:
+                if tag == "+":
+                    continue
+                if tag == "-":
+                    self.removed.append(old)
+                old += 1
+            delta += hunk.new_count - hunk.old_count
+            self.delta_after.append(delta)
+
+    def map_old_line(self, n: int) -> int | None:
+        """The line of B for line ``n`` of A, or ``None`` when a hunk removes it."""
+        i = bisect_right(self.firsts, n) - 1
+        if i < 0:
+            return n
+        hunk = self.hunks[i]
+        old = self.firsts[i]
+        if n >= old + hunk.old_count:
+            return n + self.delta_after[i]
+        new = _first_line(hunk.new_start, hunk.new_count)
+        for tag, _ in hunk.lines:
+            if tag == "+":
+                new += 1
+                continue
+            if old == n:
+                return new if tag == " " else None
+            old += 1
+            new += tag == " "
+        return None  # unreachable for a parsed hunk; fail closed
+
+    def removes_between(self, low: int, high: int) -> bool:
+        """Whether the diff removes a line of A in ``low..high``."""
+        i = bisect_left(self.removed, low)
+        return i < len(self.removed) and self.removed[i] <= high
+
+
+@dataclass(frozen=True, slots=True)
+class _Entry:
+    section: FileSection
+    raw_old: str  # the path as decoded from the diff
+    new_path: str | None  # printed form; None when the file is deleted
+    prepared: _Prepared
+
+
+def _first_line(start: int, count: int) -> int:
+    """First line a hunk side covers; a zero-length side sits after line ``start``."""
+    return start if count else start + 1
+
+
+def _check_hunk_starts(section: FileSection) -> None:
+    """Fail closed when a hunk's new start disagrees with the net change before it."""
+    delta = 0
+    for hunk in section.hunks:
+        old_before = _first_line(hunk.old_start, hunk.old_count) - 1
+        new_before = _first_line(hunk.new_start, hunk.new_count) - 1
+        if new_before - old_before != delta:
+            raise AmbiguousDiffError("hunk_start_disagrees_with_earlier_hunks", 1)
+        delta += hunk.new_count - hunk.old_count
+
+
+class DiffMapper:
+    """Maps right-side findings and file paths from A to B through the A-to-B diff."""
+
+    def __init__(self, parsed: ParsedDiff | None) -> None:
+        """``None`` means the diff is unavailable. Raises ``AmbiguousDiffError`` on a diff whose
+        hunks disagree with each other or whose paths collide once printed.
+        """
+        self._entries: dict[str, _Entry] = {}
+        self._new_only: set[str] = set()
+        self.available = parsed is not None
+        if parsed is None:
+            return
+        names: set[str] = set()
+        for section in parsed.sections:
+            _check_hunk_starts(section)
+            old = None if section.old_path is None else printed_path(section.old_path)
+            new = None if section.new_path is None else printed_path(section.new_path)
+            for name in {old, new} - {None}:
+                if name in names:
+                    raise AmbiguousDiffError("paths_collide_when_printed", 1)
+                names.add(str(name))
+            if old is not None:
+                self._entries[old] = _Entry(
+                    section, section.old_path or old, new, _Prepared(section.hunks)
+                )
+            elif new is not None:
+                self._new_only.add(new)
+            if old is not None and new is not None and old != new:
+                self._new_only.add(new)
+
+    @classmethod
+    def unavailable(cls) -> DiffMapper:
+        return cls(None)
+
+    @classmethod
+    def from_text(cls, text: str | None) -> DiffMapper:
+        """Build from forgectl's diff text; ``None`` or unreadable text is unavailable."""
+        if text is None:
+            return cls(None)
+        try:
+            return cls(parse_diff(text))
+        except AmbiguousDiffError:
+            return cls(None)
+
+    def follow_file(self, path: str) -> FileFate:
+        """Where a file of A is at B: a detected rename gives the new path; deletion is flagged.
+
+        A path the diff does not mention, any path when the diff is unavailable, and a path whose
+        printed form matches a diff path in another spelling (see ``map_right``) are unchanged.
+        """
+        entry = self._entries.get(printed_path(path))
+        if entry is None or self._spelling_unclear(path, entry):
+            # An unclear spelling is treated as unavailable: the path stays as it is.
+            return FileFate(path, False)
+        if entry.new_path is None:
+            return FileFate(path, True)
+        return FileFate(entry.new_path, False)
+
+    @staticmethod
+    def _spelling_unclear(path: str, entry: _Entry) -> bool:
+        """A printed form that holds a marker and matches a diff path spelled differently.
+
+        A literal ``<U+202E>`` and a real U+202E print alike, so the match proves nothing.
+        """
+        return "<U+" in printed_path(path) and path != entry.raw_old
+
+    def map_right(self, path: str, line: int, start_line: int | None = None) -> Mapped | Moved:
+        """Map a right-side finding of A (a range when ``start_line`` is given) onto B.
+
+        A ``Mapped`` path is always in printed form, also for a file the diff does not mention.
+        A path whose printed form holds a marker (``<U+``) and matches a diff path that is
+        spelled differently (literal marker against the real character) moves with
+        ``diff_unavailable``. Raises ``TypeError`` unless the lines are plain ints, and
+        ``ValueError`` unless ``1 <= start_line <= line``.
+
+        # todo(#25): validate the finding line against A's length before mapping (map_right
+        # cannot know it; the diff alone does not give A's length, so the caller must check).
+        """
+        if type(line) is not int or (start_line is not None and type(start_line) is not int):
+            raise TypeError("lines must be ints")
+        low = line if start_line is None else start_line
+        if low < 1 or line < low:
+            raise ValueError("lines must satisfy 1 <= start_line <= line")
+        if not self.available:
+            return Moved(MovedReason.DIFF_UNAVAILABLE)
+        key = printed_path(path)
+        entry = self._entries.get(key)
+        if entry is None:
+            # A path the diff says is new at B cannot have had lines at A.
+            if key in self._new_only:
+                return Moved(MovedReason.CHANGED)
+            return Mapped(key, line, start_line)
+        if self._spelling_unclear(path, entry):
+            return Moved(MovedReason.DIFF_UNAVAILABLE)
+        if entry.new_path is None:
+            return Moved(MovedReason.FILE_REMOVED)
+        section = entry.section
+        if section.kind is SectionKind.BINARY:
+            return Moved(MovedReason.CHANGED)
+        prepared = entry.prepared
+        new_line = prepared.map_old_line(line)
+        if new_line is None:
+            return Moved(MovedReason.CHANGED)
+        if start_line is None:
+            return Mapped(entry.new_path, new_line, None)
+        new_start = prepared.map_old_line(start_line)
+        if (
+            new_start is None
+            or new_line - new_start != line - start_line
+            or prepared.removes_between(start_line, line)
+        ):
+            return Moved(MovedReason.CHANGED)
+        return Mapped(entry.new_path, new_line, new_start)
