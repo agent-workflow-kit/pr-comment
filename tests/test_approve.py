@@ -24,6 +24,7 @@ import pytest
 
 from pr_comment import approve as approve_module
 from pr_comment import cli as cli_module
+from pr_comment import prepare as prepare_module
 from pr_comment.cli import main
 from pr_comment.config import LoadedConfig
 from pr_comment.output import Outcome
@@ -909,7 +910,20 @@ def test_the_unit_guard_table(override: dict[str, Any], want: tuple[int, str | N
     assert _reason(_check(**override)) == want
 
 
-@pytest.mark.parametrize("actor", ["auto:x", "auto:unknown", "AUTO:x", "robot", "", "humanx:a"])
+@pytest.mark.parametrize(
+    "actor",
+    [
+        "auto:x",
+        "auto:unknown",
+        "AUTO:x",
+        "robot",
+        "",
+        "humanx:a",
+        "HUMAN:alice",
+        " human:alice",
+        "Human:a",
+    ],
+)
 def test_every_actor_that_is_not_exactly_human_is_guarded(actor: str) -> None:
     assert _reason(_check(actor=actor, allow=False)) == (20, "auto_approve_disabled")
 
@@ -930,6 +944,80 @@ def test_guard_prepared_refuses_a_prepared_plan_even_if_the_order_missed_it(
     )
     refused = approve_module.guard_prepared(auto, config)
     assert refused is not None and _reason(refused) == (20, "auto_approve_disabled")
+
+
+@pytest.mark.parametrize("command", ["approve", "review"])
+def test_the_second_guard_alone_refuses_an_automatic_approval_before_any_write(
+    command: str,
+    cli: Run,
+    forgectl: FakeForgectl,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    state_home: Path,
+) -> None:
+    """Mutant: ``cli.guard_prepared`` made a no-op. With the order's guard off, the opt-in off and
+    ``--yes``, the run must still end at exit 20 with nothing written and no ``attempted``."""
+    monkeypatch.setattr(prepare_module, "_guard", lambda *a, **k: None)
+    cfg = write_config(tmp_path, "{}\n")
+    if command == "approve":
+        forgectl.script(show(), dry_approve())
+        argv = auto_approve(cfg)
+    else:
+        forgectl.script(show(), dry_review())
+        draft = draft_file(tmp_path, [finding("f1")])
+        argv = review_argv(
+            draft, "--config", str(cfg), "--expected-head", A, "--decision-id", GATE, actor=AUTO
+        )
+    code, error, _ = cli(*argv)
+    assert code == 20 and error["error"]["reason"] == "auto_approve_disabled"
+    assert forgectl.writes() == []
+    assert audit(state_home) == []
+    assert [e["details"]["reason"] for e in log(state_home) if e["event"] == "refused"] == [
+        "auto_approve_disabled"
+    ]
+
+
+@pytest.mark.parametrize("command", ["approve", "review"])
+def test_both_guard_call_sites_pass_the_same_inputs(
+    command: str,
+    cli: Run,
+    forgectl: FakeForgectl,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The order's guard and the guard on the confirmed plan must agree: same actor, decision ids,
+    expected head, pinned head, anchor head and repo opt-in on one scenario."""
+    seen: list[dict[str, Any]] = []
+    real = approve_module.check_auto_approve
+
+    def spy(**kwargs: Any) -> Outcome | None:
+        seen.append(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(approve_module, "check_auto_approve", spy)
+    if command == "approve":
+        forgectl.script(show(), dry_approve(), approved())
+        argv = auto_approve(allowing(tmp_path))
+    else:
+        forgectl.script(show(), dry_review(), reviewed())
+        draft = draft_file(tmp_path, [finding("f1")])
+        argv = review_argv(
+            draft,
+            "--config",
+            str(allowing(tmp_path)),
+            "--expected-head",
+            A,
+            "--decision-id",
+            GATE,
+            actor=AUTO,
+        )
+    code, doc, _ = cli(*argv)
+    assert code == 0, doc
+    assert len(seen) == 2
+    assert seen[0] == seen[1]
+    assert seen[0]["actor"] == AUTO and seen[0]["allow"] is True
+    assert seen[0]["decision_ids"] == (GATE,) or list(seen[0]["decision_ids"]) == [GATE]
+    assert seen[0]["expected_head"] == A and seen[0]["pinned_head"] == A
 
 
 # --- review --approve ------------------------------------------------------------------------

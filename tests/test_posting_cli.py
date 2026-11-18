@@ -240,7 +240,7 @@ def test_a_precheck_failure_wins_over_expect_plan(
 def test_a_real_comment_run_that_passes_the_plan_stops_before_any_write(
     cli: Run, forgectl: FakeForgectl, tmp_path: Path
 ) -> None:
-    # the comment and reply writes are #30's and approve is #31's: nothing is posted
+    # the comment and reply writes are #30's: nothing is posted
     body = tmp_path / "body.txt"
     body.write_text("looks good", encoding="utf-8")
     forgectl.script(show(), ok("comment", h.post_doc("comment", dry_run=True)))
