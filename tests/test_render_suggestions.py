@@ -206,13 +206,12 @@ REASON_CASES = [
     (["~~~"], "fence"),
     ([" ~~~~ x"], "fence"),
     (["```python"], "fence"),
-    # todo(#20): the leading space on a `/` line in a degraded block (step 6) arrives with #20
+    # step 6's leading space is applied to the whole body (assemble.py), not by render_suggestion
     (["/cmd"], "slash_line"),
     (["/"], "slash_line"),
     (["ok", "/* c */"], "slash_line"),
     # order: invisible_chars, fence, slash_line
     (["/x", "```", "‮"], "invisible_chars"),
-    # todo(#20): the /x line gets its leading space in the degraded block with #20
     (["/x", "```"], "fence"),
     (["```", "/x"], "fence"),
 ]
@@ -418,7 +417,7 @@ def test_a_suggestion_line_with_a_suggestion_fence_is_refused(
     ],
 )
 def test_an_open_body_fence_cannot_forge_an_applicable_block(body: str, lines: list[str]) -> None:
-    # todo(#20) owns the layout; here no render call may emit a suggestion block for these.
+    # No render call may emit a suggestion block for these (the layout is assemble.py).
     f = sug(*lines, body=body)
     for moved in (False, True):
         with pytest.raises(ValueError, match="suggestion fence"):
@@ -448,7 +447,7 @@ def test_tilde_line_in_a_closed_body_is_still_not_applicable() -> None:
     assert [lang for lang, _ in pre_blocks(text)] == ["text"]
 
 
-# todo(#20): the leading space on a `/` line arrives with #20; until then the slash is kept as is.
+# render_suggestion keeps the slash; the leading space is step 6 (assemble.py).
 def test_slash_line_degrades_and_keeps_its_slash() -> None:
     r = block(sug("/approve"))
     assert r.degraded == "slash_line"

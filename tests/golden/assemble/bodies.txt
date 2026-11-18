@@ -1,0 +1,169 @@
+# review (neutralized_lines=0 markers_removed=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+Overall: **solid**, see @octocat and /ping.
+
+### File-level findings
+
+` docs/readme.md `
+
+File-level note.
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 0123456789ab) — the commented line changed after this review was drafted
+
+**major**
+
+Moved body.
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+
+=====
+
+# review_auto (neutralized_lines=0 markers_removed=0)
+Posted automatically under policy `policy-1` · no human review · 0123456789ab
+
+---
+
+Overall: **solid**, see @octocat and /ping.
+
+### File-level findings
+
+` docs/readme.md `
+
+File-level note.
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 0123456789ab) — the commented line changed after this review was drafted
+
+**major**
+
+Moved body.
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+
+=====
+
+# review_no_footer (neutralized_lines=0 markers_removed=0)
+Overall: **solid**, see @octocat and /ping.
+
+### File-level findings
+
+` docs/readme.md `
+
+File-level note.
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 0123456789ab) — the commented line changed after this review was drafted
+
+**major**
+
+Moved body.
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+
+=====
+
+# review_empty (neutralized_lines=0 markers_removed=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+
+=====
+
+# comment (neutralized_lines=0 markers_removed=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+A comment.
+
+<!-- pr-comment:v1 -->
+
+=====
+
+# reply (neutralized_lines=1 markers_removed=0)
+Posted automatically under policy `policy-1` · no human review · 0123456789ab
+
+---
+
+A reply.
+ /approve
+
+<!-- pr-comment:v1 -->
+
+=====
+
+# approve_with_body (neutralized_lines=0 markers_removed=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+Looks good.
+
+<!-- pr-comment:v1 -->
+
+=====
+
+# approve_bare (neutralized_lines=0 markers_removed=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+
+=====
+
+# approve_bare_no_footer (neutralized_lines=0 markers_removed=0)
+<!-- pr-comment:v1 -->
+
+=====
+
+# inline_degraded (neutralized_lines=2 markers_removed=1)
+**minor · Use a guard**
+
+Check it.
+ /forgectl:dedupe-k
+
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
+if x:
+ /* c */
+```
+
+<!-- pr-comment:v1 -->
+
+=====
+
+# inline_applicable_gitlab (neutralized_lines=0 markers_removed=0)
+**nit**
+
+Rename.
+
+```suggestion:-0+0
+y = 2
+```
+
+<!-- pr-comment:v1 -->
