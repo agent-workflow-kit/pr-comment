@@ -27,12 +27,15 @@ class Outcome:
     """What a handler returns.
 
     ``document`` is the ``--json`` document (None prints nothing). ``human`` holds extra stderr
-    lines for a human run; ``--quiet`` drops them on success.
+    lines for a human run; ``--quiet`` drops them on success. ``print_document`` makes a
+    successful run print the document on stdout without ``--json`` as well.
     """
 
     exit_code: int
     document: dict[str, Any] | None = None
     human: tuple[str, ...] = ()
+    # True for a command whose result is its stdout product even without --json (draft new).
+    print_document: bool = False
 
 
 def error_outcome(code: str, message: str, **fields: Any) -> Outcome:
@@ -135,7 +138,9 @@ def render(
     outcome's own lines only without ``quiet``. ``quiet`` wins over ``verbose``.
     """
     stdout = ""
-    if as_json and outcome.document is not None:
+    if outcome.document is not None and (
+        as_json or (outcome.print_document and outcome.exit_code == 0)
+    ):
         stdout = _dumps(outcome.document) + "\n"
     lines: list[str] = []
     error = _error_of(outcome.document)

@@ -21,10 +21,12 @@ refuses the first one. The draft data is not changed: the line-separator rewrite
 todo(#18): apply textpipe.normalize_lines to body and finding bodies where bodies are built
 
 ``run_check`` is ``draft check``: it reports every problem of a draft as one result document.
+``run_new`` is ``draft new``: a skeleton draft read through forgectl, printed and never written.
 """
 
 from __future__ import annotations
 
+import copy
 import errno
 import hashlib
 import json
@@ -33,12 +35,15 @@ import os
 import re
 import stat
 import sys
+import time
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
 from . import grammars, textpipe
-from .output import Outcome, error_outcome
+from .forge import Forge, Show, match_draft_pr, stale_head_failure
+from .lower import LowerFailure, mismatch_outcome
+from .output import LOG, Outcome, error_outcome
 
 MAX_DRAFT_BYTES: Final = 16 * 1024 * 1024
 MAX_TEXT_BYTES: Final = 64 * 1024
@@ -751,3 +756,150 @@ def run_check(source: str, *, stdin: _Reader | None = None) -> Outcome:
         return Outcome(0, document, (f"draft is valid ({count} findings)",))
     lines = tuple(f"{e['pointer'] or '(document)'}: {e['message']}" for e in document["errors"])
     return Outcome(2, document, ("draft is invalid", *lines))
+
+
+# --- draft new -------------------------------------------------------------------------------
+
+_CROCKFORD: Final = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+_ULID_TIME_BITS: Final = 48
+_ULID_ENTROPY_BYTES: Final = 10
+_TOO_LARGE_WARNING: Final = (
+    "the diff is too large to read: merge_base_sha is null in the new draft, "
+    "and left-side findings added later will move as base_changed"
+)
+
+
+def ulid(now_ms: int, entropy: bytes) -> str:
+    """A ULID: 48 bits of milliseconds then 80 bits of ``entropy``, 26 Crockford base32 characters.
+
+    Raises ``ValueError`` for a time outside 48 bits or an entropy that is not 10 bytes.
+    """
+    if type(now_ms) is not int or not 0 <= now_ms < 1 << _ULID_TIME_BITS:
+        raise ValueError("ULID time must be an integer of 48 bits")
+    if type(entropy) is not bytes or len(entropy) != _ULID_ENTROPY_BYTES:
+        raise ValueError("ULID entropy must be 10 bytes")
+    value = (now_ms << 80) | int.from_bytes(entropy, "big")
+    return "".join(_CROCKFORD[(value >> shift) & 31] for shift in range(125, -1, -5))
+
+
+def new_draft_id() -> str:
+    """A fresh ULID from the clock and the operating system's random source."""
+    return ulid(time.time_ns() // 1_000_000, os.urandom(_ULID_ENTROPY_BYTES))
+
+
+def _is_too_large(failure: LowerFailure) -> bool:
+    document = failure.outcome.document
+    error: object = document.get("error") if document is not None else None
+    return (
+        isinstance(error, dict)
+        and error.get("code") == "refused"  # pyright: ignore[reportUnknownMemberType]
+        and error.get("reason") == "too_large"  # pyright: ignore[reportUnknownMemberType]
+    )
+
+
+def _read_anchor(forge: Forge, pr: str) -> tuple[Show, str | None]:
+    """``diff`` then ``show``; the shown PR and the merge base, with heads that agree.
+
+    A head that differs between the two is read once more, then ``stale_head``. A ``too_large``
+    diff has no merge base and the head comes from ``show`` alone. Raises ``LowerFailure``.
+    """
+    shown: Show | None = None
+    for _ in range(2):
+        merge_base: str | None = None
+        diff_head: str | None = None
+        diff_pr: str | None = None
+        try:
+            read = forge.diff(pr)
+            merge_base, diff_head, diff_pr = read.merge_base_sha, read.head_sha, read.pr
+        except LowerFailure as failure:
+            if not _is_too_large(failure):
+                raise
+            LOG.warning(_TOO_LARGE_WARNING)
+        shown = forge.show(pr)
+        # a rename changes the path only: the host and the number are the PR that was asked for
+        if diff_pr is not None and (
+            diff_pr.rpartition("#")[2] != str(shown.number)
+            or diff_pr.split("/", 1)[0] != shown.host
+        ):
+            raise LowerFailure(
+                mismatch_outcome("diff", "the document is for another PR", gateway=forge.gateway)
+            )
+        if diff_head is None or diff_head == shown.head_sha:
+            return shown, merge_base
+    assert shown is not None
+    raise stale_head_failure(shown.head_sha)
+
+
+def _skeleton(
+    shown: Show,
+    merge_base: str | None,
+    draft_id: str,
+    event: str,
+    source: dict[str, Any] | None,
+) -> dict[str, Any]:
+    document: dict[str, Any] = {
+        "schema_version": 1,
+        "draft_id": draft_id,
+        "pr": shown.pr,
+        "anchor": {
+            "head_sha": shown.head_sha,
+            "base_ref": shown.base_ref,
+            "base_sha": shown.base_sha,
+            "merge_base_sha": merge_base,
+        },
+        "event": event,
+        "body": "" if source is None else source["body"],
+        "findings": [] if source is None else copy.deepcopy(source["findings"]),
+    }
+    if source is not None:
+        for key in ("unanchored", "meta"):
+            if key in source:
+                document[key] = copy.deepcopy(source[key])
+    return document
+
+
+def run_new(
+    forge: Forge,
+    pr: str,
+    *,
+    event: str | None = None,
+    from_draft: str | None = None,
+    stdin: _Reader | None = None,
+    now_ms: int | None = None,
+    entropy: bytes | None = None,
+) -> Outcome:
+    """``draft new``: print a skeleton draft for ``pr``; nothing is written.
+
+    ``from_draft`` (a path, or ``-`` for ``stdin``) is read and validated first, before any
+    forgectl call. ``now_ms`` and ``entropy`` fix the draft id for tests. A ``ToolMissing`` from the
+    gateway is the caller's.
+    """
+    if event is not None and event not in EVENTS:
+        raise ValueError("event must be comment or request_changes")
+    try:
+        source = load_draft(from_draft, stdin=stdin).data if from_draft is not None else None
+    except DraftError as exc:
+        return exc.outcome()
+    try:
+        shown, merge_base = _read_anchor(forge, pr)
+        if source is not None:
+            match_draft_pr(forge, source["pr"], shown)
+            if source["anchor"]["head_sha"] != shown.head_sha:
+                raise stale_head_failure(shown.head_sha)
+    except LowerFailure as failure:
+        return failure.outcome
+    draft_id = ulid(
+        time.time_ns() // 1_000_000 if now_ms is None else now_ms,
+        os.urandom(_ULID_ENTROPY_BYTES) if entropy is None else entropy,
+    )
+    chosen = event if event is not None else ("comment" if source is None else source["event"])
+    document = _skeleton(shown, merge_base, draft_id, chosen, source)
+    # forgectl's strings are untrusted: a base ref the draft rules refuse (refs/..., a leading
+    # dash) must not give a draft that fails `draft check`.
+    if validate_document(document) or text_issues(document):
+        return mismatch_outcome(
+            "show",
+            "the PR cannot be written into a draft (its base branch name is not allowed)",
+            gateway=forge.gateway,
+        )
+    return Outcome(0, document, print_document=True)
