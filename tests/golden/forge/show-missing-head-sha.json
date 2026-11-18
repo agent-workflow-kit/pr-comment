@@ -1,0 +1,20 @@
+{
+  "error": {
+    "code": "lower_contract_mismatch",
+    "decision_ids": [],
+    "details": {
+      "command": "show",
+      "lower_version": "forgectl 0.1.0"
+    },
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": null,
+    "hook_stderr": null,
+    "landed": false,
+    "lower_error": null,
+    "message": "forgectl show gave an answer pr-comment cannot use (invalid or missing: /head/sha)",
+    "reason": null,
+    "retry": "same_command",
+    "retry_after": null
+  }
+}

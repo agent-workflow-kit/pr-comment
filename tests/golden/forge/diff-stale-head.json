@@ -1,0 +1,19 @@
+{
+  "error": {
+    "code": "refused",
+    "decision_ids": [],
+    "details": {
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": null,
+    "hook_stderr": null,
+    "landed": null,
+    "lower_error": null,
+    "message": "the head moved; rerun with the current head",
+    "reason": "stale_head",
+    "retry": null,
+    "retry_after": null
+  }
+}

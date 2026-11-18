@@ -1,0 +1,21 @@
+{
+  "error": {
+    "code": "refused",
+    "decision_ids": [],
+    "details": null,
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": null,
+    "hook_stderr": null,
+    "landed": null,
+    "lower_error": {
+      "code": "refused",
+      "message": "too big",
+      "reason": "too_large"
+    },
+    "message": "too big",
+    "reason": "too_large",
+    "retry": null,
+    "retry_after": null
+  }
+}

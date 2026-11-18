@@ -438,3 +438,73 @@ def test_cli_exits_128_plus_n_with_no_output_when_a_call_is_interrupted(
     code = cli.main(["comment", "o/r#1", f"--body-file={body}", "--json"])
     captured = capsys.readouterr()
     assert code == 128 + 15 and captured.out == ""
+
+
+# --- reads: duplicate keys, read-only code filters, the version text (#26) ----------------------
+
+
+def test_a_document_with_a_duplicate_key_is_a_contract_mismatch() -> None:
+    raw = b'{"head_sha": "' + b"a" * 40 + b'", "head_sha": "' + b"b" * 40 + b'"}'
+    with pytest.raises(LowerFailure) as caught:
+        require_ok(result(0, raw=raw), gateway=GATEWAY)
+    assert caught.value.outcome.document["error"]["code"] == "lower_contract_mismatch"  # type: ignore[index]
+
+
+def test_a_duplicate_key_in_an_error_envelope_is_a_mismatch() -> None:
+    raw = b'{"error": {"code": "not_found", "code": "internal", "message": "m"}}'
+    outcome = outcome_of(result(10, raw=raw))
+    assert outcome.document["error"]["code"] == "lower_contract_mismatch"
+
+
+def test_lower_version_in_a_mismatch_is_sanitized_and_cut_to_64_characters() -> None:
+    gateway = FakeGateway(version="forgectl \x1b[31m0.1‮" + "x" * 200)
+    outcome = mismatch_outcome("show", "why", gateway=gateway)
+    version = outcome.document["error"]["details"]["lower_version"]  # type: ignore[index]
+    assert len(version) <= 64 and "\x1b" not in version and "‮" not in version
+    assert "<U+001B>" in version
+
+
+def test_lower_version_of_none_stays_none() -> None:
+    outcome = mismatch_outcome("show", "why", gateway=FakeGateway(version=None))
+    assert outcome.document["error"]["details"]["lower_version"] is None  # type: ignore[index]
+
+
+READ_CODES = frozenset({"not_found", "internal"})
+
+
+def test_a_code_outside_the_allowed_set_is_a_mismatch_not_a_passthrough() -> None:
+    allowed = outcome_of(result(10, envelope("not_found")), codes=READ_CODES)
+    assert allowed.document["error"]["code"] == "not_found"
+    outcome = outcome_of(result(11, envelope("vetoed", hook="h", hook_stderr="")), codes=READ_CODES)
+    assert outcome.document["error"]["code"] == "lower_contract_mismatch"
+    assert outcome.document["error"]["lower_error"]["code"] == "vetoed"
+
+
+def test_outcome_partial_on_a_read_is_a_mismatch_without_needing_a_backend() -> None:
+    outcome = outcome_of(
+        result(12, envelope("outcome_partial", details={"landed": {}, "failed": "note"})),
+        codes=READ_CODES,
+    )
+    assert outcome.document["error"]["code"] == "lower_contract_mismatch"
+
+
+def test_a_refusal_reason_outside_the_allowed_set_is_a_mismatch() -> None:
+    refused = envelope("refused", reason="stale_head")
+    outcome = outcome_of(result(20, refused), codes=frozenset({"refused"}), reasons=frozenset())
+    assert outcome.document["error"]["code"] == "lower_contract_mismatch"
+    allowed = outcome_of(
+        result(20, envelope("refused", reason="too_large")),
+        codes=frozenset({"refused"}),
+        reasons=frozenset({"too_large"}),
+    )
+    assert allowed.document["error"]["reason"] == "too_large"
+
+
+def test_require_ok_passes_the_filters_to_a_failure() -> None:
+    with pytest.raises(LowerFailure) as caught:
+        require_ok(
+            result(11, envelope("vetoed", hook="h", hook_stderr="")),
+            gateway=GATEWAY,
+            codes=READ_CODES,
+        )
+    assert caught.value.outcome.document["error"]["code"] == "lower_contract_mismatch"  # type: ignore[index]
