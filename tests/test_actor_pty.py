@@ -32,9 +32,11 @@ def run_cli(
     stdin: str,
     stderr: str,
     env_extra: dict[str, str] | None = None,
+    eof_on_terminal: bool = False,
 ) -> tuple[int, dict[str, Any]]:
     """Run the CLI with --json; ``stdin`` and ``stderr`` are ``pty``, ``pipe`` or ``null``.
 
+    ``eof_on_terminal`` types end-of-file on a pty stdin, for commands that read it.
     Returns the exit code and the parsed stdout envelope.
     """
     home = tmp_path / "home"
@@ -67,6 +69,7 @@ def run_cli(
     try:
         stdin_fd = endpoint(stdin, reading=True)
         stderr_fd = endpoint(stderr, reading=False)
+        stdin_master = masters[0] if stdin == "pty" else -1
         proc = subprocess.Popen(
             [sys.executable, "-m", "pr_comment", *argv, "--json"],
             stdin=stdin_fd,
@@ -78,6 +81,8 @@ def run_cli(
         os.close(out_w)
         out_w = -1
         pid = proc.pid  # recorded at launch; the only PID this test may signal
+        if eof_on_terminal and stdin_master >= 0:
+            os.write(stdin_master, b"\x04")
         try:
             code = proc.wait(timeout=TIMEOUT)
             with os.fdopen(out_r, "r", encoding="utf-8") as fh:
@@ -186,7 +191,10 @@ def test_dash_input_with_a_terminal_stdin_is_usage(tmp_path: Path, argv: list[st
 
 def test_draft_check_dash_with_a_terminal_stdin_is_accepted(tmp_path: Path) -> None:
     argv = ["draft", "check", "-"]
-    assert_accepted(run_cli(tmp_path, argv, stdin="pty", stderr="pty"))
+    code, doc = run_cli(tmp_path, argv, stdin="pty", stderr="pty", eof_on_terminal=True)
+    # Accepted: the handler read the (empty) terminal input and refused it as an invalid draft.
+    assert code == 2
+    assert doc["valid"] is False
 
 
 def test_dash_input_from_a_pipe_is_accepted(tmp_path: Path) -> None:
