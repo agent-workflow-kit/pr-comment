@@ -473,7 +473,10 @@ USAGE_CASES: list[tuple[str, list[str]]] = [
     ("empty hook cmd", ["comment", PR, "--body-file", "b", "--hook", "pre-post="]),
     ("bad expect-plan", ["comment", PR, "--body-file", "b", "--expect-plan", "abc"]),
     ("bad event", ["draft", "new", PR, "--event", "approve"]),
-    ("too many threads", ["resolve", PR, *[x for i in range(101) for x in ("--thread", f"t{i}")]]),
+    (
+        "too many threads",
+        ["resolve", PR, *[x for i in range(101) for x in ("--thread", f"gh:rt:t{i}")]],
+    ),
     ("json with a value", ["comment", PR, "--body-file", "b", "--json=1"]),
     ("bad flag between draft and subcommand", ["draft", "--nope", "check", "x"]),
 ]
@@ -699,7 +702,7 @@ def test_argument_count_limit_is_exactly_1024(capsys: pytest.CaptureFixture[str]
 
 
 def test_repeat_cap_is_enforced_while_parsing(capsys: pytest.CaptureFixture[str]) -> None:
-    argv = ["resolve", PR, *[x for i in range(500) for x in ("--thread", f"t{i}")]]
+    argv = ["resolve", PR, *[x for i in range(500) for x in ("--thread", f"gh:rt:t{i}")]]
     started = time.monotonic()
     code, doc, _ = _run_json(capsys, [*argv, "--json"])
     assert time.monotonic() - started < 10
@@ -836,12 +839,12 @@ def test_repeatable_flags_collect() -> None:
         [*MINIMAL["comment"], "--allow-mention", "a", "--allow-mention", "b"]
     )
     assert args.allow_mention == ["a", "b"]
-    args = build_parser().parse_args(["resolve", PR, "--thread", "x", "--thread", "y"])
-    assert args.thread == ["x", "y"]
+    args = build_parser().parse_args(["resolve", PR, "--thread", "gh:rt:x", "--thread", "gh:rt:y"])
+    assert args.thread == ["gh:rt:x", "gh:rt:y"]
 
 
 def test_exactly_100_threads_parse() -> None:
-    argv = ["resolve", PR, *[x for i in range(100) for x in ("--thread", f"t{i}")]]
+    argv = ["resolve", PR, *[x for i in range(100) for x in ("--thread", f"gh:rt:t{i}")]]
     assert len(build_parser().parse_args(argv).thread) == 100
 
 
