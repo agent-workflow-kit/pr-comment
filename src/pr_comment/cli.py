@@ -694,7 +694,8 @@ def _run_stream(stream: Callable[[Callable[[str], None]], None], args: argparse.
         return 0
     except Exception as exc:
         if isinstance(exc, OSError):
-            _silence_stdout()
+            if started:
+                _silence_stdout()
             outcome = error_outcome(
                 "internal", f"unexpected {type(exc).__name__}: {exc.strerror or 'I/O error'}"
             )

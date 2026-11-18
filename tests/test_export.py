@@ -1005,6 +1005,25 @@ def test_a_line_rewritten_between_the_passes_is_not_printed(
     assert err.count("skipped") == 1 and "line 2" in err
 
 
+def test_a_skip_in_the_second_pass_past_the_cap_is_summarized(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    junk = [b"junk\n"] * (export.MAX_WARNINGS + 5)
+    path = put("audit.jsonl", *junk, audit_rec(ATT1), audit_rec(ATT2))
+    real = export._winners  # pyright: ignore[reportPrivateUsage]
+
+    def rewriting(*args: Any, **kwargs: Any) -> Any:
+        result = real(*args, **kwargs)
+        path.write_bytes(b"".join(junk) + line(audit_rec(ATT1)) + line(audit_rec(ATT3)))
+        return result
+
+    monkeypatch.setattr(export, "_winners", rewriting)
+    code, out, err = run(capsys)
+    assert code == 0
+    assert [r["attempt_id"] for r in out_lines(out)] == [ATT1]
+    assert "5 more" in err and "1 more" in err
+
+
 # --- the real writers and the schemas ----------------------------------------------------------
 
 
@@ -1042,3 +1061,21 @@ def test_the_checked_values_match_the_schemas() -> None:
     assert list(export.LOG_EVENTS) == log["event"]["enum"]
     assert list(export.LOG_LEVELS) == log["level"]["enum"]
     assert export._ATTEMPT_ID_RE.pattern == audit["attempt_id"]["pattern"][1:-1]  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_pre_write_os_error_under_json_keeps_the_error_envelope(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    put("log.jsonl", log_rec())
+
+    def broken(*_: Any) -> Any:
+        raise OSError(5, "Input/output error")
+
+    silenced: list[bool] = []
+    monkeypatch.setattr(export, "_emit_record", broken)
+    monkeypatch.setattr(cli, "_silence_stdout", lambda: silenced.append(True))
+    code, out, err = run(capsys, "--log", "--json")
+    assert code == 1
+    assert "Traceback" not in err
+    assert json.loads(out)["error"]["code"] == "internal"
+    assert silenced == []  # nothing was written, so stdout stays usable for the envelope

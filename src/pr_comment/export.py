@@ -228,6 +228,7 @@ class _Warner:
     def __init__(self, name: str) -> None:
         self._name = name
         self.skipped = 0
+        self._summarised = 0
 
     def skip(self, number: int, reason: str) -> None:
         self.skipped += 1
@@ -235,10 +236,11 @@ class _Warner:
             LOG.warning("%s: line %d skipped (%s)", self._name, number, reason)
 
     def finish(self) -> None:
-        if self.skipped > MAX_WARNINGS:
-            LOG.warning(
-                "%s: %d more malformed lines skipped", self._name, self.skipped - MAX_WARNINGS
-            )
+        """Summarise the skips past the cap that no earlier call has summarised."""
+        more = max(0, self.skipped - MAX_WARNINGS) - self._summarised
+        if more > 0:
+            LOG.warning("%s: %d more malformed lines skipped", self._name, more)
+            self._summarised += more
 
 
 class _OnlyLines:
@@ -413,8 +415,7 @@ def handle_export(args: argparse.Namespace) -> Outcome:
                     size += len(piece)
                     if size >= _FLUSH_BYTES:
                         flush()
-                if not kind.dedupe:
-                    warner.finish()
+                warner.finish()
             if as_json:
                 pieces.append("]\n")
             flush()
