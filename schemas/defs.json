@@ -74,9 +74,10 @@
     "base_ref": {
       "type": "string",
       "x-untrusted": true,
-      "description": "Untrusted: a branch name, as written in a draft or reported by forgectl; forgectl's branch grammar (git check-ref-format, no leading -).",
+      "description": "Untrusted: a branch name, as written in a draft or reported by forgectl; forgectl's branch grammar (git check-ref-format, no leading -, no path component starting with a dot, not a lone @, at most 1024 characters). The schema cannot express the rest of what `draft check` refuses: refs and refs/ prefixes, and control, format, surrogate and line or paragraph separator characters.",
       "minLength": 1,
-      "pattern": "^(?!-)(?!/)(?!.*/$)(?!.*\\.\\.)(?!.*@\\{)(?!.*//)(?!.*\\.lock(?:/|$))(?!.*\\.$)[^\\x00-\\x20\\x7f~^:?*\\[\\\\]+$"
+      "maxLength": 1024,
+      "pattern": "^(?!-)(?!/)(?!@$)(?!(?:.*/)?\\.)(?!.*/$)(?!.*\\.\\.)(?!.*@\\{)(?!.*//)(?!.*\\.lock(?:/|$))(?!.*\\.$)[^\\x00-\\x20\\x7f~^:?*\\[\\\\]+$"
     },
     "pr_id": {
       "type": "string",
