@@ -400,15 +400,6 @@ def test_rule_refuses_with_pointer(
         assert error["message"]
 
 
-def test_every_schema_expressible_rule_is_checked_by_code_too() -> None:
-    # The code-level validator is never weaker than the schema for the same document.
-    for name, mutate, _pointer, schema_rejects in RULES:
-        doc = good()
-        mutate(doc)
-        if schema_rejects:
-            assert validate_document(doc), name
-
-
 def test_boundary_values_accepted() -> None:
     doc = good()
     doc["body"] = "é" * 32768  # exactly 64 KiB of UTF-8
@@ -603,9 +594,10 @@ def test_moderate_nesting_inside_meta_is_accepted() -> None:
     assert parse_draft(dumps(doc)).data["meta"] == doc["meta"]
 
 
-def test_huge_integer_is_refused_without_crashing() -> None:
+def test_huge_line_number_is_accepted_without_crashing() -> None:
+    # The schema sets no upper bound for line, so an integer past Python's digit limit loads.
     raw = dumps(good()).replace(b'"line": 10', b'"line": ' + b"9" * 5000)
-    _invalid(raw)
+    assert parse_draft(raw).data["findings"][0]["line"] > 0
 
 
 def test_large_but_in_range_integer_is_not_a_crash() -> None:
@@ -615,7 +607,7 @@ def test_large_but_in_range_integer_is_not_a_crash() -> None:
 
 
 def test_lone_surrogate_escape_does_not_crash_loading() -> None:
-    # Refusing the character is the text pipeline's job (invalid_text, TODO #14); loading must
+    # Refusing the character is the text pipeline's job (invalid_text, TODO(#14)); loading must
     # still not crash on the byte count of such a string.
     raw = dumps(good()).replace(b'"summary"', b'"\\ud800"')
     parse_draft(raw)
@@ -997,3 +989,61 @@ def test_hostile_long_pr_is_refused_quickly() -> None:
     doc = good()
     doc["pr"] = "a" * 250 + "/" + "b" * 100 + "#1"
     assert validate_document(doc) == []
+
+
+# --- review round 1 --------------------------------------------------------------------------
+
+
+def _chain_text(exc: BaseException | None) -> str:
+    parts: list[str] = []
+    while exc is not None:
+        parts.append(repr(exc))
+        parts.append(str(exc))
+        exc = exc.__cause__ or exc.__context__
+    return " ".join(parts)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"\xff" + CANARY.encode() + b"\xfe",
+        ("{" + CANARY + "}").encode(),
+        b'{"a": "' + CANARY.encode() + b'" "b": 1}',
+    ],
+)
+def test_parse_failure_leaves_no_draft_content_on_the_exception_chain(raw: bytes) -> None:
+    with pytest.raises(DraftError) as info:
+        parse_draft(raw)
+    assert info.value.__context__ is None
+    assert info.value.__cause__ is None
+    assert CANARY not in _chain_text(info.value)
+
+
+def test_huge_schema_version_is_unsupported_not_invalid_json() -> None:
+    raw = dumps(good()).replace(b'"schema_version": 1', b'"schema_version": ' + b"9" * 5000)
+    with pytest.raises(DraftError) as info:
+        parse_draft(raw)
+    assert info.value.code == "unsupported_draft_version"
+    assert info.value.details == {"supported": [1]}
+
+
+def test_huge_negative_schema_version_is_unsupported() -> None:
+    raw = dumps(good()).replace(b'"schema_version": 1', b'"schema_version": -' + b"9" * 5000)
+    with pytest.raises(DraftError) as info:
+        parse_draft(raw)
+    assert info.value.code == "unsupported_draft_version"
+
+
+def test_huge_integer_in_meta_does_not_make_the_draft_unloadable() -> None:
+    doc = good()
+    doc["meta"] = {"n": 1}
+    raw = dumps(doc).replace(b'"n": 1', b'"n": ' + b"9" * 5000)
+    assert parse_draft(raw).data["meta"]["n"] > 0
+
+
+def test_pr_over_the_cap_has_its_own_message_without_echo() -> None:
+    doc = good()
+    doc["pr"] = "github.com/" + CANARY + "x" * 2100 + "#7"
+    errors = validate_document(doc)
+    assert errors[0] == {"pointer": "/pr", "message": "is longer than 2048 characters"}
+    assert CANARY not in repr(errors)

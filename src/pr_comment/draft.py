@@ -225,26 +225,58 @@ def _float(text: str) -> float:
     return value
 
 
+_INT_DIGITS_LIMIT: Final = 4000
+_HUGE: Final = 10**4300
+
+
+def _int(text: str) -> int:
+    """``int(text)`` that never raises: past Python's digit limit, a plain int of the same sign.
+
+    Such a number is far outside every range the draft allows, so the stand-in only has to be
+    out of range the same way.
+    """
+    if len(text) <= _INT_DIGITS_LIMIT:
+        return int(text)
+    return -_HUGE if text.startswith("-") else _HUGE
+
+
+def _parse_json(raw: bytes) -> tuple[Any, str | None]:
+    """The document and no failure, or no document and the fixed failure text.
+
+    The failure is returned, not raised from the handler, so the error that reaches the caller
+    has no ``__context__`` holding draft content (decoder text, ``JSONDecodeError.doc``).
+    """
+    failure: str
+    try:
+        text = raw.decode("utf-8")
+        document: Any = json.loads(
+            text,
+            object_pairs_hook=_pairs,
+            parse_constant=_constant,
+            parse_float=_float,
+            parse_int=_int,
+        )
+        return document, None
+    except UnicodeDecodeError:
+        failure = "draft is not valid UTF-8"
+    except _Refused as exc:
+        failure = str(exc)
+    except RecursionError:
+        failure = "draft is nested too deeply"
+    except ValueError:  # JSONDecodeError
+        failure = "draft is not valid JSON"
+    return None, failure
+
+
 def parse_draft(raw: bytes) -> Draft:
     """Parse and validate a draft from its bytes. Raises ``DraftError``."""
     if len(raw) > MAX_DRAFT_BYTES:
         raise _fail("draft is larger than 16 MiB")
     if raw.startswith(b"\xef\xbb\xbf"):
         raise _fail("draft starts with a byte order mark")
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        raise _fail("draft is not valid UTF-8") from None
-    try:
-        document = json.loads(
-            text, object_pairs_hook=_pairs, parse_constant=_constant, parse_float=_float
-        )
-    except _Refused as exc:
-        raise _fail(str(exc)) from None
-    except RecursionError:
-        raise _fail("draft is nested too deeply") from None
-    except ValueError:  # JSONDecodeError, an integer over Python's digit limit
-        raise _fail("draft is not valid JSON") from None
+    document, failure = _parse_json(raw)
+    if failure is not None:
+        raise _fail(failure)
     if isinstance(document, dict):
         version: object = document.get("schema_version")  # pyright: ignore[reportUnknownMemberType]
         if type(version) is int and version not in SUPPORTED_VERSIONS:
@@ -256,6 +288,8 @@ def parse_draft(raw: bytes) -> Draft:
                 {"supported": list(SUPPORTED_VERSIONS)},
             )
     errors = validate_document(document)
+    # TODO(#14): text pipeline steps 1-2 on text fields (invalid_text for control characters
+    # and lone surrogates, suggestion fences)
     if errors:
         raise invalid_draft(errors)
     return Draft(document, hashlib.sha256(raw).hexdigest())
@@ -490,7 +524,7 @@ def validate_document(document: object) -> list[dict[str, str]]:
     if "pr" in root:
         pr = root["pr"]
         if type(pr) is str and len(pr) > MAX_PR_CHARS:
-            issues.add("/pr", "is not in the required form")
+            issues.add("/pr", f"is longer than {MAX_PR_CHARS} characters")
         else:
             _check_pattern(pr, "/pr", issues, _PR_RE)
     if "anchor" in root:
