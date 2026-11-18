@@ -143,6 +143,10 @@ class Plan:
     neutralized_lines: int = 0
     markers_removed: int = 0
     override_forgectl: bool = False
+    # the mention policy in effect and the names it allows (config plus ``--allow-mention``);
+    # shown by the dialog, not part of the hash
+    mentions_policy: str = "neutralize"
+    mentions_allowed: tuple[str, ...] = ()
 
     def _flags(self) -> tuple[list[str], list[str]]:
         """The arguments before and after the ``--yes`` or ``--dry-run`` slot, in the order of the
@@ -177,10 +181,15 @@ class Plan:
         return [FORGECTL, self.action, *before, "--json", "--yes", *after, *tail]
 
     def shown_bodies(self) -> tuple[PlanBody, ...]:
-        """The bodies as forgectl will post them: each followed by its dedupe line, which forgectl
-        appends (the dialog shows these; the hash does not cover the line, the key does)."""
+        """The bodies as forgectl will post them: the review body (or the comment, reply or
+        approval body) followed by its dedupe line, which forgectl appends (forgectl interface,
+        Dedupe key, Where); inline comments carry none. The dialog shows these; the hash does not
+        cover the line, the key does."""
         return tuple(
-            PlanBody(b.role, with_dedupe_line(b.text, self.dedupe_key)) for b in self.bodies
+            PlanBody(
+                b.role, with_dedupe_line(b.text, self.dedupe_key) if b.role == "body" else b.text
+            )
+            for b in self.bodies
         )
 
     def document(self) -> dict[str, Any]:
@@ -551,6 +560,8 @@ def build_review_plan(
         neutralized_lines=neutralized,
         markers_removed=removed,
         override_forgectl=ctx.override_forgectl,
+        mentions_policy=ctx.settings.mentions_policy,
+        mentions_allowed=(*ctx.settings.mentions_allow, *ctx.allow_mentions),
     )
 
 
@@ -667,6 +678,8 @@ def build_text_plan(
         neutralized_lines=body.neutralized_lines,
         markers_removed=body.markers_removed,
         override_forgectl=ctx.override_forgectl,
+        mentions_policy=ctx.settings.mentions_policy,
+        mentions_allowed=(*ctx.settings.mentions_allow, *ctx.allow_mentions),
     )
 
 

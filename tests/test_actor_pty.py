@@ -41,6 +41,7 @@ def run_cli(
     """
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
+    (tmp_path / "b.md").write_text("body\n", encoding="utf-8")
     env = {
         "PATH": os.environ.get("PATH", ""),
         "HOME": str(home),
@@ -108,12 +109,16 @@ def assert_usage(result: tuple[int, dict[str, Any]], needle: str) -> None:
 
 
 def assert_accepted(result: tuple[int, dict[str, Any]]) -> None:
-    """Validation passed: the posting handler ran and failed on the body file, which these tests
-    do not create (``b.md`` is absent and ``-`` reads as empty)."""
+    """Validation passed: the posting handler ran and ended at an input it needs next. These runs
+    have no body file (``b.md`` is absent and ``-`` reads as empty) and no forgectl on the PATH."""
     code, doc = result
+    error = doc["error"]
+    if code == 12:
+        assert error["code"] == "tool_missing"
+        return
     assert code == 2
-    assert doc["error"]["code"] == "usage"
-    assert doc["error"]["message"] in ("the body file cannot be opened", "the body is empty")
+    assert error["code"] == "usage"
+    assert error["message"] in ("the body file cannot be opened", "the body is empty")
 
 
 def test_human_on_a_real_terminal_may_use_allow_mention(tmp_path: Path) -> None:

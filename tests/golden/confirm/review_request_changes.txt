@@ -1,0 +1,36 @@
+== plan ==
+plan_sha256 f9faaa38011d0cffa5586d3b9d25981553e440e6adc3f6bdc38595c7540a2a76
+--- body, 247 bytes
+  | Drafted with AI assistance · posted by `alice` after review · aaaaaaaaaaaa
+  | 
+  | ---
+  | 
+  | Overall: see below.
+  | 
+  | ### File-level findings
+  | 
+  | ` src/b.py `
+  | 
+  | **nit**
+  | 
+  | Rename this.
+  | 
+  | <!-- pr-comment:v1 -->
+  | <!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV -->
+--- inline:f1 at src/a.py:3 (right), 56 bytes
+  | **major**
+  | 
+  | Check the bound here.
+  | 
+  | <!-- pr-comment:v1 -->
+== summary ==
+REVIEW: REQUEST_CHANGES
+PR github.com/acme/widgets#7
+head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, base main
+actor human:alice
+inline 1, file-level 1, moved 0
+findings by severity: major 1, nit 1
+suggestions degraded 0, mentions neutralized 0
+links at most 0 (not every link form is counted), images at most 0, raw HTML at most 0
+invisible characters marked 0
+text: `<` and `![` are neutralized in what is posted (replaced by look-alike characters; 0 command lines spaced, 0 markers removed)
