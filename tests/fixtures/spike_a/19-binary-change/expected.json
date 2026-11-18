@@ -1,0 +1,24 @@
+[
+ {
+  "finding": {
+   "path": "bin.dat",
+   "side": "right",
+   "line": 1
+  },
+  "expected": {
+   "unmapped": "changed"
+  }
+ },
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 3
+  },
+  "expected": {
+   "path": "f.txt",
+   "line": 3,
+   "side": "right"
+  }
+ }
+]

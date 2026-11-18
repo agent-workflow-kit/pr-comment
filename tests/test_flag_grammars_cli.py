@@ -23,9 +23,10 @@ def _run(capsys: pytest.CaptureFixture[str], argv: list[str]) -> tuple[int, dict
     return code, json.loads(captured.out), captured.err
 
 
-def _parse(argv: list[str]) -> argparse.Namespace:
+def _parse(argv: list[str], *, check_run_rules: bool = True) -> argparse.Namespace:
     args = build_parser().parse_args(argv)
-    cli.validate_args(args)
+    if check_run_rules:
+        cli.validate_args(args)
     return args
 
 
@@ -54,6 +55,25 @@ FLAGS: list[tuple[list[str], str, str, list[str]]] = [
     (["approve", PR], "--expected-head", SHA, ["abc"]),
     (["approve", PR], "--expected-base", "main", ["a..b", "a@{b", "-x", "refs/heads/m", ""]),
     (["approve", PR], "--dedupe-key", "k", ["a b"]),
+    (
+        ["review", PR, "--draft-file", "d"],
+        "--allow-mention",
+        "org/team",
+        ["", "@john", "a/", "/a", "a//b", "a b", "é", "a​b", "＠x", "a\nb"],
+    ),
+    (
+        ["comment", PR, "--body-file", "b"],
+        "--allow-mention",
+        "John.Doe",
+        ["@johnmarker", "zzmarker@", "a,zzmarker"],
+    ),
+    (
+        ["reply", PR, "--body-file", "b"],
+        "--allow-mention",
+        "a-b_c",
+        ["a/", "zzmarker&#64;", "a\nzzmarker"],
+    ),
+    (["approve", PR], "--allow-mention", "g/sub/proj", ["@all", "a/b/"]),
     (["resolve", PR], "--thread", THREAD, ["gh:ic:abc", "gl:d:" + "a" * 39, "x", "-x"]),
     (["unresolve", PR], "--thread", "gl:d:" + SHA, ["gh:rt:" + "a" * 101, "gl:n:1"]),
 ]
@@ -73,8 +93,11 @@ def test_valid_values_parse_in_both_forms(
     base: list[str], flag: str, good: str, bad: list[str]
 ) -> None:
     extra = _complete(base, flag)
-    _parse([*base, *extra, flag, good])
-    _parse([*base, *extra, f"{flag}={good}"])
+    # --allow-mention also needs a human actor and a terminal (validate_args, tested with the
+    # actor rules); here only the value grammar is under test.
+    check_run_rules = flag != "--allow-mention"
+    _parse([*base, *extra, flag, good], check_run_rules=check_run_rules)
+    _parse([*base, *extra, f"{flag}={good}"], check_run_rules=check_run_rules)
 
 
 @pytest.mark.parametrize(("base", "flag", "good", "bad"), FLAGS, ids=lambda v: str(v)[:24])
@@ -89,11 +112,16 @@ def test_invalid_values_exit_two_naming_the_flag(
     calls = _no_handler(monkeypatch)
     extra = _complete(base, flag)
     for value in bad:
-        code, doc, _ = _run(capsys, [*base, *extra, f"{flag}={value}"])
+        code, doc, err = _run(capsys, [*base, *extra, f"{flag}={value}"])
         assert code == 2, value
         assert doc["error"]["code"] == "usage", value
         assert flag in doc["error"]["message"], value
         validate("pr-comment/cli/error.json", doc)
+        if flag == "--allow-mention" and value:
+            # the value is not echoed anywhere (docs/interface.md: Mentions)
+            assert value not in doc["error"]["message"], value
+            assert value not in json.dumps(doc), value
+            assert value not in err, value
     assert calls == []
 
 
