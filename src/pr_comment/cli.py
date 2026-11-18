@@ -17,6 +17,7 @@ from typing import Any, NoReturn, cast
 
 from . import __version__, grammars
 from .actor import NAME_RE, ActorError, os_username, resolve_run, stream_is_tty, with_me_name
+from .approve import guard_prepared
 from .audit import AuditTrail, AuditUnavailableError, audit_unavailable_error
 from .config import ConfigError, load_config
 from .confirm import Interrupted, confirm
@@ -561,20 +562,20 @@ def _confirm_and_post(
 ) -> Outcome:
     """Steps 8 and 9: the dialog, then the write (``post.post_review``, also for comment and reply).
 
-    TODO(#31): approve and ``review --approve``, with the automatic
-    approval guard: until then ``review --approve`` is refused before the dialog, so no approval
-    is ever posted without the guard.
+    ``comment``, ``reply``, ``approve`` and ``review --approve`` go through the same write; the
+    automatic approval guard (``approve.py``) is applied to the confirmed plan itself before the
+    dialog and any write, as well as by ``prepare``.
     """
     request = prepared.request
     pr = prepared.plan.pr
-    if request.command == "review" and request.approve:
-        stub = error_outcome("internal", "review --approve is not implemented yet")
-        log_failure(session.log, session.attempt_id, pr, stub)
-        return stub
+    guarded = guard_prepared(prepared, args.loaded_config)
+    if guarded is not None:
+        log_failure(session.log, session.attempt_id, pr, guarded)
+        return guarded
     refused = _confirmed(args, prepared, session)
     if refused is not None:
         return refused
-    if request.command not in ("review", "comment", "reply"):
+    if request.command not in ("review", "comment", "reply", "approve"):
         stub = error_outcome(
             "internal", "posting is not implemented yet: the plan passed its pre-check"
         )

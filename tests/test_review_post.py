@@ -560,22 +560,6 @@ def test_expect_plan_mismatch_refuses_before_the_audit_attempt(
     assert audit(state_home) == []
 
 
-def test_review_approve_is_not_posted_until_the_guard_exists(
-    cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path
-) -> None:
-    # TODO(#31): the automatic approval guard; no approval is ever posted without it
-    draft = draft_file(tmp_path, [finding("f1")])
-    forgectl.script(show(), dry())
-    code, doc, _ = cli(*args_for(draft, "--approve"))
-    assert code == 1 and doc["error"]["code"] == "internal"
-    assert forgectl.writes() == []
-    assert audit(state_home) == []
-    internal = [e for e in log(state_home) if e["level"] == "error"]
-    assert [(e["event"], (e["details"] or {}).get("code")) for e in internal] == [
-        ("warning", "internal")
-    ]
-
-
 # --- the audit file ----------------------------------------------------------------------------
 
 

@@ -31,10 +31,12 @@ Rules that keep a post from happening twice or being lost:
 - A forgectl failure keeps forgectl's exit code, code, reason and details (``lower.py``);
   ``backend`` is passed so ``outcome_partial`` is read per backend.
 
+``approve`` and ``review --approve`` use the same write (``Plan.action`` and the plan's args say
+which forgectl command); the automatic approval guard (``approve.py``) has run before this module
+is reached.
+
 Seams: TODO(#33) the ``pre-post`` and ``post-post`` hooks; TODO(#36) the GitLab review body thread
-resolve (``Plan.follow_ups``): until then it is reported as not done (``body_thread_unresolved``);
-TODO(#31) the automatic approval guard for ``review --approve``, which the CLI refuses before this
-module is reached.
+resolve (``Plan.follow_ups``): until then it is reported as not done (``body_thread_unresolved``).
 """
 
 from __future__ import annotations
@@ -251,13 +253,23 @@ def _human_lines(prepared: Prepared, read: PostRead, warnings: Sequence[str]) ->
     if plan.action in TEXT_ACTIONS:
         return text_lines(prepared, read, warnings)
     head = "already posted" if read.already_posted else "posted"
-    lines = [
-        f"{head}: {plan.action} {(plan.event or '').upper()} on {plan.pr} at {plan.head_sha[:12]}",
-        f"inline {len(plan.posted_inline)}, moved {len(plan.moved)}, "
-        f"file-level {len(plan.file_level)}, suggestions degraded {len(plan.suggestions_degraded)}",
-    ]
+    what = (
+        plan.action if plan.action == "approve" else f"{plan.action} {(plan.event or '').upper()}"
+    )
+    lines = [f"{head}: {what} on {plan.pr} at {plan.head_sha[:12]}"]
+    if plan.action == "review":
+        lines.append(
+            f"inline {len(plan.posted_inline)}, moved {len(plan.moved)}, "
+            f"file-level {len(plan.file_level)}, "
+            f"suggestions degraded {len(plan.suggestions_degraded)}"
+        )
     if read.review_id is not None:
         lines.append(f"review {read.review_id}")
+    if read.head_verified is False:
+        lines.append(
+            "head_verified is false: an earlier approval exists that forgectl cannot confirm "
+            "counts for this head and base"
+        )
     if warnings:
         lines.append("warnings: " + ", ".join(warnings))
     return tuple(lines)
@@ -314,7 +326,9 @@ def post_review(prepared: Prepared, env: PostEnv) -> Outcome:
     # there would lose the write's result): ``lower.mismatch_outcome`` reads the cached value.
     env.gateway.lower_version()
     # TODO(#33): the pre-post hooks run here (veto: exit 11, escalation: exit 13), before
-    # ``attempted``; a veto or escalation before the first write goes to the log only.
+    # ``attempted``; a veto or escalation before the first write goes to the log only. An id a
+    # hook prints must never feed the automatic approval guard (``approve.py``): it has already
+    # run, on the caller's ``--decision-id`` flags only.
     with _DeferredSignals() as held:
         return _post_with_audit(prepared, env, held)
 
