@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "pr-comment/config.json",
   "title": "pr-comment config",
-  "description": "~/.config/pr-comment/config.yaml (XDG respected) plus config.d/*.yaml in lexical order. Invalid config exits 2 (config_invalid), naming the key. Drop-ins: maps merge, hook lists append, other lists replace. Precedence: flags, then repos.<id>, then environment (top-level scalars only), then config, then defaults.",
+  "description": "~/.config/pr-comment/config.yaml (XDG respected) plus config.d/*.yaml in lexical order. Invalid config exits 2 (config_invalid), naming the key. Drop-ins: maps merge, hook lists append, other lists replace. Precedence: flags, then repos.<id>, then environment (top-level scalars only), then config, then defaults. Refused in code only, as config_invalid, because the schema cannot say them: a Cf character in a footer template, a hook cmd that is only whitespace, repos keys that differ only by ASCII case within one file (spellings in different files merge), a NUL in forgectl_config, an empty YAML document (read as an empty map; a document that is not a map is refused), and a trailing newline in a pattern-checked value.",
   "type": "object",
   "properties": {
     "forgectl_bin": {
