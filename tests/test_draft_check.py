@@ -224,9 +224,45 @@ def test_many_errors_are_capped(capsys: pytest.CaptureFixture[str], tmp_path: Pa
     bad = good()
     bad["findings"] = [{"id": f"f{i}", "path": "a", "line": 1, "body": "x\x00"} for i in range(300)]
     _, doc, _ = run(capsys, ["draft", "check", write(tmp_path, bad)])
-    assert len(doc["errors"]) <= 101
-    assert doc["errors"][-1]["message"] == "further errors omitted"
+    assert len(doc["errors"]) == 101
+    assert doc["errors"][-1] == {"pointer": "", "message": "further errors omitted", "kind": None}
     assert doc["findings"] == 300
+    validate("pr-comment/cli/draft-check.json", doc)
+
+
+def test_schema_and_text_errors_share_one_cap(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    bad = good()
+    bad["findings"] = [
+        {"id": f"f{i}", "path": "a", "line": 0 if i < 150 else 1, "body": "x\x00"}
+        for i in range(300)
+    ]
+    _, doc, _ = run(capsys, ["draft", "check", write(tmp_path, bad)])
+    errors = doc["errors"]
+    assert len(errors) == 101
+    omitted = [e for e in errors if e["message"] == "further errors omitted"]
+    assert len(omitted) == 1
+    assert errors[-1] is omitted[0]
+    assert errors[-1]["kind"] is None
+    assert all(e["kind"] is None for e in errors[:100])
+    validate("pr-comment/cli/draft-check.json", doc)
+
+
+@pytest.mark.parametrize("digits", [3000, 5000])
+def test_huge_schema_version_does_not_crash(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, digits: int
+) -> None:
+    path = tmp_path / "draft.json"
+    path.write_text('{"schema_version": ' + "9" * digits + "}", encoding="utf-8")
+    code = main(["draft", "check", str(path), "--json"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "Traceback" not in captured.err
+    doc = json.loads(captured.out)
+    assert "error" not in doc
+    assert doc["valid"] is False
+    assert doc["schema_version"] is None
     validate("pr-comment/cli/draft-check.json", doc)
 
 
@@ -266,6 +302,27 @@ def test_meta_passes_through_without_error(
     assert result["valid"] is True
 
 
+def test_meta_text_is_not_pipeline_checked(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    doc = good()
+    doc["meta"] = {"review_run": "a\x01b ```suggestion\nx\n```"}
+    code, result, _ = run(capsys, ["draft", "check", write(tmp_path, doc)])
+    assert code == 0
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_non_object_meta_is_a_meta_error(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    doc = good()
+    doc["meta"] = "text"
+    code, result, _ = run(capsys, ["draft", "check", write(tmp_path, doc)])
+    assert code == 2
+    assert [e["pointer"] for e in result["errors"]] == ["/meta"]
+
+
 # --- human output ----------------------------------------------------------------------------
 
 
@@ -295,6 +352,49 @@ def test_quiet_drops_the_human_lines(capsys: pytest.CaptureFixture[str], tmp_pat
     code = main(["draft", "check", write(tmp_path, good()), "--quiet"])
     assert code == 0
     assert capsys.readouterr().err == ""
+
+
+def test_quiet_drops_the_human_lines_of_an_invalid_draft(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    bad = good()
+    bad["findings"][0]["line"] = 0
+    code = main(["draft", "check", write(tmp_path, bad), "--quiet"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.err == ""
+
+
+def test_failure_without_error_details_falls_back_to_the_message() -> None:
+    from pr_comment.draft import DraftError, _failure_entries
+
+    entries = _failure_entries(DraftError("invalid_draft", "draft could not be read"))
+    assert entries == [{"pointer": "", "message": "draft could not be read", "kind": None}]
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        {"valid": True, "schema_version": None},
+        {"valid": True, "draft_id": None},
+        {"valid": True, "findings": None},
+        {"valid": True, "errors": [{"pointer": "", "message": "m", "kind": None}]},
+        {"valid": False, "errors": []},
+    ],
+)
+def test_schema_rejects_inconsistent_results(mutate: Doc) -> None:
+    from jsonschema import ValidationError
+
+    doc: Doc = {
+        "valid": True,
+        "schema_version": 1,
+        "draft_id": DRAFT_ID,
+        "findings": 0,
+        "errors": [],
+    }
+    doc.update(mutate)
+    with pytest.raises(ValidationError):
+        validate("pr-comment/cli/draft-check.json", doc)
 
 
 def test_handler_is_registered() -> None:

@@ -46,6 +46,7 @@ MAX_PATH_BYTES: Final = 4096
 MAX_TITLE_CHARS: Final = 256
 MAX_ITEMS: Final = 500
 MAX_REPORTED_ERRORS: Final = 100
+_OMITTED: Final = "further errors omitted"
 # The schema's pr pattern has nested quantifiers; a real PR is far shorter than this.
 MAX_PR_CHARS: Final = 2048
 
@@ -398,7 +399,7 @@ class _Issues:
             self.items.append({"pointer": pointer, "message": message})
         elif not self._full:
             self._full = True
-            self.items.append({"pointer": "", "message": "further errors omitted"})
+            self.items.append({"pointer": "", "message": _OMITTED})
 
 
 def _utf8_len(text: str) -> int:
@@ -657,17 +658,23 @@ def _check_items(root: dict[str, Any], issues: _Issues) -> None:
 
 
 def _result_entries(document: object) -> list[dict[str, str | None]]:
-    """Schema problems, then text problems, as ``{pointer, message, kind}`` (capped).
+    """Schema problems, then text problems, as ``{pointer, message, kind}``.
 
-    A field with a control character is not also fence-checked (``text_issues``), so a fence
-    behind one shows only after the control character is fixed.
+    One cap covers both: at most ``MAX_REPORTED_ERRORS`` entries, then one ``further errors
+    omitted`` entry when any were dropped. A field with a control character is not also
+    fence-checked (``text_issues``), so a fence behind one shows only after the control character
+    is fixed.
     """
     entries: list[dict[str, str | None]] = [
         {"pointer": e["pointer"], "message": e["message"], "kind": None}
         for e in validate_document(document)
     ]
-    issues = text_issues(document)
-    for issue in issues[:MAX_REPORTED_ERRORS]:
+    # validate_document ends with its own sentinel when it hit the cap; it is re-added below.
+    omitted = False
+    if entries and entries[-1]["message"] == _OMITTED and len(entries) > MAX_REPORTED_ERRORS:
+        entries.pop()
+        omitted = True
+    for issue in text_issues(document):
         entries.append(
             {
                 "pointer": issue["pointer"],
@@ -675,9 +682,16 @@ def _result_entries(document: object) -> list[dict[str, str | None]]:
                 "kind": issue["kind"],
             }
         )
-    if len(issues) > MAX_REPORTED_ERRORS:
-        entries.append({"pointer": "", "message": "further errors omitted", "kind": None})
+    if len(entries) > MAX_REPORTED_ERRORS:
+        entries = entries[:MAX_REPORTED_ERRORS]
+        omitted = True
+    if omitted:
+        entries.append({"pointer": "", "message": _OMITTED, "kind": None})
     return entries
+
+
+# Ints echoed in the result stay within a signed 64-bit range; a larger one is reported as null.
+_MAX_ECHOED_INT: Final = 2**63
 
 
 def _metadata(document: object) -> tuple[int | None, str | None, int | None]:
@@ -689,7 +703,7 @@ def _metadata(document: object) -> tuple[int | None, str | None, int | None]:
     draft_id: object = root.get("draft_id")
     findings: object = root.get("findings")
     return (
-        version if type(version) is int else None,
+        version if type(version) is int and abs(version) < _MAX_ECHOED_INT else None,
         draft_id if type(draft_id) is str and _DRAFT_ID_RE.fullmatch(draft_id) else None,
         len(findings) if isinstance(findings, list) else None,  # pyright: ignore[reportUnknownArgumentType]
     )
@@ -697,7 +711,9 @@ def _metadata(document: object) -> tuple[int | None, str | None, int | None]:
 
 def _failure_entries(exc: DraftError) -> list[dict[str, str | None]]:
     """The ``{pointer, message, kind}`` entries of a load failure (a root pointer, fixed text)."""
-    errors: list[dict[str, str]] = (exc.details or {}).get("errors", [])
+    errors: list[dict[str, str]] = (exc.details or {}).get("errors") or []
+    if not errors:
+        return [{"pointer": "", "message": exc.message, "kind": None}]
     return [{"pointer": e["pointer"], "message": e["message"], "kind": None} for e in errors]
 
 
