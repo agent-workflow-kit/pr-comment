@@ -528,7 +528,12 @@ def test_retry_after_must_be_a_finite_non_negative_number(bad: Any) -> None:
         build_error("rate_limited", "x", retry_after=bad)
 
 
-@pytest.mark.parametrize("ok", [None, 0, 0.5, 30])
+def test_retry_after_huge_int_is_a_value_error_not_overflow() -> None:
+    with pytest.raises(ValueError, match="retry_after"):
+        build_error("rate_limited", "x", retry_after=10**400)
+
+
+@pytest.mark.parametrize("ok", [None, 0, 0.5, 30, 10**30])
 def test_retry_after_accepts_plain_numbers(ok: Any) -> None:
     assert build_error("rate_limited", "x", retry_after=ok)["error"]["retry_after"] == ok
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import math
 import re
+import sys
 import unicodedata
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
@@ -289,7 +290,11 @@ def _check_retry_after(value: object) -> None:
         return
     if type(value) is not int and type(value) is not float:
         raise ValueError("retry_after must be a finite number >= 0 or None")
-    if not math.isfinite(value) or value < 0:
+    if type(value) is float and not math.isfinite(value):
+        raise ValueError("retry_after must be a finite number >= 0 or None")
+    if value < 0:
+        raise ValueError("retry_after must be a finite number >= 0 or None")
+    if type(value) is int and value > sys.float_info.max:  # not representable as a JSON number
         raise ValueError("retry_after must be a finite number >= 0 or None")
 
 
