@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 
 from tests import fake_forgectl as ff
-from tests.fakes import Tracker, alive, make_fake, recorded
+from tests.fakes import Tracker, alive, make_fake, record, recorded
 from tests.forgectl_harness import PINNED_VERSION, PR, FakeForgectl, fail
 
 CASES_FILE = Path(__file__).resolve().parent / "forgectl_cases.json"
@@ -205,6 +205,7 @@ def test_the_real_forgectl_exits_128_plus_n_with_no_output_on_a_signal_before_a_
         stderr=subprocess.PIPE,
         start_new_session=True,
     )
+    record(tmp_path, proc.pid)
     deadline = time.monotonic() + 30
     while not (tmp_path / "ready").exists() and time.monotonic() < deadline:
         time.sleep(0.05)
@@ -212,5 +213,5 @@ def test_the_real_forgectl_exits_128_plus_n_with_no_output_on_a_signal_before_a_
     os.kill(proc.pid, signum)
     stdout, stderr = proc.communicate(timeout=30)
     assert (proc.returncode, stdout, stderr) == (exit_code, b"", b"")
-    gh = [r for r in recorded(tmp_path) if r[0] != proc.pid]
+    gh = [r for r in recorded(tmp_path) if r[0] != proc.pid and r[1] != proc.pid]
     assert gh and not any(alive(pid, start) for pid, _, start in gh)  # forgectl ended its child

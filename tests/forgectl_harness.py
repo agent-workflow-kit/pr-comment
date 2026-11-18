@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from tests import fake_forgectl as ff
-from tests.fakes import Tracker
+from tests.fakes import Tracker, record
 
 TESTS = Path(__file__).resolve().parent
 FAKEBIN = TESTS / "fakebin"
@@ -474,6 +474,7 @@ class FakeForgectl:
             cwd="/",
             start_new_session=True,
         )
+        record(self.directory, proc.pid)
         assert proc.stdin is not None
         proc.stdin.write(stdin)
         proc.stdin.close()

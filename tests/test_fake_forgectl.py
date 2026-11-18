@@ -881,7 +881,7 @@ def test_the_fake_ends_with_its_process_recorded_so_the_tracker_can_end_it(
     forgectl.script(ok("show", show_doc(), hang={"seconds": 30}))
     proc = forgectl.start(argv("show"))
     forgectl.wait_ready(0)
-    assert [pid for pid, _, _ in recorded(forgectl.directory)] == [proc.pid]
+    assert {pid for pid, _, _ in recorded(forgectl.directory)} == {proc.pid}
     os.kill(proc.pid, signal.SIGTERM)
     proc.communicate(timeout=30)
     assert proc.returncode == 143
