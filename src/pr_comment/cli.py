@@ -95,6 +95,20 @@ def _checked(check: Callable[[str], str]) -> Callable[[str], str]:
 # --- parser ----------------------------------------------------------------------------------
 
 
+def _fixed_text(message: str) -> str:
+    """Drop the caller's value from an argparse message (argparse echoes unknown arguments,
+    invalid choices and explicit values given to a flag that takes none).
+
+    What remains names only parts of the parser's own definition.
+    """
+    for marker in ("invalid choice:", "ignored explicit argument"):
+        if marker in message:
+            return message[: message.index(marker)] + marker.removesuffix(":")
+    if message.startswith("unrecognized arguments:"):
+        return "unrecognized arguments"
+    return message
+
+
 class _Parser(argparse.ArgumentParser):
     """Raises ``UsageError`` instead of printing and exiting, and takes no abbreviations."""
 
@@ -103,7 +117,7 @@ class _Parser(argparse.ArgumentParser):
         super().__init__(**kwargs)
 
     def error(self, message: str) -> NoReturn:
-        raise UsageError(message, self.format_usage())
+        raise UsageError(_fixed_text(message), self.format_usage())
 
 
 class AppendAction(argparse.Action):
@@ -145,7 +159,8 @@ class _StoreOnce(argparse.Action):
         values: str | Sequence[Any] | None,
         option_string: str | None = None,
     ) -> None:
-        if hasattr(namespace, self.dest) and getattr(namespace, self.dest) != values:
+        current = getattr(namespace, self.dest, None)
+        if current is not None and current != values:
             parser.error(f"{option_string} given more than once with different values")
         setattr(namespace, self.dest, values)
 
@@ -308,10 +323,19 @@ def _leaf(
 
 
 def _add_common_posting_flags(parser: argparse.ArgumentParser, *, base: bool = False) -> None:
-    parser.add_argument("--expected-head", metavar="SHA", type=_checked(grammars.check_sha))
+    parser.add_argument(
+        "--expected-head", action=_StoreOnce, metavar="SHA", type=_checked(grammars.check_sha)
+    )
     if base:
-        parser.add_argument("--expected-base", metavar="REF", type=_checked(grammars.check_branch))
-    parser.add_argument("--dedupe-key", metavar="KEY", type=_checked(grammars.check_dedupe_key))
+        parser.add_argument(
+            "--expected-base",
+            action=_StoreOnce,
+            metavar="REF",
+            type=_checked(grammars.check_branch),
+        )
+    parser.add_argument(
+        "--dedupe-key", action=_StoreOnce, metavar="KEY", type=_checked(grammars.check_dedupe_key)
+    )
     # TODO(#16): validate and apply the mention allowlist; TODO(#5): require a human actor and
     # an interactive run for --allow-mention.
     parser.add_argument("--allow-mention", action=AppendAction, default=[], metavar="NAME")
@@ -325,24 +349,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     review = _leaf(sub, "review", "review", "post one review from a draft")
-    review.add_argument("--draft-file", required=True, metavar="PATH|-")
+    review.add_argument("--draft-file", action=_StoreOnce, required=True, metavar="PATH|-")
     review.add_argument("--approve", action="store_true")
-    review.add_argument("--reanchor-to", metavar="SHA", type=_checked(grammars.check_sha))
+    review.add_argument(
+        "--reanchor-to", action=_StoreOnce, metavar="SHA", type=_checked(grammars.check_sha)
+    )
     _add_common_posting_flags(review)
 
     comment = _leaf(sub, "comment", "comment", "post a general PR comment")
-    comment.add_argument("--body-file", required=True, metavar="PATH|-")
+    comment.add_argument("--body-file", action=_StoreOnce, required=True, metavar="PATH|-")
     _add_common_posting_flags(comment)
 
     reply = _leaf(sub, "reply", "reply", "reply to a comment, thread or review")
     reply.add_argument(
-        "--to", required=True, metavar="ID", type=_checked(grammars.check_reply_target)
+        "--to",
+        action=_StoreOnce,
+        required=True,
+        metavar="ID",
+        type=_checked(grammars.check_reply_target),
     )
-    reply.add_argument("--body-file", required=True, metavar="PATH|-")
+    reply.add_argument("--body-file", action=_StoreOnce, required=True, metavar="PATH|-")
     _add_common_posting_flags(reply)
 
     approve = _leaf(sub, "approve", "approve", "approve a PR at a pinned head and base")
-    approve.add_argument("--body-file", metavar="PATH|-")
+    approve.add_argument("--body-file", action=_StoreOnce, metavar="PATH|-")
     _add_common_posting_flags(approve, base=True)
 
     for name, text in (("resolve", "resolve review threads"), ("unresolve", "reopen threads")):
@@ -365,12 +395,12 @@ def build_parser() -> argparse.ArgumentParser:
     check = _leaf(draft_sub, "check", "draft check", "validate a draft offline", positional=())
     check.add_argument("path", metavar="PATH|-")
     new = _leaf(draft_sub, "new", "draft new", "write a new draft for a PR")
-    new.add_argument("--event", choices=("comment", "request_changes"))
-    new.add_argument("--from", dest="from_draft", metavar="PATH|-")
+    new.add_argument("--event", action=_StoreOnce, choices=("comment", "request_changes"))
+    new.add_argument("--from", action=_StoreOnce, dest="from_draft", metavar="PATH|-")
 
     export = _leaf(sub, "export", "export", "print audit or log records", positional=())
     # TODO(#38): validate --since (RFC 3339 or a duration such as 7d).
-    export.add_argument("--since", metavar="TIME")
+    export.add_argument("--since", action=_StoreOnce, metavar="TIME")
     export.add_argument("--log", action="store_true")
     return parser
 
@@ -515,12 +545,19 @@ def _leading_dash_pr(argv: list[str]) -> bool:
 
     argparse reads such a token as an option, so the command would fail with a missing-argument
     usage error instead of ``invalid_pr``. Scans the tokens after the command, skipping known
-    flags and their values; the first token that is neither is the PR argument. A ``--`` ends the
-    scan: the token after it is a positional and ``validate_args`` checks it.
+    flags and their values. An unknown dash token is the PR argument only when no positional
+    follows it: with one (``comment --bogus a#1 ...``) the PR is present and argparse reports the
+    unknown flag as usage. A ``--`` ends the scan: the token after it is a positional and
+    ``validate_args`` checks it. ``-h``, ``--help`` and ``--version`` before ``--`` always reach
+    argparse.
     """
+    head = argv[: argv.index("--")] if "--" in argv else argv
+    if any(token in ("-h", "--help", "--version") for token in head):
+        return False
     words, start = _command_path(argv)
     if not (words and words[-1] in _COMMANDS_WITH_PR) and words != ["draft", "new"]:
         return False
+    unknown_dash = False
     skip = False
     for token in argv[start:]:
         if skip:
@@ -536,8 +573,8 @@ def _leading_dash_pr(argv: list[str]) -> bool:
         if name in VALUE_FLAGS:
             skip = "=" not in token
         elif name not in _VALUELESS_FLAGS:
-            return True
-    return False
+            unknown_dash = True
+    return unknown_dash
 
 
 def _render(outcome: Outcome, *, as_json: bool) -> tuple[str, str]:

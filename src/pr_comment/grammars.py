@@ -6,6 +6,10 @@ message names the expected form and never echoes the value, so it is safe to pri
 ``hook_decision_id`` is the one exception to raising: a hook-supplied id that fails is dropped
 with a warning, never an exit 2.
 
+Callers that are not written yet: the config loader (#7) must call ``check_timeout`` and
+``check_forgectl_config`` and turn a ``GrammarError`` into exit 2 ``config_invalid`` with
+``details.key``; the hooks module (#33) must call ``hook_decision_id``.
+
 Patterns are matched with ``fullmatch`` over ASCII classes only, so a trailing newline, a Unicode
 digit or a lookalike character never passes.
 """
@@ -15,6 +19,8 @@ from __future__ import annotations
 import math
 import re
 import unicodedata
+from decimal import Decimal
+from fractions import Fraction
 
 MAX_DECISION_IDS = 32
 MAX_THREADS = 100
@@ -35,10 +41,24 @@ _THREAD_RE = re.compile(rf"gh:rt:{_NODE}|gl:d:[0-9a-f]{{40}}")
 _REPLY_TARGET_RE = re.compile(
     rf"gh:(?:ic|rc|rt|r):{_NODE}|gl:d:[0-9a-f]{{40}}|gl:n:[1-9][0-9]{{0,18}}"
 )
-# schemas/defs.json, "duration" (string form).
-_DURATION_RE = re.compile(r"(?=.*[1-9])[0-9]+(?:\.[0-9]+)?(?:ms|s|m|h|d)")
+# schemas/defs.json, "duration" (string forms): <number><unit>, or a bare number meaning seconds.
+_DURATION_RE = re.compile(r"(?=.*[1-9])([0-9]+(?:\.[0-9]+)?)(ms|s|m|h|d)?")
+_UNIT_SECONDS = {
+    None: Fraction(1),
+    "s": Fraction(1),
+    "ms": Fraction(1, 1000),
+    "m": Fraction(60),
+    "h": Fraction(3600),
+    "d": Fraction(86400),
+}
+# forgectl refuses a duration over 100 years (docs/interface.md, "Reading files"); a year is
+# taken as 365.25 days.
+MAX_TIMEOUT_SECONDS = Fraction(36525 * 86400)
+# A real duration is a few characters; this keeps the exact arithmetic below cheap.
+_MAX_DURATION_LENGTH = 400
 _BRANCH_FORBIDDEN_RE = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]")
 _BRANCH_FORBIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
+_SURROGATE_RE = re.compile("[\ud800-\udfff]")
 
 
 class GrammarError(ValueError):
@@ -94,7 +114,7 @@ def check_branch(value: object) -> str:
         or "@{" in text
         or "//" in text
         or _BRANCH_FORBIDDEN_RE.search(text)
-        or text == "refs"
+        or text in ("@", "refs")
         or text.startswith("refs/")
         or any(part.startswith(".") or part.endswith(".lock") for part in text.split("/"))
         or any(unicodedata.category(char) in _BRANCH_FORBIDDEN_CATEGORIES for char in text)
@@ -115,6 +135,7 @@ def check_actor(value: object) -> str:
     return _full(_ACTOR_RE, value, "actor (human:<name> or auto:<name>)")
 
 
+# TODO(#33): the hooks module drops a failing hook-supplied id with a warning (interface.md, Hooks).
 def hook_decision_id(value: object) -> str | None:
     """The id to keep, or ``None`` to drop it with a warning. Never raises, whatever the value."""
     if type(value) is not str or len(value) > 128:
@@ -137,10 +158,10 @@ def check_reply_target(value: object) -> str:
 
 
 def check_hook(value: object) -> str:
-    """``<name>=<cmd>`` with a known hook name and a non-empty command."""
+    """``<name>=<cmd>`` with a known hook name and a non-empty command without NUL or surrogates."""
     text = _text(value, "hook")
     name, sep, cmd = text.partition("=")
-    if not sep or name not in HOOK_NAMES or not cmd:
+    if not sep or name not in HOOK_NAMES or not cmd or "\x00" in cmd or _SURROGATE_RE.search(cmd):
         raise GrammarError(
             f"invalid hook (expected <name>=<cmd> with name one of: {', '.join(HOOK_NAMES)})"
         )
@@ -154,22 +175,41 @@ def check_escalation_scope(value: object) -> str:
     return text
 
 
-def check_timeout(value: object) -> object:
-    """The duration grammar of schemas/defs.json: a positive number, or a string such as ``30s``.
+# TODO(#7): the config loader calls this for `timeout` and PR_COMMENT_TIMEOUT; GrammarError becomes
+# exit 2 config_invalid with details.key.
+def check_timeout(value: object) -> str:
+    """The duration grammar of schemas/defs.json, capped at forgectl's 100 years.
 
-    Returned unchanged.
+    A positive number (int or float, as read from YAML), or a string: ``<number><unit>`` with unit
+    ``ms``, ``s``, ``m``, ``h`` or ``d``, or a bare number meaning seconds. Zero, infinite and NaN
+    values and anything over 100 years raise ``GrammarError``. A number comes back as a plain
+    decimal string (never ``1e-05`` or ``1e+16``), so it can be forwarded as ``--timeout=<value>``;
+    a string comes back unchanged.
     """
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if math.isfinite(value) and value > 0:
+    message = "invalid timeout (a positive duration of at most 100 years, such as 30, 30s, 2m, 1h)"
+    if isinstance(value, bool):
+        raise GrammarError(message)
+    if isinstance(value, int):  # exact: no float conversion, so any size is judged, not crashed on
+        if 0 < value <= MAX_TIMEOUT_SECONDS:
+            return str(value)
+    elif isinstance(value, float):
+        if math.isfinite(value) and 0 < value <= MAX_TIMEOUT_SECONDS:
+            text = format(Decimal(repr(value)), "f")
+            return text.removesuffix(".0") if text.endswith(".0") else text
+    elif type(value) is str and len(value) <= _MAX_DURATION_LENGTH:
+        match = _DURATION_RE.fullmatch(value)
+        if match and Fraction(match[1]) * _UNIT_SECONDS[match[2]] <= MAX_TIMEOUT_SECONDS:
             return value
-    elif type(value) is str and _DURATION_RE.fullmatch(value):
-        return value
-    raise GrammarError("invalid timeout (a positive number or a duration such as 30s, 2m, 1h)")
+    raise GrammarError(message)
 
 
+# TODO(#7): the config loader calls this for `forgectl_config` and PR_COMMENT_FORGECTL_CONFIG;
+# GrammarError becomes exit 2 config_invalid with details.key.
 def check_forgectl_config(value: object) -> str:
     """A non-empty path that does not start with ``-`` (it is passed as ``--config=<path>``)."""
     text = _text(value, "forgectl config path")
-    if not text or text.startswith("-") or "\x00" in text:
-        raise GrammarError("invalid forgectl config path (non-empty, no leading '-', no NUL)")
+    if not text or text.startswith("-") or "\x00" in text or _SURROGATE_RE.search(text):
+        raise GrammarError(
+            "invalid forgectl config path (non-empty, no leading '-', no NUL or surrogate)"
+        )
     return text

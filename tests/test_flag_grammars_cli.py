@@ -297,3 +297,201 @@ def test_thread_cap_and_decision_id_cap_are_enforced_on_the_merged_total(
     code, doc, _ = _run(capsys, ["resolve", PR, *threads])
     assert (code, doc["error"]["code"]) == (2, "usage")
     assert "100" in doc["error"]["message"]
+
+
+def _run_json_first(
+    capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> tuple[int, dict[str, Any], str]:
+    """Like ``_run`` with ``--json`` ahead of the command, so a ``--`` in argv stays last."""
+    code = main(["--json", *argv])
+    captured = capsys.readouterr()
+    return code, json.loads(captured.out), captured.err
+
+
+# --- an unknown flag before a valid PR is usage, not invalid_pr -------------------------------
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["comment", "--bogus", "a#1", "--body-file", "b"],
+        ["comment", "--dry", "a#1", "--body-file", "b"],
+        ["comment", "--body=b", "a#1"],
+        ["resolve", "--thr", "gh:rt:a", "a#1"],
+        ["comment", "-x", PR, "--body-file", "b"],
+        ["comment", "--bogus", "--body-file", "b", PR],
+        ["comment", "--body-file", "b", "--bogus", "--", PR],
+    ],
+    ids=str,
+)
+def test_an_unknown_flag_before_a_valid_pr_is_usage(
+    capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    code, doc, _ = _run_json_first(capsys, argv)
+    assert (code, doc["error"]["code"]) == (2, "usage")
+
+
+def test_the_unknown_flag_is_reported_as_unrecognized(capsys: pytest.CaptureFixture[str]) -> None:
+    _, doc, _ = _run_json_first(capsys, ["comment", "--bogus", "a#1", "--body-file", "b"])
+    assert doc["error"]["message"] == "unrecognized arguments"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["comment", "-x", "--body-file", "b"],
+        ["comment", "--body-file", "b", "--", "-x#1"],
+        ["comment", "--bogus", "--body-file", "b"],
+    ],
+    ids=str,
+)
+def test_a_dash_token_in_the_pr_slot_stays_invalid_pr(
+    capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    code, doc, _ = _run_json_first(capsys, argv)
+    assert (code, doc["error"]["code"]) == (2, "invalid_pr")
+
+
+def test_a_known_flag_with_no_pr_is_usage(capsys: pytest.CaptureFixture[str]) -> None:
+    code, doc, _ = _run(capsys, ["comment", "--body-file", "b", "--json"])
+    assert (code, doc["error"]["code"]) == (2, "usage")
+
+
+# --- help and version before a bad PR reach argparse ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["comment", "-x#1", "-h"],
+        ["comment", "-x#1", "--help"],
+        ["review", "-h", "-x"],
+        ["comment", "-x", "--help"],
+    ],
+    ids=str,
+)
+def test_help_reaches_argparse_before_the_pr_check(
+    capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    with pytest.raises(SystemExit) as info:
+        main(argv)
+    assert info.value.code == 0
+    assert "usage:" in capsys.readouterr().out
+
+
+def test_version_reaches_argparse_before_the_pr_check(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as info:
+        main(["comment", "-x#1", "--version"])
+    assert info.value.code == 0
+    assert "pr-comment" in capsys.readouterr().out
+
+
+def test_help_after_double_dash_does_not_count(capsys: pytest.CaptureFixture[str]) -> None:
+    code, doc, _ = _run_json_first(capsys, ["comment", "--body-file", "b", "--", "-h"])
+    assert (code, doc["error"]["code"]) == (2, "invalid_pr")
+
+
+# --- a repeated single-valued flag with a different value is usage ----------------------------
+
+SHA_UPPER = SHA.upper()
+OTHER_SHA = "f" * 40
+
+REPEATED: list[tuple[list[str], str, str, str]] = [
+    (["review", PR, "--draft-file", "d"], "--expected-head", SHA, OTHER_SHA),
+    (["review", PR, "--draft-file", "d"], "--reanchor-to", SHA, OTHER_SHA),
+    (["review", PR, "--draft-file", "d"], "--dedupe-key", "k1", "k2"),
+    (["review", PR], "--draft-file", "d1", "d2"),
+    (["comment", PR], "--body-file", "b1", "b2"),
+    (["reply", PR, "--body-file", "b"], "--to", "gh:ic:a", "gh:ic:b"),
+    (["approve", PR], "--expected-base", "main", "dev"),
+    (["draft", "new", PR], "--from", "a", "b"),
+    (["draft", "new", PR], "--event", "comment", "request_changes"),
+    (["export"], "--since", "7d", "8d"),
+]
+
+
+@pytest.mark.parametrize(("base", "flag", "one", "two"), REPEATED, ids=lambda v: str(v)[:24])
+def test_a_repeated_flag_with_different_values_is_usage(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    base: list[str],
+    flag: str,
+    one: str,
+    two: str,
+) -> None:
+    calls = _no_handler(monkeypatch)
+    extra = _complete(base, flag)
+    code, doc, _ = _run(capsys, [*base, *extra, f"{flag}={one}", flag, two])
+    assert (code, doc["error"]["code"]) == (2, "usage")
+    assert flag in doc["error"]["message"]
+    assert calls == []
+
+
+@pytest.mark.parametrize(("base", "flag", "one", "two"), REPEATED, ids=lambda v: str(v)[:24])
+def test_a_repeated_flag_with_the_same_value_is_accepted(
+    base: list[str], flag: str, one: str, two: str
+) -> None:
+    _parse([*base, *_complete(base, flag), f"{flag}={one}", flag, one])
+
+
+def test_differently_cased_shas_are_the_same_value() -> None:
+    args = _parse(
+        [
+            "comment",
+            PR,
+            "--body-file",
+            "b",
+            f"--expected-head={SHA_UPPER}",
+            f"--expected-head={SHA}",
+        ]
+    )
+    assert args.expected_head == SHA
+
+
+def test_thread_and_decision_id_stay_repeatable() -> None:
+    args = _parse(["resolve", PR, "--thread", THREAD, "--thread", "gh:rt:other"])
+    assert args.thread == [THREAD, "gh:rt:other"]
+
+
+# --- parser errors never echo a caller value --------------------------------------------------
+
+SECRET = "SECRETVALUE"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["comment", PR, "--body-file", "b", SECRET],
+        ["comment", PR, "--body-file", "b", f"--{SECRET}"],
+        ["comment", PR, "--body-file", "b", f"--{SECRET}=x"],
+        [SECRET],
+        ["draft", SECRET],
+        ["draft", "new", PR, "--event", SECRET],
+        ["comment", PR, "--body-file", "b", f"--json={SECRET}"],
+        ["comment", PR, "--body-file", "b", f"--dry-run={SECRET}"],
+        ["review", PR, "--draft-file", "d", f"--approve={SECRET}"],
+    ],
+    ids=str,
+)
+def test_parser_errors_do_not_echo_caller_values(
+    capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    code = main([*argv, "--json"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert SECRET not in captured.err
+    assert SECRET not in captured.out
+    doc = json.loads(captured.out)
+    assert doc["error"]["code"] == "usage"
+    validate("pr-comment/cli/error.json", doc)
+
+
+def test_unrecognized_and_invalid_choice_messages_are_fixed_text(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _, doc, _ = _run(capsys, ["comment", PR, "--body-file", "b", SECRET])
+    assert doc["error"]["message"] == "unrecognized arguments"
+    _, doc, _ = _run(capsys, ["draft", "new", PR, "--event", SECRET])
+    assert doc["error"]["message"].startswith("argument --event: invalid choice")
+    _, doc, _ = _run(capsys, [SECRET])
+    assert doc["error"]["message"].startswith("argument <command>: invalid choice")

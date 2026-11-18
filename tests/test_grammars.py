@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from jsonschema import ValidationError
 
@@ -179,6 +181,7 @@ def test_branch_valid(value: str) -> None:
         ".hidden",
         "a/.hidden",
         "refs",
+        "@",
         "refs/heads/main",
         "a\u202eb",  # bidi override
         "a\u200bb",  # zero-width space (format)
@@ -305,7 +308,21 @@ def test_hook_valid() -> None:
     assert grammars.check_hook("post-post=a=b") == "post-post=a=b"
 
 
-@pytest.mark.parametrize("value", ["", "pre-post", "pre-post=", "other=cmd", "=cmd", "Pre-post=x"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "pre-post",
+        "pre-post=",
+        "other=cmd",
+        "=cmd",
+        "Pre-post=x",
+        "pre-post=a\x00b",
+        "pre-post=a\ud800b",
+        "pre-post=a\udfffb",
+        "pre-post=a\udcffb",
+    ],
+)
 def test_hook_invalid(value: str) -> None:
     with pytest.raises(GrammarError):
         grammars.check_hook(value)
@@ -407,10 +424,29 @@ def test_thread_invalid(value: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "value", ["120s", "30s", "1ms", "2m", "1h", "7d", "0.5s", "10.25m", 5, 0.5]
+    "value", ["120s", "30s", "1ms", "2m", "1h", "7d", "0.5s", "10.25m", "30", "0.5", "5", "36500d"]
 )
-def test_timeout_valid(value: object) -> None:
+def test_timeout_valid_strings_are_returned_unchanged(value: str) -> None:
     assert grammars.check_timeout(value) == value
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (5, "5"),
+        (30, "30"),
+        (0.5, "0.5"),
+        (1e-05, "0.00001"),
+        (3e9, "3000000000"),
+        (1.5e9, "1500000000"),
+        (3155760000, "3155760000"),
+        (3155760000.0, "3155760000"),
+    ],
+)
+def test_timeout_numbers_become_plain_decimal_strings(value: object, expected: str) -> None:
+    result = grammars.check_timeout(value)
+    assert result == expected
+    assert re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", result)
 
 
 @pytest.mark.parametrize(
@@ -419,8 +455,9 @@ def test_timeout_valid(value: object) -> None:
         "-5s",
         "0s",
         "0",
+        "0.0",
         "0.0s",
-        "5",
+        "00",
         "5x",
         "s",
         "",
@@ -443,6 +480,23 @@ def test_timeout_valid(value: object) -> None:
         None,
         [],
         b"5s",
+        # over forgectl's limit of 100 years (36,525 days), in every form
+        "36526d",
+        "3155760001",
+        "3155760001s",
+        "3155760000001ms",
+        "52596001m",
+        "876601h",
+        "9" * 50 + "d",
+        "9" * 50,
+        "9" * 5000,
+        "0." + "0" * 5000 + "1d",
+        3155760001,
+        3155760000.5,
+        1e308,
+        1e16,
+        10**400,
+        -(10**400),
     ],
 )
 def test_timeout_invalid(value: object) -> None:
@@ -456,7 +510,22 @@ def test_forgectl_config_valid(value: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "value", ["", "-", "-x", "--config=x", "a\x00b", "\x00", None, 5, ["a"], b"/x"]
+    "value",
+    [
+        "",
+        "-",
+        "-x",
+        "--config=x",
+        "a\x00b",
+        "\x00",
+        "a\ud800b",
+        "\udfff",
+        "\udcff",
+        None,
+        5,
+        ["a"],
+        b"/x",
+    ],
 )
 def test_forgectl_config_invalid(value: object) -> None:
     with pytest.raises(GrammarError):
@@ -558,3 +627,17 @@ def test_a_grammar_accepts_what_the_schema_accepts(
         except ValidationError:
             continue
         assert _accepts(check, value), value
+
+
+@pytest.mark.parametrize(
+    "value", ["@", ".hidden", "a/.hidden", "a/b/.c", "a" * 1025, "a..b", "a/", "x.lock", "-x"]
+)
+def test_the_schema_base_ref_refuses_what_check_branch_refuses(value: str) -> None:
+    assert not _accepts(grammars.check_branch, value)
+    with pytest.raises(ValidationError):
+        validate("pr-comment/defs.json#/$defs/base_ref", value)
+
+
+@pytest.mark.parametrize("value", ["main", "feat/x", "a.b", "x@y", "a" * 1024, "a/b.c"])
+def test_the_schema_base_ref_accepts_valid_branches(value: str) -> None:
+    validate("pr-comment/defs.json#/$defs/base_ref", value)
