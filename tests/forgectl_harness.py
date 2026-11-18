@@ -477,6 +477,7 @@ class FakeForgectl:
         assert proc.stdin is not None
         proc.stdin.write(stdin)
         proc.stdin.close()
+        proc.stdin = None  # closed here: communicate() must not flush it (Python 3.12 would raise)
         return proc
 
     def next_call_number(self) -> int:

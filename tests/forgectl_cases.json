@@ -1765,7 +1765,7 @@
    }
   },
   {
-   "name": "www-prefix-is-stripped-only-for-built-in-hosts",
+   "name": "www-github-is-not-unknown",
    "argv": [
     "whoami",
     "--json",
@@ -3135,6 +3135,1283 @@
      }
     },
     "stderr": "forgectl: error: body_too_large: the review body is larger than 1048576 bytes\n"
+   }
+  },
+  {
+   "name": "accept-url-pull",
+   "argv": [
+    "show",
+    "--json",
+    "https://github.com/o/r/pull/1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-url-files",
+   "argv": [
+    "show",
+    "--json",
+    "https://github.com/o/r/pull/12/files"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-url-commit",
+   "argv": [
+    "show",
+    "--json",
+    "https://github.com/o/r/pull/1/commits/abcdef1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-url-diff-slash",
+   "argv": [
+    "show",
+    "--json",
+    "https://github.com/o/r/pull/1.diff/"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-url-query-fragment",
+   "argv": [
+    "show",
+    "--json",
+    "https://github.com/o/r/pull/1?a=b&c=d#frag"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-host-uppercase",
+   "argv": [
+    "show",
+    "--json",
+    "GitHub.COM/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-host-www",
+   "argv": [
+    "show",
+    "--json",
+    "www.github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-host-port-443",
+   "argv": [
+    "show",
+    "--json",
+    "github.com:443/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-github-repo-dash",
+   "argv": [
+    "show",
+    "--json",
+    "github.com/o/-r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-github-dots",
+   "argv": [
+    "show",
+    "--json",
+    "github.com/o.x/r_y.z#1234567890"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-gitlab-url-diffs",
+   "argv": [
+    "show",
+    "--json",
+    "https://gitlab.com/g/s/r/-/merge_requests/3/diffs"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-gitlab-url-old-form",
+   "argv": [
+    "show",
+    "--json",
+    "https://gitlab.com/g/s/r/merge_requests/3"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-gitlab-nested",
+   "argv": [
+    "show",
+    "--json",
+    "gitlab.com/a/b/c/d#7"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-gitlab-single-segment",
+   "argv": [
+    "show",
+    "--json",
+    "gitlab.com/solo#7"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-global-flags-before-command",
+   "argv": [
+    "--json",
+    "--timeout",
+    "5",
+    "--verbose",
+    "show",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-global-flags-after",
+   "argv": [
+    "show",
+    "--json",
+    "--timeout",
+    "60s",
+    "--quiet",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-timeout-ms",
+   "argv": [
+    "show",
+    "--json",
+    "--timeout=250ms",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-timeout-fraction",
+   "argv": [
+    "show",
+    "--json",
+    "--timeout=1.5",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-timeout-100-years",
+   "argv": [
+    "show",
+    "--json",
+    "--timeout=36500d",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-config-file",
+   "argv": [
+    "show",
+    "--json",
+    "--config={tmp}/forgectl.yaml",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "files": {
+    "forgectl.yaml": "{}\n"
+   },
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-double-dash",
+   "argv": [
+    "show",
+    "--json",
+    "--",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-files",
+   "argv": [
+    "files",
+    "--json",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-diff",
+   "argv": [
+    "diff",
+    "--json",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-comments",
+   "argv": [
+    "comments",
+    "--json",
+    "gitlab.com/g/s/r#1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-compare",
+   "argv": [
+    "compare",
+    "--json",
+    "github.com/o/r#1",
+    "--from=0123456789abcdef0123456789abcdef01234567",
+    "--to=0123456789abcdef0123456789abcdef01234568"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-compare-space-form-uppercase",
+   "argv": [
+    "compare",
+    "--json",
+    "github.com/o/r#1",
+    "--from",
+    "0123456789ABCDEF0123456789ABCDEF01234567",
+    "--to",
+    "0123456789abcdef0123456789abcdef01234568",
+    "--no-diff"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-comment",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-comment-equals-stdin-flag",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file=-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-comment-no-yes",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-comment-dry-run",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-comment-all-write-flags",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--dedupe-key=prc:ab.c-d_e:1",
+    "--actor=auto:agent.x@y-1",
+    "--decision-id=a/b:c@d.e-f",
+    "--decision-id",
+    "second"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-comment-human-actor-override",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--actor=human:me",
+    "--override-escalation"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-comment-flags-before-pr",
+   "argv": [
+    "comment",
+    "--json",
+    "--yes",
+    "--body-file",
+    "-",
+    "github.com/o/r#1"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-32-decision-ids",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--decision-id=d0",
+    "--decision-id=d1",
+    "--decision-id=d2",
+    "--decision-id=d3",
+    "--decision-id=d4",
+    "--decision-id=d5",
+    "--decision-id=d6",
+    "--decision-id=d7",
+    "--decision-id=d8",
+    "--decision-id=d9",
+    "--decision-id=d10",
+    "--decision-id=d11",
+    "--decision-id=d12",
+    "--decision-id=d13",
+    "--decision-id=d14",
+    "--decision-id=d15",
+    "--decision-id=d16",
+    "--decision-id=d17",
+    "--decision-id=d18",
+    "--decision-id=d19",
+    "--decision-id=d20",
+    "--decision-id=d21",
+    "--decision-id=d22",
+    "--decision-id=d23",
+    "--decision-id=d24",
+    "--decision-id=d25",
+    "--decision-id=d26",
+    "--decision-id=d27",
+    "--decision-id=d28",
+    "--decision-id=d29",
+    "--decision-id=d30",
+    "--decision-id=d31"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-repeated-identical-decision-ids",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same",
+    "--decision-id=same"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-body-exactly-at-github-limit",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       262144
+      ]
+     }
+    ]
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-body-at-limit-with-marker-room",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--dedupe-key=k"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       262109
+      ]
+     }
+    ]
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-body-exactly-at-gitlab-limit",
+   "argv": [
+    "comment",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       1048576
+      ]
+     }
+    ]
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-zero-width-body",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "\u200b"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-nul-in-body",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "a\u0000b"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "body-only-nel-and-ls-is-empty",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "\u0085\u2028 "
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is empty"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is empty\n"
+   }
+  },
+  {
+   "name": "accept-reply-gh-ic",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:ic:IC_kwDO_x=",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-reply-gh-rc",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rc:PRRC_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-reply-gh-r",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:r:PRR_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-reply-gl-d",
+   "argv": [
+    "reply",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--to=gl:d:abababababababababababababababababababab",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-reply-gl-n",
+   "argv": [
+    "reply",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--to=gl:n:12",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-reply-space-form",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to",
+    "gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-reply-to-rt-up-to-1mib",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       262145
+      ]
+     }
+    ]
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-resolve",
+   "argv": [
+    "resolve",
+    "--json",
+    "github.com/o/r#1",
+    "--thread=gh:rt:PRRT_1",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-unresolve-gitlab",
+   "argv": [
+    "unresolve",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--thread=gl:d:0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+    "--yes",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-approve",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-approve-body",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--yes",
+    "--body-file",
+    "-",
+    "--dedupe-key=k",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "lgtm"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-approve-human-allow-self",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--yes",
+    "--actor=human:me",
+    "--allow-self",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-approve-uppercase-head",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--yes",
+    "--expected-head=0123456789ABCDEF0123456789ABCDEF01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-approve-branch-with-slash-and-unicode",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=feature/\u00e9t\u00e9-x_y.v1"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-approve-dry-run-pins",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--dry-run",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-approve-only",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"approve\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-body-null",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":null,\"comments\":[{\"path\":\"a b/\u00e9.py\",\"line\":3,\"body\":\"x\"}]}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-sides-and-range",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"comments\":[{\"path\":\"a\",\"line\":5,\"start_line\":2,\"side\":\"left\",\"body\":\"x\"},{\"path\":\"b\",\"line\":1,\"side\":\"right\",\"body\":\"y\"}]}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-request-changes",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"request_changes\",\"body\":\"no\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-200-comments",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\": \"comment\", \"comments\": [{\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}, {\"path\": \"a\", \"line\": 1, \"body\": \"x\"}]}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-unicode",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\": \"comment\", \"body\": \"caf\u00e9 \u65e5\u672c \ud83d\ude00\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-equals-form",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file=-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"approve\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-gitlab-dedupe-on-comments",
+   "argv": [
+    "review",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--dedupe-key=k",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"comments\":[{\"path\":\"a\",\"line\":1,\"body\":\"x\"}]}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-human-allow-self",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--actor=human:me",
+    "--allow-self",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"approve\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "review-comment-line-too-big-is-still-valid-json-int",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"comments\":[{\"path\":\"a\",\"line\":99999999999999999999,\"body\":\"x\"}]}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
    }
   }
  ]

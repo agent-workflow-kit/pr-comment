@@ -1378,8 +1378,13 @@ def _check_post(ctx: Context, doc: dict[str, Any], args: Namespace) -> None:
     verified = doc.get("head_verified")
     if command in ("review", "approve") and verified is not None and event != "approve":
         raise FakeError("head_verified is null unless the event is approve")
-    if command == "reply" and "threaded" not in doc:
-        raise FakeError("reply prints `threaded`")
+    if command == "reply" and ctx.backend == "github":
+        # GitHub has no thread under a general comment or a review: a reply to `gh:ic:` or `gh:r:`
+        # is a new general comment and reports threaded: false; a reply to a review comment or
+        # thread joins its thread
+        want = args.to.kind in ("rc", "rt")
+        if doc["threaded"] is not want:
+            raise FakeError(f"reply to {args.to}: threaded is {want} on GitHub")
     if doc["already_posted"]:
         text = prep is not None and prep.sha256 is not None
         stateless = (

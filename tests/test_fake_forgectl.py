@@ -278,6 +278,27 @@ def test_a_dedupe_hit_needs_the_key_and_is_exit_zero_without_confirmation(
     assert _post_case(forgectl, doc, "--dedupe-key=k1") == 0  # no --yes: nothing to write
 
 
+@pytest.mark.parametrize(
+    ("to", "threaded", "accepted"),
+    [
+        ("gh:rt:T_1", True, True),
+        ("gh:rc:C_1", True, True),
+        ("gh:ic:I_1", False, True),
+        ("gh:r:R_1", False, True),
+        ("gh:ic:I_1", True, False),
+        ("gh:rt:T_1", False, False),
+    ],
+)
+def test_a_github_reply_is_threaded_only_under_a_review_comment_or_thread(
+    forgectl: FakeForgectl, to: str, threaded: bool, accepted: bool
+) -> None:
+    forgectl.script(ok("reply", post_doc("reply", ids=["gh:rc:C_2"], threaded=threaded)))
+    proc = forgectl.run(argv("reply", f"--to={to}", "--body-file", "-", "--yes"), stdin=b"x")
+    assert (proc.returncode == 0) is accepted, proc.stderr
+    if not accepted:
+        forgectl.allow_fake_errors = True
+
+
 def test_a_gitlab_review_has_no_review_id(forgectl: FakeForgectl) -> None:
     forgectl.script(ok("review", post_doc("review", GITLAB_PR, review_id="gl:n:1", ids=["gl:n:2"])))
     proc = forgectl.run(
