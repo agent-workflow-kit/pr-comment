@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import copy
 import json
-import os
 import random
 import subprocess
 from pathlib import Path
@@ -29,6 +28,7 @@ from pr_comment.reanchor import (
     mapper_from_compare,
     reanchor,
 )
+from tests.forgectl_harness import REAL_PATH
 from tests.schema_harness import validate
 
 A = "a" * 40
@@ -671,7 +671,7 @@ def test_every_finding_appears_exactly_once_with_a_stable_id(seed: int) -> None:
 
 def git_env(home: Path) -> dict[str, str]:
     return {
-        "PATH": os.environ["PATH"],
+        "PATH": REAL_PATH,  # the autouse private_home fixture empties os.environ PATH
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(home / ".config"),
         "GIT_CONFIG_GLOBAL": "/dev/null",

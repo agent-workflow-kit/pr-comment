@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "pr-comment/cli/export.json",
   "title": "export output (--json)",
-  "description": "With --json, one array of audit records (or, with --log, log records), oldest first. Without --json, the same records as JSONL.",
+  "description": "With --json, one array of audit records (or, with --log, log records), in file (append) order, which is normally but not necessarily by ts. Without --json, the same records as JSONL.",
   "type": "array",
   "items": {
     "oneOf": [

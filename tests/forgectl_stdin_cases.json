@@ -1,0 +1,3288 @@
+{
+ "_meta": {
+  "recorded_from": "forgectl 0.55.2",
+  "how": "real forgectl run through pr-comment's own gateway, scratch HOME and XDG, no credentials, PATH with only an empty directory (no gh or glab); every case ends before a host is read. A case with stdin_unread true left at least 8 MiB of its stdin unread. To regenerate: for each case, build a ProcessGateway(forgectl_bin=<absolute pinned forgectl>, environ=<HOME and XDG_*_HOME in a fresh private directory, PATH=one empty absolute directory>) and call gateway.call(argv[0], argv[1:] without --json, stdin=<stdin bytes> when the arguments carry '-'); record a result of exit 12 with error code tool_missing as {reaches_host: true, expect: {reaches_host: true}}, any other as expect {exit, stdout (parsed JSON), stderr}, with stdin_unread true when the result says forgectl left its stdin unread; write the file with json.dumps(document, indent=1, ensure_ascii=False) plus a newline (a test checks that byte for byte). GitLab cases use the placeholder host gitlab.com/g/s/r#1."
+ },
+ "cases": [
+  {
+   "name": "stdin-review-dry-run-valid",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"hello\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-review-dry-run-empty",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid JSON (JSONDecodeError)"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid JSON (JSONDecodeError)\n"
+   }
+  },
+  {
+   "name": "stdin-review-dry-run-crlf",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "{\r\n \"event\": \"comment\",\r\n \"body\": \"a\\r\\nb\\r\\nc\"\r\n}\r\n"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-review-dry-run-nul",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"a\\u0000b\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-review-dry-run-lone-surrogate-bytes",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "b64": "eyJldmVudCI6ImNvbW1lbnQiLCJib2R5IjoiYe2ggGIifQ=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-review-dry-run-overlong-utf8",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "b64": "eyJldmVudCI6ImNvbW1lbnQiLCJib2R5IjoiYcCvYiJ9"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-review-dry-run-truncated-multibyte",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "b64": "eyJldmVudCI6ImNvbW1lbnQiLCJib2R5IjoiYWLigiJ9"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-review-dry-run-bom",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "﻿{\"event\":\"comment\",\"body\":\"hello\"}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid JSON (JSONDecodeError)"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid JSON (JSONDecodeError)\n"
+   }
+  },
+  {
+   "name": "stdin-review-dry-run-all-bytes",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/wABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8AAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-review-dry-run-unicode",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"café 日本 😀 ‮\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-review-dry-run-argv-shaped-text",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"--yes --actor=x $(id) `id` ; rm -rf /\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-review-yes-valid",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"hello\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-review-yes-empty",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid JSON (JSONDecodeError)"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid JSON (JSONDecodeError)\n"
+   }
+  },
+  {
+   "name": "stdin-review-yes-crlf",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "{\r\n \"event\": \"comment\",\r\n \"body\": \"a\\r\\nb\\r\\nc\"\r\n}\r\n"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-review-yes-nul",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"a\\u0000b\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-review-yes-lone-surrogate-bytes",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "eyJldmVudCI6ImNvbW1lbnQiLCJib2R5IjoiYe2ggGIifQ=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-review-yes-overlong-utf8",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "eyJldmVudCI6ImNvbW1lbnQiLCJib2R5IjoiYcCvYiJ9"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-review-yes-truncated-multibyte",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "eyJldmVudCI6ImNvbW1lbnQiLCJib2R5IjoiYWLigiJ9"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-review-yes-bom",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "﻿{\"event\":\"comment\",\"body\":\"hello\"}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid JSON (JSONDecodeError)"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid JSON (JSONDecodeError)\n"
+   }
+  },
+  {
+   "name": "stdin-review-yes-all-bytes",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/wABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8AAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-review-yes-unicode",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"café 日本 😀 ‮\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-review-yes-argv-shaped-text",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"--yes --actor=x $(id) `id` ; rm -rf /\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-dry-run-valid",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-dry-run-empty",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is empty"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is empty\n"
+   }
+  },
+  {
+   "name": "stdin-comment-dry-run-crlf",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "line one\r\nline two\r\n"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-dry-run-nul",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "a\u0000b"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-dry-run-lone-surrogate-bytes",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "b64": "Ye2ggGI="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-comment-dry-run-overlong-utf8",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "b64": "YcCvYg=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-comment-dry-run-truncated-multibyte",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "b64": "YWLigg=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-comment-dry-run-bom",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "﻿hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-dry-run-all-bytes",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/wABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8AAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-comment-dry-run-unicode",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "café 日本 😀 ‮"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-dry-run-argv-shaped-text",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "--yes --actor=x $(id) `id` ; rm -rf /"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-yes-valid",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-yes-empty",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is empty"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is empty\n"
+   }
+  },
+  {
+   "name": "stdin-comment-yes-crlf",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "line one\r\nline two\r\n"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-yes-nul",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "a\u0000b"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-yes-lone-surrogate-bytes",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "Ye2ggGI="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-comment-yes-overlong-utf8",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "YcCvYg=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-comment-yes-truncated-multibyte",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "YWLigg=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-comment-yes-bom",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "﻿hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-yes-all-bytes",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/wABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8AAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-comment-yes-unicode",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "café 日本 😀 ‮"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-yes-argv-shaped-text",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "--yes --actor=x $(id) `id` ; rm -rf /"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-reply-dry-run-valid",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-reply-dry-run-empty",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is empty"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is empty\n"
+   }
+  },
+  {
+   "name": "stdin-reply-dry-run-crlf",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "line one\r\nline two\r\n"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-reply-dry-run-nul",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "a\u0000b"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-reply-dry-run-lone-surrogate-bytes",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "b64": "Ye2ggGI="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-reply-dry-run-overlong-utf8",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "b64": "YcCvYg=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-reply-dry-run-truncated-multibyte",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "b64": "YWLigg=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-reply-dry-run-bom",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "﻿hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-reply-dry-run-all-bytes",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/wABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8AAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-reply-dry-run-unicode",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "café 日本 😀 ‮"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-reply-dry-run-argv-shaped-text",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "--yes --actor=x $(id) `id` ; rm -rf /"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-reply-yes-valid",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-reply-yes-empty",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is empty"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is empty\n"
+   }
+  },
+  {
+   "name": "stdin-reply-yes-crlf",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "line one\r\nline two\r\n"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-reply-yes-nul",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "a\u0000b"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-reply-yes-lone-surrogate-bytes",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "Ye2ggGI="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-reply-yes-overlong-utf8",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "YcCvYg=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-reply-yes-truncated-multibyte",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "YWLigg=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-reply-yes-bom",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "﻿hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-reply-yes-all-bytes",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/wABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8AAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-reply-yes-unicode",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "café 日本 😀 ‮"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-reply-yes-argv-shaped-text",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "--yes --actor=x $(id) `id` ; rm -rf /"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-approve-dry-run-valid",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "lgtm"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-approve-dry-run-empty",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is empty"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is empty\n"
+   }
+  },
+  {
+   "name": "stdin-approve-dry-run-crlf",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "line one\r\nline two\r\n"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-approve-dry-run-nul",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "a\u0000b"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-approve-dry-run-lone-surrogate-bytes",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "b64": "Ye2ggGI="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-approve-dry-run-overlong-utf8",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "b64": "YcCvYg=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-approve-dry-run-truncated-multibyte",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "b64": "YWLigg=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-approve-dry-run-bom",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "﻿lgtm"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-approve-dry-run-all-bytes",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/wABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8AAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-approve-dry-run-unicode",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "café 日本 😀 ‮"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-approve-dry-run-argv-shaped-text",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "--yes --actor=x $(id) `id` ; rm -rf /"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-approve-yes-valid",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "lgtm"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-approve-yes-empty",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is empty"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is empty\n"
+   }
+  },
+  {
+   "name": "stdin-approve-yes-crlf",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "line one\r\nline two\r\n"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-approve-yes-nul",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "a\u0000b"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-approve-yes-lone-surrogate-bytes",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "Ye2ggGI="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-approve-yes-overlong-utf8",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "YcCvYg=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-approve-yes-truncated-multibyte",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "YWLigg=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-approve-yes-bom",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "﻿lgtm"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-approve-yes-all-bytes",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/wABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8AAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w=="
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the body is not valid UTF-8"
+     }
+    },
+    "stderr": "forgectl: error: usage: the body is not valid UTF-8\n"
+   }
+  },
+  {
+   "name": "stdin-approve-yes-unicode",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "café 日本 😀 ‮"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-approve-yes-argv-shaped-text",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "--yes --actor=x $(id) `id` ; rm -rf /"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-review-yes-raw-nul-in-json",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"a\u0000b\"}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the review file is not valid JSON (JSONDecodeError)"
+     }
+    },
+    "stderr": "forgectl: error: usage: the review file is not valid JSON (JSONDecodeError)\n"
+   }
+  },
+  {
+   "name": "stdin-review-yes-json-escaped-lone-surrogate",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"\\ud800\"}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review file: body is not valid text (a lone surrogate)"
+     }
+    },
+    "stderr": "forgectl: error: usage: review file: body is not valid text (a lone surrogate)\n"
+   }
+  },
+  {
+   "name": "stdin-review-dry-run-inline-comment",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"comments\":[{\"path\":\"a b.py\",\"line\":3,\"side\":\"right\",\"body\":\"x\\r\\ny\"}]}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-yes-at-limit",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       262144
+      ]
+     }
+    ]
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-dry-run-at-limit",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       262144
+      ]
+     }
+    ]
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-yes-over-limit",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       262145
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the body is larger than 262144 bytes",
+      "details": {
+       "index": null,
+       "limit": 262144
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the body is larger than 262144 bytes\n"
+   }
+  },
+  {
+   "name": "stdin-reply-yes-at-limit",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       262144
+      ]
+     }
+    ]
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-approve-yes-at-limit",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       262144
+      ]
+     }
+    ]
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-approve-yes-over-limit",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       262145
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the body is larger than 262144 bytes",
+      "details": {
+       "index": null,
+       "limit": 262144
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the body is larger than 262144 bytes\n"
+   }
+  },
+  {
+   "name": "stdin-review-yes-file-at-limit",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     "{\"event\":\"approve\"}",
+     {
+      "repeat": [
+       " ",
+       16777197
+      ]
+     }
+    ]
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-review-dry-run-file-at-limit",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--dry-run"
+   ],
+   "stdin": {
+    "parts": [
+     "{\"event\":\"approve\"}",
+     {
+      "repeat": [
+       " ",
+       16777197
+      ]
+     }
+    ]
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-review-yes-file-over-limit",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     "{\"event\":\"approve\"}",
+     {
+      "repeat": [
+       " ",
+       16777198
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the review file is larger than 16777216 bytes",
+      "details": {
+       "index": null,
+       "limit": 16777216
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the review file is larger than 16777216 bytes\n"
+   }
+  },
+  {
+   "name": "stdin-comment-yes-32mib-over-limit",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       33554432
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the body is larger than 262144 bytes",
+      "details": {
+       "index": null,
+       "limit": 262144
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the body is larger than 262144 bytes\n"
+   },
+   "stdin_unread": true
+  },
+  {
+   "name": "stdin-comment-dry-run-32mib-over-limit",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       33554432
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the body is larger than 262144 bytes",
+      "details": {
+       "index": null,
+       "limit": 262144
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the body is larger than 262144 bytes\n"
+   },
+   "stdin_unread": true
+  },
+  {
+   "name": "stdin-reply-yes-32mib-over-limit",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       33554432
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the body is larger than 1048576 bytes",
+      "details": {
+       "index": null,
+       "limit": 1048576
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the body is larger than 1048576 bytes\n"
+   },
+   "stdin_unread": true
+  },
+  {
+   "name": "stdin-approve-yes-32mib-over-limit",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       33554432
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the body is larger than 262144 bytes",
+      "details": {
+       "index": null,
+       "limit": 262144
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the body is larger than 262144 bytes\n"
+   },
+   "stdin_unread": true
+  },
+  {
+   "name": "stdin-review-yes-32mib-over-limit",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       33554432
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the review file is larger than 16777216 bytes",
+      "details": {
+       "index": null,
+       "limit": 16777216
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the review file is larger than 16777216 bytes\n"
+   },
+   "stdin_unread": true
+  },
+  {
+   "name": "stdin-comment-bad-actor-32mib-unread",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--actor=bogus"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       33554432
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument --actor: must look like human:<user> or auto:<name>: 'bogus'"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument --actor: must look like human:<user> or auto:<name>: 'bogus'\n"
+   },
+   "stdin_unread": true
+  },
+  {
+   "name": "stdin-comment-bad-dedupe-key-32mib-unread",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes",
+    "--dedupe-key=a/b"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       33554432
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument --dedupe-key: not a valid dedupe key: 'a/b'"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument --dedupe-key: not a valid dedupe key: 'a/b'\n"
+   },
+   "stdin_unread": true
+  },
+  {
+   "name": "stdin-reply-bad-to-32mib-unread",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:xx:a",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       33554432
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "not a valid comment or thread id: 'gh:xx:a'"
+     }
+    },
+    "stderr": "forgectl: error: usage: not a valid comment or thread id: 'gh:xx:a'\n"
+   },
+   "stdin_unread": true
+  },
+  {
+   "name": "stdin-review-no-pins-32mib-unread",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       33554432
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review needs --expected-head and --expected-base unless the run is interactive (stdin and stderr terminals, a human actor, no --yes, no '-' input)"
+     }
+    },
+    "stderr": "forgectl: error: usage: review needs --expected-head and --expected-base unless the run is interactive (stdin and stderr terminals, a human actor, no --yes, no '-' input)\n"
+   },
+   "stdin_unread": true
+  },
+  {
+   "name": "stdin-review-bad-head-32mib-unread",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes",
+    "--expected-head=zz",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       33554432
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "not a full 40-hex sha: 'zz'"
+     }
+    },
+    "stderr": "forgectl: error: usage: not a full 40-hex sha: 'zz'\n"
+   },
+   "stdin_unread": true
+  },
+  {
+   "name": "stdin-approve-no-pins-32mib-unread",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       33554432
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "approve needs --expected-head and --expected-base unless the run is interactive (stdin and stderr terminals, a human actor, no --yes, no '-' input)"
+     }
+    },
+    "stderr": "forgectl: error: usage: approve needs --expected-head and --expected-base unless the run is interactive (stdin and stderr terminals, a human actor, no --yes, no '-' input)\n"
+   },
+   "stdin_unread": true
+  },
+  {
+   "name": "stdin-comment-unknown-host-32mib-unread",
+   "argv": [
+    "comment",
+    "--json",
+    "example.test/o/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       33554432
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "host 'example.test' is not built in or declared in the config",
+      "reason": "unknown_host"
+     }
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
+   },
+   "stdin_unread": true
+  },
+  {
+   "name": "stdin-comment-unknown-host-dry-run-32mib-unread",
+   "argv": [
+    "comment",
+    "--json",
+    "example.test/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       33554432
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "pr": "example.test/o/r#1",
+     "action": "comment",
+     "ids": [],
+     "thread_ids": [],
+     "review_id": null,
+     "already_posted": false,
+     "follow_up_done": false,
+     "neutralized_lines": 0,
+     "markers_removed": 0,
+     "warnings": [],
+     "head_sha": null,
+     "dry_run": true,
+     "would_refuse": {
+      "reason": "unknown_host",
+      "message": "host 'example.test' is not built in or declared in the config",
+      "details": null
+     },
+     "plan": {
+      "event": null,
+      "body_sha256": null,
+      "body_bytes": 0,
+      "inline_comments": 0
+     }
+    },
+    "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
+   },
+   "stdin_unread": true
+  },
+  {
+   "name": "stdin-review-dry-run-full-flags",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--actor=auto:x",
+    "--dedupe-key=k",
+    "--decision-id=d",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"hello\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-dry-run-full-flags",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--actor=auto:x",
+    "--dedupe-key=k",
+    "--decision-id=d",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-reply-dry-run-full-flags",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--actor=auto:x",
+    "--dedupe-key=k",
+    "--decision-id=d",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-approve-dry-run-full-flags",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--actor=auto:x",
+    "--dedupe-key=k",
+    "--decision-id=d",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-yes-gitlab-valid",
+   "argv": [
+    "comment",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-yes-gitlab-at-limit",
+   "argv": [
+    "comment",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       1048576
+      ]
+     }
+    ]
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-yes-gitlab-over-limit",
+   "argv": [
+    "comment",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       1048577
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the body is larger than 1048576 bytes",
+      "details": {
+       "index": null,
+       "limit": 1048576
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the body is larger than 1048576 bytes\n"
+   }
+  },
+  {
+   "name": "stdin-review-yes-gitlab-valid",
+   "argv": [
+    "review",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"hello\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-review-body-file-flag",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"approve\"}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the following arguments are required: --file"
+     }
+    },
+    "stderr": "forgectl: error: usage: the following arguments are required: --file\n"
+   }
+  },
+  {
+   "name": "stdin-comment-file-flag",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the following arguments are required: --body-file"
+     }
+    },
+    "stderr": "forgectl: error: usage: the following arguments are required: --body-file\n"
+   }
+  },
+  {
+   "name": "stdin-reply-file-flag",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the following arguments are required: --body-file"
+     }
+    },
+    "stderr": "forgectl: error: usage: the following arguments are required: --body-file\n"
+   }
+  },
+  {
+   "name": "stdin-approve-file-flag",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "unrecognized arguments: --file -"
+     }
+    },
+    "stderr": "forgectl: error: usage: unrecognized arguments: --file -\n"
+   }
+  },
+  {
+   "name": "stdin-comment-body-file-twice",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "--body-file given more than once"
+     }
+    },
+    "stderr": "forgectl: error: usage: --body-file given more than once\n"
+   },
+   "gateway_refuses": true
+  },
+  {
+   "name": "stdin-comment-bare-dash",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the following arguments are required: --body-file"
+     }
+    },
+    "stderr": "forgectl: error: usage: the following arguments are required: --body-file\n"
+   },
+   "gateway_refuses": true
+  },
+  {
+   "name": "stdin-comment-body-file-no-value",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--yes",
+    "--body-file"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument --body-file: expected one argument"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument --body-file: expected one argument\n"
+   },
+   "gateway_refuses": true
+  },
+  {
+   "name": "stdin-review-file-no-value",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes",
+    "--file"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"approve\"}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument --file: expected one argument"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument --file: expected one argument\n"
+   },
+   "gateway_refuses": true
+  },
+  {
+   "name": "stdin-comment-file-dash-then-path",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "/dev/null",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "unrecognized arguments: /dev/null"
+     }
+    },
+    "stderr": "forgectl: error: usage: unrecognized arguments: /dev/null\n"
+   }
+  },
+  {
+   "name": "stdin-comment-equals-form",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file=-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   },
+   "gateway_refuses": true
+  },
+  {
+   "name": "stdin-review-equals-form",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file=-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"approve\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   },
+   "gateway_refuses": true
+  },
+  {
+   "name": "stdin-comment-dry-run-equals-bool",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--dry-run=1"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "argument --dry-run: ignored explicit argument '1'"
+     }
+    },
+    "stderr": "forgectl: error: usage: argument --dry-run: ignored explicit argument '1'\n"
+   },
+   "gateway_refuses": true
+  },
+  {
+   "name": "stdin-comment-yes-abbreviation",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--ye"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "unrecognized arguments: --ye"
+     }
+    },
+    "stderr": "forgectl: error: usage: unrecognized arguments: --ye\n"
+   },
+   "gateway_refuses": true
+  },
+  {
+   "name": "stdin-comment-body-flag-abbreviation",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "the following arguments are required: --body-file"
+     }
+    },
+    "stderr": "forgectl: error: usage: the following arguments are required: --body-file\n"
+   },
+   "gateway_refuses": true
+  }
+ ]
+}

@@ -1,6 +1,6 @@
 [project]
 name = "pr-comment"
-version = "0.0.1"
+version = "0.27.0"
 description = "Posts reviews, replies and comments to PRs, safely and with attribution."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -54,8 +54,11 @@ pythonVersion = "3.12"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["live: needs real models/hosts/credentials; never run in CI"]
-addopts = "-m 'not live'"
+markers = [
+    "live: needs real models/hosts/credentials; never run in CI",
+    "fuzz_long: the long text-safety fuzz (tests/test_text_safety_fuzz.py); run with -m fuzz_long",
+]
+addopts = "-m 'not live and not fuzz_long'"
 
 [tool.semantic_release]
 version_toml = ["pyproject.toml:project.version"]
