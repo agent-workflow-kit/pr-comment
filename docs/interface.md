@@ -265,7 +265,7 @@ Approves the PR at a pinned head and base, following the [Approve order](#approv
 
 `pr-comment resolve|unresolve <pr> --thread <id> [--thread <id>]...`
 
-Resolves or unresolves at most 100 review threads (`gh:rt:` or `gl:d:` only; forgectl, section Commands, `resolve` and `unresolve`), following the [Resolve order](#resolve-order).
+Resolves or unresolves review threads (`gh:rt:` or `gl:d:` only; forgectl, section Commands, `resolve` and `unresolve`), following the [Resolve order](#resolve-order). At most 100 `--thread` occurrences are accepted; duplicates are then dropped.
 
 ### `draft check`
 
@@ -299,9 +299,15 @@ Prints audit records (or, with `--log`, log records) as JSONL, oldest first; wit
 | `--override-escalation=<scope>` | Human-only, repeatable; `scope` is `pr-comment` or `forgectl`, as in the envelope's `escalated_by`. `pr-comment` counts exit 13 from pr-comment's own `pre-post` hooks as allow; `forgectl` passes `--override-escalation` to every forgectl write. A veto still vetoes. Without a value: exit 2 (`usage`). It works with `--yes` (a caller's own dialog). A caller that gets exit 13 `escalated` from one scope and reruns the command with that scope runs it again as a new run: every `pre-post` hook runs again and the run writes its own audit record pair. Recorded in audit whenever given. |
 | `--actor <actor>` | See [Actors and interactive runs](#actors-and-interactive-runs). |
 | `--decision-id <id>` | Repeatable, at most 32, grammar `^[A-Za-z0-9._:@/-]{1,128}$`. Recorded in audit and passed to forgectl. |
-| `--hook <name>=<cmd>` | Per-invocation hook, run after configured hooks ([Hooks](#hooks)). |
+| `--hook <name>=<cmd>` | Repeatable. Per-invocation hook, run after configured hooks ([Hooks](#hooks)). |
 | `--verbose`, `--quiet` | More or less human output on stderr. |
 | `--version` | Print the version. |
+
+- A global flag is accepted before the command, after it, and, for `draft check` and `draft new`, between `draft` and its subcommand; repeatable flags collect the values from every position.
+- A scalar global flag (`--config`, `--actor`, `--expect-plan`) given more than once with different values, in any position, exits 2 (`usage`, "<flag> given more than once with different values"); the same value given twice is accepted.
+- `--` before the command (or between `draft` and its subcommand) exits 2 (`usage`).
+- A command line may have at most 1024 arguments.
+- `-h` and `--help` always print plain-text help on stdout and exit 0, with or without `--json`.
 
 ## Review order
 
