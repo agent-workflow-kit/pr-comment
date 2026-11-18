@@ -1,0 +1,20 @@
+{
+  "error": {
+    "code": "draft_pr_mismatch",
+    "decision_ids": [],
+    "details": {
+      "draft_pr": "github.com/acme/other#9",
+      "pr": "github.com/acme/widgets#7"
+    },
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": null,
+    "hook_stderr": null,
+    "landed": null,
+    "lower_error": null,
+    "message": "the draft is for another pull request",
+    "reason": null,
+    "retry": null,
+    "retry_after": null
+  }
+}

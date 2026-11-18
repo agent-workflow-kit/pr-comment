@@ -18,6 +18,7 @@ from typing import Any, NoReturn, cast
 from . import __version__, grammars
 from .config import ConfigError, load_config
 from .errors import sanitize
+from .gateway import ForgectlInterrupted
 from .grammars import MAX_DECISION_IDS, MAX_THREADS
 from .output import LOG, PROG, Outcome, check_outcome, error_outcome, internal_outcome, render
 
@@ -656,6 +657,8 @@ def _main(argv: list[str]) -> int:
     try:
         outcome = _load_config_into(args) or check_outcome(HANDLERS[args.command](args))
         stdout, stderr = render(outcome, as_json=args.json, quiet=args.quiet, verbose=args.verbose)
+    except ForgectlInterrupted as exc:  # a read, or a run before any write: no envelope
+        return 128 + exc.signum
     except Exception as exc:  # a handler bug must still honor the exit-code and envelope contract
         outcome = internal_outcome(exc)
         stdout, stderr = render(outcome, as_json=args.json, quiet=args.quiet, verbose=args.verbose)
