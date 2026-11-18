@@ -697,8 +697,8 @@ class DiffMapper:
         ``diff_unavailable``. Raises ``TypeError`` unless the lines are plain ints, and
         ``ValueError`` unless ``1 <= start_line <= line``.
 
-        # todo(#25): validate the finding line against A's length before mapping (map_right
-        # cannot know it; the diff alone does not give A's length, so the caller must check).
+        A line past the end of A's file is not checked here (the diff does not give A's length): it
+        maps past the end of B's file, where the pre-check at B moves it (``invalid_position``).
         """
         if type(line) is not int or (start_line is not None and type(start_line) is not int):
             raise TypeError("lines must be ints")
