@@ -104,6 +104,11 @@ def ids(cases: list[dict[str, Any]]) -> list[str]:
     return [c["name"] for c in cases]
 
 
+def names_gitlab_host(case: dict[str, Any]) -> bool:
+    """Whether an argument of the case is a PR or MR reference on gitlab.com."""
+    return any(a.split("/", 1)[0] == "gitlab.com" and "/" in a for a in case["argv"])
+
+
 def body_texts(data: bytes | None) -> list[str]:
     """The untrusted text of a case, when it is text long enough not to match flag names."""
     if not data:
@@ -199,7 +204,7 @@ def script_host_missing(fake: FakeForgectl, case: dict[str, Any]) -> None:
     """What the real forgectl met after its input checks, with no ``gh`` or ``glab`` on its
     ``PATH``."""
     if "reaches_host" in case:
-        tool = "glab" if any(a.startswith("gitlab.com/") for a in case["argv"]) else "gh"
+        tool = "glab" if names_gitlab_host(case) else "gh"
         install = f"brew install {tool}"
         fake.script(
             fail(
@@ -312,7 +317,7 @@ def test_every_post_command_is_recorded_accepting_the_pre_check_flag_set() -> No
 
 
 def test_gitlab_host_cases_are_recorded_for_comment_and_review() -> None:
-    gitlab = [c for c in STDIN_CASES if any(a.startswith("gitlab.com/") for a in c["argv"])]
+    gitlab = [c for c in STDIN_CASES if names_gitlab_host(c)]
     names = {c["name"] for c in gitlab}
     assert {
         "stdin-comment-yes-gitlab-valid",
