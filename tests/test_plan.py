@@ -116,7 +116,25 @@ def test_the_review_input_is_the_plan_byte_for_byte() -> None:
         {"path": "a.py", "line": 5, "side": "right", "start_line": 3, "body": plan.bodies[1].text},
         {"path": "b.py", "line": 2, "side": "right", "body": plan.bodies[2].text},
     ]
-    assert plan.input.isascii()
+    assert plan.input.decode("utf-8")  # strict UTF-8 JSON, which forgectl reads
+
+
+def test_a_non_ascii_review_input_is_utf8_not_escaped() -> None:
+    plan = review([finding("f1", body="日本語 \U0001f600")])
+    assert "日本語 \U0001f600" in plan.input.decode("utf-8")
+    assert b"\\u" not in plan.input
+    sent = json.loads(plan.input)
+    assert sent["comments"][0]["body"] == plan.bodies[1].text
+
+
+def test_a_large_cjk_draft_stays_under_forgectls_16_mib_review_file_limit() -> None:
+    # 21000 CJK characters are 63000 bytes of UTF-8 (under the 64 KiB cap) but 126000 bytes as
+    # \uXXXX escapes: 150 of them are about 9.5 MB and 19 MB, either side of 16 MiB.
+    text = "漢" * 21000
+    plan = review([finding(f"f{i}", f"p{i}.py", 3, body=text) for i in range(150)])
+    assert len(plan.input) < 16 * 1024 * 1024
+    assert len(plan.input) > 9_000_000
+    assert json.loads(plan.input)["comments"][149]["body"] == plan.bodies[150].text
 
 
 def test_a_review_approve_has_its_own_key_and_event() -> None:

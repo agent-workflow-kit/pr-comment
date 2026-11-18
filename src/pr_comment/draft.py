@@ -43,6 +43,9 @@ from .output import Outcome, error_outcome
 MAX_DRAFT_BYTES: Final = 16 * 1024 * 1024
 MAX_TEXT_BYTES: Final = 64 * 1024
 MAX_PATH_BYTES: Final = 4096
+# a line or start_line past a signed 32-bit integer cannot be a line of any real file (and the
+# dedupe key and the plan hash refuse it)
+MAX_LINE: Final = 2**31 - 1
 MAX_TITLE_CHARS: Final = 256
 MAX_ITEMS: Final = 500
 MAX_REPORTED_ERRORS: Final = 100
@@ -430,11 +433,12 @@ def _check_text(
     *,
     max_bytes: int,
     non_empty: bool = False,
+    blank_ok: bool = True,
     one_line: bool = False,
 ) -> None:
     if type(value) is not str:
         issues.add(pointer, "must be a string")
-    elif non_empty and not value:
+    elif non_empty and (not value or (not blank_ok and not value.strip())):
         issues.add(pointer, "must not be empty")
     elif _utf8_len(value) > max_bytes:
         issues.add(pointer, f"is longer than {max_bytes} bytes of UTF-8")
@@ -518,12 +522,15 @@ def _check_finding(value: object, pointer: str, issues: _Issues, seen: set[str])
             issues,
             max_bytes=MAX_PATH_BYTES,
             non_empty=True,
+            blank_ok=False,
             one_line=True,
         )
     line: object = finding.get("line")
     file_level = "line" in finding and line is None
     if "line" in finding and not file_level and (not _is_int(line) or line < 1):  # pyright: ignore[reportOperatorIssue]
         issues.add(f"{pointer}/line", "must be an integer of at least 1, or null")
+    elif _is_int(line) and line > MAX_LINE:  # pyright: ignore[reportOperatorIssue]
+        issues.add(f"{pointer}/line", f"must be at most {MAX_LINE}")
     if file_level:
         for key in ("start_line", "side", "suggestion"):
             if key in finding:
@@ -532,6 +539,8 @@ def _check_finding(value: object, pointer: str, issues: _Issues, seen: set[str])
         start = finding["start_line"]
         if not _is_int(start) or start < 1:
             issues.add(f"{pointer}/start_line", "must be an integer of at least 1")
+        elif start > MAX_LINE:
+            issues.add(f"{pointer}/start_line", f"must be at most {MAX_LINE}")
         elif _is_int(line) and start >= line:  # pyright: ignore[reportOperatorIssue]
             issues.add(f"{pointer}/start_line", "must be less than line")
     side_ok = True

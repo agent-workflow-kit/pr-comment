@@ -482,6 +482,20 @@ def test_a_bad_draft_exits_2_with_no_forgectl_call(
     assert forgectl.calls() == []
 
 
+def test_config_errors_win_over_the_offline_draft_errors(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The config is loaded before step 1 of every order (docs/interface.md: Review order)."""
+    path = tmp_path / "bad.json"
+    path.write_text("{", encoding="utf-8")
+    monkeypatch.setenv("PR_COMMENT_TIMEOUT", "not a duration")
+    code, error, _ = cli(
+        "review", PR, "--draft-file", str(path), "--dry-run", "--json", "--actor", "human:alice"
+    )
+    assert code == 2 and error["error"]["code"] == "config_invalid"
+    assert forgectl.calls() == []
+
+
 def test_a_missing_forgectl_is_tool_missing(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

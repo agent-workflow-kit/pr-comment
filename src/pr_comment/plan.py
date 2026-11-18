@@ -24,7 +24,7 @@ Open decision 3: a fullwidth ``＠`` passes unchanged.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final
 
@@ -143,10 +143,6 @@ class Plan:
     neutralized_lines: int = 0
     markers_removed: int = 0
     override_forgectl: bool = False
-
-    @property
-    def subcommand(self) -> str:
-        return self.action
 
     def _flags(self) -> tuple[list[str], list[str]]:
         """The arguments before and after the ``--yes`` or ``--dry-run`` slot, in the order of the
@@ -283,7 +279,9 @@ def _with_text_counts(counts: dict[str, Any], text: TextCounts, mentions: int) -
 
 def review_input(event: str, body: str, comments: Sequence[tuple[PlanInline, str]]) -> bytes:
     """forgectl's review input (schemas/review-input.json): ``{event, body, comments}``. One
-    serialization: fixed key order, ASCII-only JSON, no spaces. ``start_line`` only when set."""
+    serialization: fixed key order, no spaces, UTF-8 with non-ASCII text written as is (``\\u``
+    escapes would make CJK text six times larger against forgectl's 16 MiB review file limit).
+    ``start_line`` only when set. ``plan_sha256`` does not cover these bytes but the plan fields."""
     items: list[dict[str, Any]] = []
     for inline, text in comments:
         item: dict[str, Any] = {
@@ -296,7 +294,7 @@ def review_input(event: str, body: str, comments: Sequence[tuple[PlanInline, str
         item["body"] = text
         items.append(item)
     document = {"event": event, "body": body, "comments": items}
-    return json.dumps(document, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    return json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
 def _hash(
@@ -686,7 +684,3 @@ def role_of(plan: Plan, index: int | None) -> str:
     if type(index) is not int or not 0 <= index < len(plan.inline_comments):
         raise IndexError("index is outside the inline comments")
     return plan.inline_comments[index].role
-
-
-def moved_ids(items: Iterable[Moved]) -> list[dict[str, str]]:
-    return [{"id": m.id, "reason": m.reason} for m in items]

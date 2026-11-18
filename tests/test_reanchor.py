@@ -291,10 +291,19 @@ def test_unchanged_file_keeps_its_original_path_string() -> None:
 
 
 def test_huge_and_boundary_lines() -> None:
-    draft = make_draft([finding("f1", "a.py", 10**30), finding("f2", "a.py", 1)])
+    draft = make_draft(
+        [
+            finding("f1", "a.py", 2**31 - 2),
+            finding("f2", "a.py", 1),
+            finding("f3", "a.py", 2**31 - 1),
+        ]
+    )
     out = run(draft, hunk_diff("a.py", "@@ -1,0 +2 @@\n+n\n"))
     assert by_id(out.draft)["f2"]["line"] == 1
-    assert by_id(out.draft)["f1"]["line"] == 10**30 + 1  # unknown length: the pre-check decides
+    assert by_id(out.draft)["f1"]["line"] == 2**31 - 1  # unknown length: the pre-check decides
+    # shifted past the largest line a draft can hold: moves, so the new draft stays valid
+    assert [m.finding["id"] for m in out.moved] == ["f3"]
+    assert validate_document(out.draft) == []
 
 
 def test_file_level_findings_never_move_or_validate() -> None:
@@ -598,7 +607,7 @@ def random_draft(rng: random.Random) -> Draft:
     paths = ["a.py", "b.py", "d", "old.py", "s p/é.txt"]
     findings: list[Doc] = []
     for i in range(rng.randint(0, 12)):
-        line = rng.choice([None, 1, 2, 3, 5, 8, 13, 40, 10**20])
+        line = rng.choice([None, 1, 2, 3, 5, 8, 13, 40, 2**31 - 1])
         start = None
         if line is not None and line > 1 and rng.random() < 0.3:
             start = rng.randint(1, min(line - 1, 12))

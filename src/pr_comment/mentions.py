@@ -115,8 +115,11 @@ class MentionNeutralizer:
 
     def _report(self, name: str) -> None:
         """Adds ``name`` to the report: cut to 128 characters before the repeat check, and
-        dropped once 100 names are held. ``count`` is not affected."""
-        key = name.translate(_ASCII_LOWER)[:_MAX_NAME_LENGTH]
+        dropped once 100 names are held. A trailing ``/`` left by the cut is removed (the schema's
+        name grammar has none). ``count`` is not affected."""
+        key = name.translate(_ASCII_LOWER)[:_MAX_NAME_LENGTH].rstrip("/")
+        if not key:  # a cut that left only slashes: not listed (the form is still counted)
+            return
         if key not in self._names and len(self._names) < _MAX_NAMES:
             self._names[key] = None
 

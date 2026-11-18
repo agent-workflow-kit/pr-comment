@@ -84,7 +84,7 @@
           "path": {
             "type": "string",
             "x-untrusted": true,
-            "description": "Untrusted: the path as forgectl files or diff prints it at the anchor head; head-side for both sides. One line (pr-comment matches the whole string); at most 4096 bytes, checked by pr-comment.",
+            "description": "Untrusted: the path as forgectl files or diff prints it at the anchor head; head-side for both sides. One line (pr-comment matches the whole string); at most 4096 bytes and not only whitespace, checked by pr-comment.",
             "minLength": 1,
             "maxLength": 4096,
             "pattern": "^[^\\n\\r\\u000b\\u000c\\u001c-\\u001e\\u0085\\u2028\\u2029]*$"
@@ -95,11 +95,13 @@
               "null"
             ],
             "minimum": 1,
+            "maximum": 2147483647,
             "description": "1-based. null makes a file-level finding, which always goes to the review body."
           },
           "start_line": {
             "type": "integer",
             "minimum": 1,
+            "maximum": 2147483647,
             "description": "start_line < line, same side; checked by pr-comment, not by this schema."
           },
           "side": {
@@ -215,7 +217,7 @@
               "path": {
                 "type": "string",
                 "x-untrusted": true,
-                "description": "Untrusted: the path as forgectl files or diff prints it at the anchor head; head-side for both sides. One line (pr-comment matches the whole string); at most 4096 bytes, checked by pr-comment.",
+                "description": "Untrusted: the path as forgectl files or diff prints it at the anchor head; head-side for both sides. One line (pr-comment matches the whole string); at most 4096 bytes and not only whitespace, checked by pr-comment.",
                 "minLength": 1,
                 "maxLength": 4096,
                 "pattern": "^[^\\n\\r\\u000b\\u000c\\u001c-\\u001e\\u0085\\u2028\\u2029]*$"
@@ -226,11 +228,13 @@
                   "null"
                 ],
                 "minimum": 1,
+                "maximum": 2147483647,
                 "description": "1-based. null makes a file-level finding, which always goes to the review body."
               },
               "start_line": {
                 "type": "integer",
                 "minimum": 1,
+                "maximum": 2147483647,
                 "description": "start_line < line, same side; checked by pr-comment, not by this schema."
               },
               "side": {

@@ -30,12 +30,16 @@ from pr_comment.plan import Plan, role_of
 # A dry run never reaches the write, so these codes are a contract break (``lower.py`` narrows by
 # ``reasons`` only: its ``codes`` argument means "a read" there and would refuse ``would_refuse``).
 # forgectl's own ``tool_missing`` on a write is a contract mismatch already (docs/interface.md:
-# forgectl edge).
+# forgectl edge). ``host_rejected`` is not listed: forgectl's reads give it too (any other 4xx),
+# and ``merge_unverified``, ``audit_unavailable`` and the like are not in lower.py's pass-through
+# at all, so they are mismatches there. ``invalid_position`` is a mismatch for a non-review action
+# (see ``run_precheck``).
 WRITE_ONLY_CODES: Final = frozenset(
     {
         "vetoed",
         "escalated",
         "outcome_unknown",
+        "outcome_partial",
         "quick_action_ran",
         "approved_stale_head",
         "audit_failed",
@@ -105,6 +109,10 @@ def _annotated(outcome: Outcome, plan: Plan, gateway: Gateway) -> Outcome:
     details: Any = error.get("details")
     own: dict[str, Any] = dict(details) if isinstance(details, dict) else {}  # pyright: ignore[reportUnknownArgumentType]
     if code == "body_too_large":
+        if plan.action == "review" and "index" not in own:
+            return mismatch_outcome(
+                plan.action, "body_too_large names no body of the plan", gateway=gateway
+            )
         index: Any = own.get("index")
         try:
             own["role"] = role_of(plan, index) if plan.action == "review" else "body"
@@ -177,9 +185,8 @@ def _files_moves(plan: Plan, forge: Forge) -> dict[str, str]:
         )
     if listing.files_complete:
         return {}
-    listed = {f.path for f in listing.files} | {
-        f.previous_path for f in listing.files if f.previous_path is not None
-    }
+    # a renamed file matches by its new path (forgectl, Position validation), on either side
+    listed = {f.path for f in listing.files}
     return {c.finding_id: "files_incomplete" for c in plan.inline_comments if c.path not in listed}
 
 
@@ -213,7 +220,7 @@ def run_precheck(
         except LowerFailure as failure:
             error = _error_of(failure.outcome)
             code, reason = error.get("code"), error.get("reason")
-            if code in WRITE_ONLY_CODES:
+            if code in WRITE_ONLY_CODES or (code == "invalid_position" and plan.action != "review"):
                 raise _fail(
                     mismatch_outcome(plan.action, "an error a dry run cannot give", gateway=gateway)
                 ) from None

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -25,6 +26,7 @@ from tests.posting import (
     dry_ok,
     dry_refusal,
     finding,
+    prepared_of,
     show_of,
     source_of,
 )
@@ -113,6 +115,15 @@ def test_the_precheck_is_the_real_call_with_dry_run_and_the_same_input() -> None
     assert done.plan == plan
     assert done.rounds == ("initial",)
     assert done.already_posted is None and done.warnings == ()
+
+
+def test_a_large_cjk_review_passes_the_precheck_within_forgectls_file_limit() -> None:
+    text = "漢" * 21000  # 126000 bytes as \\u escapes, 63000 as UTF-8
+    build = review_builder(*(finding(f"f{i}", f"p{i}.py", 3, body=text) for i in range(150)))
+    plan = build({})
+    assert 9_000_000 < len(plan.input) < 16 * 1024 * 1024
+    done, gateway = run(build, dry_ok(plan))
+    assert done.rounds == ("initial",) and gateway.calls[0].stdin == plan.input
 
 
 def test_the_dedupe_hint_never_ends_the_command() -> None:
@@ -319,8 +330,13 @@ def test_too_large_with_every_path_listed_passes_through() -> None:
     assert error["_exit"] == 20 and error["reason"] == "too_large"
 
 
-def test_a_renamed_files_old_path_counts_as_listed() -> None:
-    build = review_builder(finding("f1", "old.py", 2, side="left"))
+def test_a_renamed_file_is_listed_by_its_new_path_only() -> None:
+    """forgectl (Position validation): a renamed file matches by its new path, on either side."""
+    build = review_builder(
+        finding("f1", "old.py", 2, side="left"),
+        finding("f2", "new.py", 3),
+        finding("f3", "z.py", 4),
+    )
     first = build({})
     listed = [
         {
@@ -334,8 +350,10 @@ def test_a_renamed_files_old_path_counts_as_listed() -> None:
     doc = h.files_doc(files=listed)
     doc["files_complete"] = False
     doc["changed_files"] = 9
-    error = failure_of(build, dry_refusal(first, "too_large"), ok("files", doc))
-    assert error["reason"] == "too_large"
+    second = build({"f1": "files_incomplete", "f3": "files_incomplete"})
+    done, _ = run(build, dry_refusal(first, "too_large"), ok("files", doc), dry_ok(second))
+    assert done.moves == {"f1": "files_incomplete", "f3": "files_incomplete"}
+    assert done.plan.posted_inline == ("f2",)
 
 
 def test_a_file_list_for_another_head_is_a_stale_head() -> None:
@@ -447,6 +465,16 @@ def test_body_too_large_with_an_index_outside_the_plan_is_a_mismatch() -> None:
     assert error["code"] == "lower_contract_mismatch"
 
 
+@pytest.mark.parametrize("details", [{"limit": 1048576}, None])
+def test_body_too_large_on_a_review_without_an_index_key_is_a_mismatch(
+    details: dict[str, Any] | None,
+) -> None:
+    build = review_builder(finding("f1"))
+    plan = build({})
+    error = loose_failure_of(build, dry_error(plan, 2, "body_too_large", details=details))
+    assert error["code"] == "lower_contract_mismatch"
+
+
 def test_body_too_large_on_a_comment_is_the_body() -> None:
     huge = "x" * 300_000  # GitHub's comment limit is 262144 bytes
     plan = build_text_plan(context(), action="comment", text=huge, head_sha=A, base_ref="main")
@@ -515,15 +543,40 @@ def test_a_pending_review_is_a_refusal_even_if_a_dry_run_rarely_finds_it() -> No
     assert error["_exit"] == 20 and error["reason"] == "pending_review_exists"
 
 
-def test_write_only_codes_in_a_dry_run_are_a_contract_mismatch() -> None:
+@pytest.mark.parametrize(
+    ("code", "exit_code"),
+    [
+        ("vetoed", 11),
+        ("outcome_unknown", 12),
+        ("outcome_partial", 12),
+        ("quick_action_ran", 12),
+        ("approved_stale_head", 12),
+        ("audit_failed", 12),
+        ("escalated", 13),
+        ("confirmation_required", 13),
+    ],
+)
+def test_write_only_codes_in_a_dry_run_are_a_contract_mismatch(code: str, exit_code: int) -> None:
     build = review_builder(finding("f1"))
     plan = build({})
-    for code, exit_code in (("vetoed", 11), ("outcome_unknown", 12), ("quick_action_ran", 12)):
-        gateway = FakeGateway([dry_error(plan, exit_code, code)])
-        with pytest.raises(LowerFailure) as caught:
-            run_precheck(gateway, Forge(gateway), build)
-        document = caught.value.outcome.document
-        assert document is not None and document["error"]["code"] == "lower_contract_mismatch"
+    gateway = FakeGateway([dry_error(plan, exit_code, code, details={"landed": {"ids": []}})])
+    with pytest.raises(LowerFailure) as caught:
+        run_precheck(gateway, Forge(gateway), build)
+    document = caught.value.outcome.document
+    assert document is not None and document["error"]["code"] == "lower_contract_mismatch"
+
+
+@pytest.mark.parametrize("action", ["comment", "reply", "approve"])
+def test_invalid_position_on_a_non_review_action_is_a_contract_mismatch(action: str) -> None:
+    kwargs: dict[str, Any] = {"to": "gh:rc:RC_x"} if action == "reply" else {}
+    plan = build_text_plan(
+        context(), action=action, text="x", head_sha=A, base_ref="main", **kwargs
+    )
+    gateway = FakeGateway([dry_error(plan, 12, "invalid_position", details=invalid(0))])
+    with pytest.raises(LowerFailure) as caught:
+        run_precheck(gateway, Forge(gateway), lambda _m: plan)
+    document = caught.value.outcome.document
+    assert document is not None and document["error"]["code"] == "lower_contract_mismatch"
 
 
 def test_a_forgectl_that_exits_early_without_output_is_a_contract_mismatch() -> None:
@@ -579,3 +632,31 @@ def test_the_neutralized_counts_of_prcomments_input_are_zero_in_forgectls_eyes()
     assert dry_doc(plan)["neutralized_lines"] == 0 and dry_doc(plan)["markers_removed"] == 0
     assert dry_doc(comment)["neutralized_lines"] == 0
     assert dry_doc(comment)["markers_removed"] == 0
+
+
+def _golden_bodies() -> list[tuple[str, str]]:
+    raw = (Path(__file__).parent / "golden" / "assemble" / "bodies.txt").read_text(encoding="utf-8")
+    bodies: list[tuple[str, str]] = []
+    for block in raw.rstrip("\n").split("\n\n=====\n\n"):
+        header, _, text = block.partition("\n")
+        assert header.startswith("# ")
+        bodies.append((header.split()[1], text))
+    return bodies
+
+
+@pytest.mark.parametrize(("name", "text"), _golden_bodies(), ids=[n for n, _ in _golden_bodies()])
+def test_forgectl_neutralizes_nothing_in_any_golden_body(name: str, text: str) -> None:
+    """Acceptance criterion: for every golden body forgectl's neutralizing finds nothing to do, as
+    a comment body and as a review body with the same text as an inline comment."""
+    as_comment = prepared_of("comment", ["--dedupe-key=k"], text.encode("utf-8"))
+    review = json.dumps(
+        {
+            "event": "comment",
+            "body": text,
+            "comments": [{"path": "a.py", "line": 3, "side": "right", "body": text}],
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    as_review = prepared_of("review", ["--dedupe-key=k"], review)
+    for prep in (as_comment, as_review):
+        assert (prep.neutralized_lines, prep.markers_removed) == (0, 0), name

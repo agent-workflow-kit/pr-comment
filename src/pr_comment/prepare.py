@@ -24,7 +24,7 @@ import errno
 import os
 import stat
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, BinaryIO, Final
 
@@ -204,13 +204,13 @@ def _config_failure(exc: ConfigError) -> RunFailure:
     return _usage(cut_bytes(str(exc)), "config_invalid", {"key": exc.key})
 
 
-def _guarded(build: Any) -> Any:
+def _guarded(build: Callable[[Mapping[str, str]], Plan]) -> Callable[[Mapping[str, str]], Plan]:
     """Turn a footer that renders to a non-letter (``ConfigError`` at run time) into the exit 2
     ``config_invalid`` envelope."""
 
     def run(moves: Mapping[str, str]) -> Plan:
         try:
-            return build(moves)  # type: ignore[no-any-return]
+            return build(moves)
         except ConfigError as exc:
             raise _config_failure(exc) from None
 
