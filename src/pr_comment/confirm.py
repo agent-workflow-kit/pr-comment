@@ -6,8 +6,10 @@ This is the human gate (docs/interface.md, Confirmation), so the rules are stric
   ``display.py``. Posted text and ``--json`` output never do: the plan is untouched.
 * Every line of a body, an inline comment or any other untrusted text sits behind a fixed gutter
   (``GUTTER``), so untrusted text can never start a line that looks like pr-comment's own
-  headings, the summary or the prompt. A lone CR, ESC, bidi controls and C1 controls are marked by
-  ``display.py``; nothing is dropped or truncated, so what the human reads is the plan.
+  headings, the summary or the prompt. A line longer than the terminal is hard-wrapped, with the
+  gutter on every part, so a soft wrap cannot start a flush-left line either. A lone CR, ESC,
+  bidi controls and C1 controls are marked by ``display.py``; nothing is dropped or truncated,
+  so what the human reads is the plan.
 * The hash shown is ``plan.plan_sha256``; the counts shown are the plan's, labelled as upper
   bounds where the interface says so.
 * The answer is read from the real terminal: the caller passes the stdin descriptor and it must
@@ -23,14 +25,18 @@ from __future__ import annotations
 import contextlib
 import os
 import signal
+import sys
+import unicodedata
 from collections.abc import Callable, Iterator
 from typing import Any
 
-from .display import sanitize_line, sanitize_text
+from .display import marker, sanitize_line, sanitize_text
 from .plan import FollowUp, Plan
 from .prepare import Prepared
 
 GUTTER = "  | "
+DEFAULT_WIDTH = 80
+MIN_TEXT_WIDTH = 20
 PROMPT = "Post? [y/N] "
 MAX_ANSWER = 256
 ALREADY_POSTED = (
@@ -57,9 +63,36 @@ def _line(text: str) -> str:
     return sanitize_line(text)
 
 
-def _gutter(text: str) -> list[str]:
-    """Untrusted multi-line text as display lines, every one behind the gutter."""
-    return [GUTTER + line for line in sanitize_text(text).split("\n")]
+def _cells(ch: str) -> int:
+    """Terminal columns one character may take, rounded up: wide, fullwidth and ambiguous-width
+    characters count 2, a tab 8, everything else (combining marks included) 1."""
+    if ch == "\t":
+        return 8
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F", "A") else 1
+
+
+def _wrap(line: str, room: int) -> list[str]:
+    """``line`` cut into parts of at most ``room`` columns (at least one part, nothing dropped)."""
+    parts: list[str] = []
+    part: list[str] = []
+    used = 0
+    for ch in line:
+        need = _cells(ch)
+        if part and used + need > room:
+            parts.append("".join(part))
+            part, used = [], 0
+        part.append(ch)
+        used += need
+    parts.append("".join(part))
+    return parts
+
+
+def _gutter(text: str, width: int) -> list[str]:
+    """Untrusted multi-line text as display lines, every one (and every wrapped part of one)
+    behind the gutter. One column stays free so a full line never relies on the terminal's own
+    wrap."""
+    room = max(MIN_TEXT_WIDTH, width - len(GUTTER) - 1)
+    return [GUTTER + part for line in sanitize_text(text).split("\n") for part in _wrap(line, room)]
 
 
 def _headline(plan: Plan) -> str:
@@ -75,7 +108,7 @@ def _follow_up(item: FollowUp) -> str:
     return f"{item.action} ({_line(thread)})"
 
 
-def plan_lines(plan: Plan) -> list[str]:
+def plan_lines(plan: Plan, width: int = DEFAULT_WIDTH) -> list[str]:
     """The full plan: every body as forgectl will post it (with its dedupe line), then where each
     inline comment goes. Untrusted text is behind the gutter."""
     lines = [f"plan_sha256 {_line(plan.plan_sha256)}"]
@@ -87,7 +120,7 @@ def plan_lines(plan: Plan) -> list[str]:
             start = f"{spot.start_line}-" if spot.start_line is not None else ""
             where = f" at {_line(spot.path)}:{start}{spot.line} ({_line(spot.side)})"
         lines.append(f"--- {_line(body.role)}{where}, {body.bytes} bytes")
-        lines.extend(_gutter(body.text))
+        lines.extend(_gutter(body.text, width))
     return lines
 
 
@@ -141,9 +174,11 @@ def summary_lines(prepared: Prepared) -> list[str]:
     if plan.mentions_neutralized:
         names = ", ".join(_line(n) for n in plan.mentions_neutralized)
         lines.append(f"mentions neutralized: {names}")
-    allowed = prepared.request.allow_mentions
-    if allowed:
-        lines.append("mentions allowed this run: " + ", ".join(_line(n) for n in allowed))
+    if plan.mentions_policy == "allow":
+        lines.append("mentions allowed this run: all (mentions.policy is allow)")
+    elif plan.mentions_allowed:
+        names = ", ".join(_line(n) for n in plan.mentions_allowed)
+        lines.append("mentions allowed this run: " + names)
     if prepared.precheck.already_posted:
         lines.append(ALREADY_POSTED)
     for item in plan.follow_ups:
@@ -151,13 +186,33 @@ def summary_lines(prepared: Prepared) -> list[str]:
     return lines
 
 
-def dialog_text(prepared: Prepared) -> str:
+def encodable(text: str, encoding: str) -> str:
+    """``text`` with every character the stream's encoding cannot carry shown as ``<U+XXXX>``, so
+    a neutralized look-alike never turns into the character it imitates (``＜`` into ``<``)."""
+    try:
+        text.encode(encoding)
+        return text
+    except UnicodeEncodeError:
+        pass
+    except LookupError:
+        return encodable(text, "utf-8")
+    out: list[str] = []
+    for ch in text:
+        try:
+            ch.encode(encoding)
+            out.append(ch)
+        except UnicodeEncodeError:
+            out.append(marker(ch))
+    return "".join(out)
+
+
+def dialog_text(prepared: Prepared, width: int = DEFAULT_WIDTH, encoding: str = "utf-8") -> str:
     """The whole dialog before the prompt: the plan, then the summary just above the prompt."""
     out = ["== plan =="]
-    out += plan_lines(prepared.plan)
+    out += plan_lines(prepared.plan, width)
     out.append("== summary ==")
     out += summary_lines(prepared)
-    return "\n".join(out) + "\n"
+    return encodable("\n".join(out) + "\n", encoding)
 
 
 # --- the answer ------------------------------------------------------------------------------
@@ -172,10 +227,12 @@ def _flush_input(fd: int) -> None:
     """Discard input typed before the prompt appeared: type-ahead cannot answer for the human."""
     try:
         import termios
-
+    except ImportError:
+        return
+    try:
         termios.tcflush(fd, termios.TCIFLUSH)
-    except (ImportError, OSError, ValueError):
-        pass
+    except (termios.error, OSError, ValueError):
+        pass  # not a terminal, or one that is gone: the read declines
 
 
 def read_answer(fd: int) -> bytes | None:
@@ -192,7 +249,7 @@ def read_answer(fd: int) -> bytes | None:
             data += chunk
             if len(data) > MAX_ANSWER:
                 return None
-        return data
+        return data.split(b"\n", 1)[0]  # the first line only; anything after it is not an answer
     except (OSError, ValueError):
         return None
 
@@ -219,12 +276,25 @@ def _interruptible() -> Iterator[None]:
             signal.signal(sig, previous)
 
 
+def _terminal_size() -> tuple[int, str]:
+    """The width of the terminal on stderr (80 when it has none; the environment is not read) and
+    the encoding stderr writes."""
+    stream = sys.stderr
+    encoding = getattr(stream, "encoding", None) or "utf-8"
+    try:
+        columns = os.get_terminal_size(stream.fileno()).columns
+    except (AttributeError, ValueError, OSError):
+        columns = 0
+    return (columns if columns > 0 else DEFAULT_WIDTH), encoding
+
+
 def confirm(prepared: Prepared, *, stdin_fd: int, write: Callable[[str], None]) -> bool:
     """Show the dialog and read the answer; True only for ``y`` or ``yes``.
 
     ``write`` prints to stderr. Raises ``Interrupted`` on SIGINT, SIGTERM or SIGHUP.
     """
-    text = dialog_text(prepared)
+    width, encoding = _terminal_size()
+    text = dialog_text(prepared, width, encoding)
     try:
         with _interruptible():
             write(text)
@@ -233,7 +303,8 @@ def confirm(prepared: Prepared, *, stdin_fd: int, write: Callable[[str], None]) 
             raw = read_answer(stdin_fd)
             if raw is None or len(raw) > MAX_ANSWER:
                 _flush_input(stdin_fd)
-                write("\n")
+                with contextlib.suppress(OSError, ValueError):
+                    write("\n")
                 return False
             return parse_answer(raw)
     except Interrupted:

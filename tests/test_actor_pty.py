@@ -39,6 +39,7 @@ def run_cli(
     """
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
+    (tmp_path / "b.md").write_text("body\n", encoding="utf-8")
     env = {
         "PATH": os.environ.get("PATH", ""),
         "HOME": str(home),
@@ -102,11 +103,15 @@ def assert_usage(result: tuple[int, dict[str, Any]], needle: str) -> None:
     assert needle in doc["error"]["message"]
 
 
-def assert_accepted(result: tuple[int, dict[str, Any]]) -> None:
-    """The actor and flag rules passed. Later steps may still fail (these runs have no files and
-    no forgectl), but never with one of the rules' own usage messages."""
+def assert_accepted(result: tuple[int, dict[str, Any]], *, later_usage: str | None = None) -> None:
+    """The actor and flag rules passed. Later steps may still fail (these runs have no forgectl),
+    but never with a usage error, except the one named ``later_usage`` (an input problem that comes
+    after the rules), and never with one of the rules' own messages."""
     _code, doc = result
-    message = (doc.get("error") or {}).get("message") or ""
+    error = doc.get("error") or {}
+    if error and error["message"] != later_usage:
+        assert error["code"] != "usage", error["message"]
+    message = error.get("message") or ""
     for needle in ("--allow-mention", "--override-escalation", "stdin is a terminal"):
         assert needle not in message
 
@@ -191,4 +196,6 @@ def test_draft_check_dash_with_a_terminal_stdin_is_accepted(tmp_path: Path) -> N
 def test_dash_input_from_a_pipe_is_accepted(tmp_path: Path) -> None:
     argv = ["comment", "o/r#1", "--body-file", "-"]
     # /dev/null is a non-terminal that reads as EOF (an open pipe would block the body read).
-    assert_accepted(run_cli(tmp_path, argv, stdin="null", stderr="pipe"))
+    assert_accepted(
+        run_cli(tmp_path, argv, stdin="null", stderr="pipe"), later_usage="the body is empty"
+    )

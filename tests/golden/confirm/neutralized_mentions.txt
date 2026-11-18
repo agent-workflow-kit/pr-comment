@@ -9,11 +9,10 @@ plan_sha256 3bc95efc8305c2c77cdffc6358d8d53b46c229d725493866444bac4e50e7d0b5
   | 
   | <!-- pr-comment:v1 -->
   | <!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV -->
---- inline:f1 at a.py:3 (right), 137 bytes
+--- inline:f1 at a.py:3 (right), 78 bytes
   | ping ＠amy and ＠bob about ＜b>this＜/b> ！[x](u)
   | 
   | <!-- pr-comment:v1 -->
-  | <!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV -->
 == summary ==
 REVIEW: COMMENT
 PR github.com/acme/widgets#7

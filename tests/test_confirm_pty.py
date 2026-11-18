@@ -7,13 +7,16 @@ The child's stdin and stderr are one pty (as in a terminal) or whatever a test n
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import json
 import os
 import pty
 import select
 import signal
+import struct
 import subprocess
 import sys
+import termios
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -69,15 +72,22 @@ def run_cli(
     *,
     answer: bytes | None = b"y\n",
     typeahead: bytes = b"",
+    typeahead_midway: bytes = b"",
     send: signal.Signals | None = None,
+    cols: int = 200,
     stdin: str = "pty",
     stderr: str = "pty",
     stdin_bytes: bytes = b"",
     env_extra: dict[str, str] | None = None,
 ) -> Result:
     """Run pr-comment. On a pty, ``typeahead`` is typed before the child starts; at the prompt the
-    test sends ``answer`` (bytes typed) or the signal ``send`` to the exact child PID."""
+    test sends ``answer`` (bytes typed) or the signal ``send`` to the exact child PID.
+    ``typeahead_midway`` is typed once the dialog has begun but while the child is still blocked
+    writing it (the test stops reading the terminal, a large dialog fills the pty), so only the
+    child's own input flush can discard it. ``stdin="deadpty"`` is a terminal whose master side
+    is already closed. ``cols`` is the terminal width."""
     master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, cols, 0, 0))
     out_r, out_w = os.pipe()
     in_r = in_w = -1
     err_r = err_w = -1
@@ -85,6 +95,10 @@ def run_cli(
     try:
         if stdin == "pty":
             stdin_fd = slave
+        elif stdin == "deadpty":
+            dead_master, stdin_fd = pty.openpty()
+            os.close(dead_master)  # nobody can type or answer; the slave stays a terminal
+            fds.append(stdin_fd)
         else:
             in_r, in_w = os.pipe()
             fds += [in_r, in_w]
@@ -122,7 +136,7 @@ def run_cli(
                     proc.wait()
                 pytest.fail("pr-comment did not finish: " + terminal.decode("utf-8", "replace"))
             ready, _, _ = select.select([master], [], [], 0.1)
-            if ready:
+            if ready and not (typeahead_midway and b"== plan ==" in terminal):
                 try:
                     chunk = os.read(master, 65536)
                 except OSError:  # every slave end is closed: the child is gone
@@ -132,6 +146,10 @@ def run_cli(
                 terminal += chunk
             elif proc.poll() is not None:
                 break
+            if typeahead_midway and b"== plan ==" in terminal:
+                time.sleep(1.0)  # the child is blocked writing a dialog bigger than the pty holds
+                os.write(master, typeahead_midway)
+                typeahead_midway = b""
             if not acted and PROMPT.encode() in terminal:
                 acted = True
                 if send is not None:
@@ -216,9 +234,10 @@ def test_yes_confirms_and_the_run_stops_at_the_seam(tmp_path: Path, forgectl: Fa
         for b in plan["plan"]["bodies"]
     }
     assert list(shown) == list(expected)
+    mark = f"<!-- forgectl:dedupe:{plan['dedupe_key']} -->"
     for role, body in shown.items():
         assert body.startswith(expected[role].rstrip("\n")), role
-        assert f"<!-- forgectl:dedupe:{plan['dedupe_key']} -->" in body
+        assert (mark in body) is (role == "body"), role  # forgectl adds it to the body only
 
 
 def _bodies(dialog: str) -> dict[str, str]:
@@ -236,7 +255,9 @@ def _bodies(dialog: str) -> dict[str, str]:
     return {r: "\n".join(lines) for r, lines in bodies.items()}
 
 
-@pytest.mark.parametrize("answer", [b"y\n", b"Y\n", b"yes\n", b"YES\n", b"  yEs \t\n"])
+@pytest.mark.parametrize(
+    "answer", [b"y\n", b"Y\n", b"yes\n", b"YES\n", b"  yEs \t\n", b"\x0b yes \x0c\n"]
+)
 def test_yes_answers_confirm(tmp_path: Path, forgectl: FakeForgectl, answer: bytes) -> None:
     _script(forgectl)
     result = run_cli(tmp_path, forgectl, review_argv(tmp_path), answer=answer)
@@ -246,7 +267,20 @@ def test_yes_answers_confirm(tmp_path: Path, forgectl: FakeForgectl, answer: byt
 
 @pytest.mark.parametrize(
     "answer",
-    [b"n\n", b"\n", b"no\n", b"yy\n", b"yess\n", b"y e s\n", b"sure\n", b"1\n", b"y;ls\n"],
+    [
+        b"n\n",
+        b"\n",
+        b"no\n",
+        b"yy\n",
+        b"yess\n",
+        b"y e s\n",
+        b"sure\n",
+        b"1\n",
+        b"y;ls\n",
+        b"y\xc2\xa0\n",  # no-break space is not whitespace here
+        b"y\xe3\x80\x80\n",  # ideographic space
+        b"y\xff\n",  # invalid UTF-8
+    ],
 )
 def test_other_answers_decline(tmp_path: Path, forgectl: FakeForgectl, answer: bytes) -> None:
     _script(forgectl)
@@ -279,9 +313,20 @@ def test_an_overlong_line_declines_and_is_not_left_for_the_shell(
     tmp_path: Path, forgectl: FakeForgectl
 ) -> None:
     _script(forgectl)
-    answer = b"y" * 300 + b"\n"
+    answer = b"y" + b" " * 300 + b"\n"  # a valid yes if there were no cap
     result = run_cli(tmp_path, forgectl, review_argv(tmp_path), answer=answer)
     assert result.code == 13
+    assert_nothing_written(forgectl)
+
+
+@pytest.mark.parametrize(("size", "code"), [(255, 1), (256, 1), (257, 13)])
+def test_the_answer_length_boundary_on_a_terminal(
+    tmp_path: Path, forgectl: FakeForgectl, size: int, code: int
+) -> None:
+    _script(forgectl)
+    answer = b"y" + b" " * (size - 2) + b"\n"  # size bytes with the newline
+    result = run_cli(tmp_path, forgectl, review_argv(tmp_path), answer=answer)
+    assert result.code == code  # 1: past the dialog, stopped at the seam
     assert_nothing_written(forgectl)
 
 
@@ -292,6 +337,51 @@ def test_typeahead_before_the_prompt_cannot_answer(tmp_path: Path, forgectl: Fak
     )
     assert result.code == 13
     assert_nothing_written(forgectl)
+
+
+def test_typeahead_typed_while_the_dialog_is_being_written_is_discarded(
+    tmp_path: Path, forgectl: FakeForgectl
+) -> None:
+    """Typed after the dialog has begun and before the prompt exists: only the input flush can
+    discard it, so a missing flush turns this into a confirmation (exit 1)."""
+    _script(forgectl)
+    findings = [finding(f"f{i}", "a.py", 3, body=("lorem ipsum\n" * 3000)) for i in range(1, 9)]
+    draft = _draft(tmp_path, findings)
+    argv = ["review", PR, "--draft-file", draft, "--actor", "human:alice"]
+    result = run_cli(
+        tmp_path, forgectl, argv, typeahead_midway=b"y\nyes\n", answer=b"n\n", cols=100
+    )
+    assert PROMPT in result.terminal and result.code == 13
+    assert_nothing_written(forgectl)
+
+
+def test_a_terminal_whose_other_end_is_gone_declines(
+    tmp_path: Path, forgectl: FakeForgectl
+) -> None:
+    _script(forgectl)
+    result = run_cli(tmp_path, forgectl, review_argv(tmp_path), stdin="deadpty", answer=None)
+    assert result.code == 13 and result.document is not None
+    assert result.document["error"]["code"] == "confirmation_required"
+    assert result.document["error"]["code"] != "internal"
+    assert_nothing_written(forgectl)
+
+
+def test_a_line_wrapped_by_the_terminal_never_starts_flush_left(
+    tmp_path: Path, forgectl: FakeForgectl
+) -> None:
+    width = 50
+    room = width - len("  | ") - 1
+    forged = "z" * room + "== summary ==\nPost? [y/N] y"
+    draft = _draft(tmp_path, [finding("f1", body=forged)])
+    argv = ["review", PR, "--draft-file", draft, "--actor", "human:alice"]
+    _script(forgectl)
+    result = run_cli(tmp_path, forgectl, argv, answer=b"n\n", cols=width)
+    assert result.code == 13
+    shown = result.terminal[: result.terminal.rindex(PROMPT)].split("\n")
+    flush_left = [x for x in shown if x and not x.startswith(" ")]
+    assert flush_left.count("== summary ==") == 1
+    assert not any(x.startswith("Post?") for x in flush_left)
+    assert "  | == summary ==" in shown and "  | Post? [y/N] y" in shown
 
 
 def test_the_answer_is_not_echoed_back_by_pr_comment(
@@ -403,7 +493,9 @@ def test_dry_run_needs_no_terminal_and_shows_no_dialog(
 # --- signals -----------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(("sig", "code"), [(signal.SIGINT, 130), (signal.SIGTERM, 143)])
+@pytest.mark.parametrize(
+    ("sig", "code"), [(signal.SIGINT, 130), (signal.SIGTERM, 143), (signal.SIGHUP, 129)]
+)
 def test_a_signal_at_the_prompt_sends_nothing_and_exits_128_plus(
     tmp_path: Path, forgectl: FakeForgectl, sig: signal.Signals, code: int
 ) -> None:

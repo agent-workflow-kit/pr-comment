@@ -17,13 +17,12 @@ plan_sha256 f9faaa38011d0cffa5586d3b9d25981553e440e6adc3f6bdc38595c7540a2a76
   | 
   | <!-- pr-comment:v1 -->
   | <!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV -->
---- inline:f1 at src/a.py:3 (right), 115 bytes
+--- inline:f1 at src/a.py:3 (right), 56 bytes
   | **major**
   | 
   | Check the bound here.
   | 
   | <!-- pr-comment:v1 -->
-  | <!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV -->
 == summary ==
 REVIEW: REQUEST_CHANGES
 PR github.com/acme/widgets#7

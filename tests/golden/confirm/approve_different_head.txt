@@ -9,11 +9,10 @@ plan_sha256 4373abba57df56a867c075a8f54c6f1b047aaee827b79a4505195443ab636d6a
   | 
   | <!-- pr-comment:v1 -->
   | <!-- forgectl:dedupe:prc:ra:01ARZ3NDEKTSV4RRFFQ69G5FAV:bbbbbbbbbbbb -->
---- inline:f1 at a.py:3 (right), 103 bytes
+--- inline:f1 at a.py:3 (right), 31 bytes
   | body f1
   | 
   | <!-- pr-comment:v1 -->
-  | <!-- forgectl:dedupe:prc:ra:01ARZ3NDEKTSV4RRFFQ69G5FAV:bbbbbbbbbbbb -->
 == summary ==
 REVIEW: APPROVE
 PR github.com/acme/widgets#7

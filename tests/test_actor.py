@@ -331,3 +331,22 @@ def test_main_closed_stdin_is_not_a_tty(
 
 def test_parser_still_builds() -> None:
     assert build_parser() is not None
+
+
+def test_the_tty_default_actor_takes_me_name_from_the_config_in_the_run_context() -> None:
+    import argparse
+    import dataclasses
+
+    from pr_comment import cli
+    from pr_comment.actor import RunContext
+
+    run = RunContext("human:os-user", "tty", True, True)
+    args = argparse.Namespace(run=run)
+    cli._use_me_name(args, "carol")  # pyright: ignore[reportPrivateUsage]
+    assert args.run == dataclasses.replace(run, actor="human:carol")
+    assert args.run.audit_fields()["actor"] == "human:carol"
+    assert cli._actor(args) == "human:carol"  # pyright: ignore[reportPrivateUsage]
+    flagged = RunContext("human:x", "flag", True, True)
+    kept = argparse.Namespace(run=flagged)
+    cli._use_me_name(kept, "carol")  # pyright: ignore[reportPrivateUsage]
+    assert kept.run is flagged

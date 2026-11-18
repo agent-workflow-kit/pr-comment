@@ -7,6 +7,7 @@ errors exit 2 ``usage``; a command whose handler is not written yet exits 1 ``in
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import getpass
 import importlib.metadata
 import logging
@@ -450,11 +451,18 @@ def _me_name(loaded: Any) -> str:
     return name if name is not None and _ME_NAME.fullmatch(name) else "unknown"
 
 
-def _actor(args: argparse.Namespace, me_name: str) -> str:
-    """The actor from the run context: ``--actor``, else ``human:<me.name>`` on a TTY stdin and
-    ``auto:unknown`` otherwise (``me.name`` from the config wins over the OS username)."""
+def _use_me_name(args: argparse.Namespace, me_name: str) -> None:
+    """On a TTY stdin with no ``--actor`` the actor is ``human:<me.name>`` (``me.name`` from the
+    config wins over the OS username). The run context is updated so the plan, the dialog and the
+    audit fields all hold the same actor."""
     run = args.run
-    return f"human:{me_name}" if run.actor_source == "tty" else str(run.actor)
+    if run.actor_source == "tty":
+        args.run = dataclasses.replace(run, actor=f"human:{me_name}")
+
+
+def _actor(args: argparse.Namespace) -> str:
+    """The actor from the run context."""
+    return str(args.run.actor)
 
 
 def _request(args: argparse.Namespace, actor: str) -> Request:
@@ -530,6 +538,7 @@ def _posting(args: argparse.Namespace) -> Outcome:
     loaded = args.loaded_config
     gateway = ProcessGateway.from_config(loaded)
     me_name = _me_name(loaded)
+    _use_me_name(args, me_name)
     env = Env(
         gateway=gateway,
         config=loaded,
@@ -538,7 +547,7 @@ def _posting(args: argparse.Namespace) -> Outcome:
         on_round=_log_round,
     )
     try:
-        prepared = prepare(_request(args, _actor(args, me_name)), env)
+        prepared = prepare(_request(args, _actor(args)), env)
     except (RunFailure, LowerFailure) as failure:
         return failure.outcome
     except ToolMissing as exc:
