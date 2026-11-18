@@ -1,0 +1,7 @@
+#!/bin/sh
+# Launcher of the fake forgectl (tests/fake_forgectl.py). tests/forgectl_harness.py sets
+# FAKE_FORGECTL_PYTHON (the interpreter that runs the tests, so jsonschema is importable) and
+# FAKE_FORGECTL_DIR (the scenario, the call log and the pids file of one test). No external command
+# runs here: the child PATH may hold nothing but this directory.
+: "${FAKE_FORGECTL_DIR:?FAKE_FORGECTL_DIR is not set}"
+exec "${FAKE_FORGECTL_PYTHON:?FAKE_FORGECTL_PYTHON is not set}" -I "${0%/*}/../fake_forgectl.py" "$@"

@@ -67,6 +67,15 @@ def _start_of(pid: int) -> str | None:
     return data.rpartition(b")")[2].split()[19].decode()
 
 
+def record(directory: Path, pid: int) -> None:
+    """Add a process this test started, a session leader, to ``directory/pids`` right away, so the
+    tracker ends exactly it even if the test fails before the process records itself."""
+    start = _start_of(pid)
+    if start is not None:
+        with open(directory / "pids", "a") as handle:
+            handle.write(f"{pid} {pid} {start}\n")
+
+
 def alive(pid: int, start: str | None) -> bool:
     """Whether the process recorded as (pid, start) still runs (a zombie does not count)."""
     try:

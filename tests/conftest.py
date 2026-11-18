@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from tests.fakes import Tracker
+from tests.forgectl_harness import FakeForgectl
 from tests.golden_harness import check_golden, refuse_regen_in_ci, render_json
 
 
@@ -65,3 +66,13 @@ def tracker() -> Iterator[Tracker]:
     t = Tracker()
     yield t
     t.cleanup()
+
+
+@pytest.fixture
+def forgectl(tmp_path: Path, tracker: Tracker) -> Iterator[FakeForgectl]:
+    """The fake forgectl of one test (``tests/fakebin/forgectl``): script what the host answers,
+    put ``environ()`` in the code under test and read ``calls()``. When the test ends, a fake error,
+    an argv real forgectl would refuse, or a scripted step nobody asked for fails it."""
+    fake = FakeForgectl(tmp_path / "forgectl-fake", tracker)
+    yield fake
+    fake.assert_clean()

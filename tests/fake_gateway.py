@@ -14,6 +14,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from pr_comment.gateway import WRITE_SUBCOMMANDS, ForgectlResult, ToolMissing, validate_call
+from tests import fake_forgectl
 
 Reply = ForgectlResult | Callable[["Call"], ForgectlResult] | BaseException
 
@@ -77,3 +78,57 @@ class FakeGateway:
         if self._missing is not None:
             raise self._missing
         return "/fake/forgectl"
+
+
+class PinnedGateway(FakeGateway):
+    """A ``FakeGateway`` held to forgectl itself, not only to pr-comment's own call rules.
+
+    Every call must be one the pinned forgectl accepts (its argument grammar, the closed host
+    list, the flags it requires, the input it reads from stdin), and every scripted result one it
+    could print (its schemas, its exit codes and error envelopes, ``would_refuse`` on a dry run).
+    A call or a result forgectl would refuse fails the test, which ``FakeGateway`` lets through.
+
+    Use it for tests of code that calls forgectl. ``FakeGateway`` stays for tests of ``lower.py``
+    that must feed it a document forgectl never prints (a contract mismatch).
+    """
+
+    def __init__(
+        self,
+        replies: Sequence[Reply] = (),
+        version: str | None = None,
+        *,
+        missing: ToolMissing | None = None,
+        hosts: dict[str, str] | None = None,
+        timeout: str = "120s",
+        config_path: str | None = None,
+    ) -> None:
+        super().__init__(
+            replies,
+            version=f"forgectl {fake_forgectl.VERSION}" if version is None else version,
+            missing=missing,
+        )
+        self.hosts = hosts or {}
+        self.timeout = timeout  # the real gateway's default (``ProcessGateway``: 120s)
+        self.config_path = config_path
+
+    def call(
+        self, subcommand: str, args: Sequence[str] = (), *, stdin: bytes | None = None
+    ) -> ForgectlResult:
+        argv = [subcommand, "--json"]
+        if self.config_path is not None:
+            argv.append(f"--config={self.config_path}")
+        argv += [f"--timeout={self.timeout}", *args]
+        # a call forgectl refuses is a bug of the caller, whatever the answer would have been
+        refusal = fake_forgectl.check_call(argv, stdin, hosts=self.hosts)
+        if refusal is not None:
+            raise AssertionError(refusal)
+        result = super().call(subcommand, args, stdin=stdin)
+        problems = fake_forgectl.judge(
+            argv, stdin, result.exit_code, result.stdout, hosts=self.hosts
+        )
+        if problems:
+            raise AssertionError(
+                f"forgectl could not have answered {subcommand} {list(args)} this way: "
+                + "; ".join(problems)
+            )
+        return result

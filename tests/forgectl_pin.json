@@ -1,0 +1,8 @@
+{
+  "version": "0.55.2",
+  "tag": "v0.55.2",
+  "commit": "2d065ed5638470c5225bd160a92e9b1d4b07246d",
+  "schemas_dir": "forgectl_schemas",
+  "schemas_files": 33,
+  "schemas_sha256": "139cfc7ee7225bace45596a4996cb36fbbcf22bb4466feb26fd94c16635f1d5b"
+}
