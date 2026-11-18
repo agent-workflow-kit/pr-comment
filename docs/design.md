@@ -96,7 +96,7 @@ Each becomes a `live` test in the plan.
 | `config.py` | Pydantic config, drop-ins, environment, per-repo merge, footer placeholder validation |
 | `draft.py` | draft loading (no-follow, caps), schema, version and consistency checks, `draft check`, `draft new` |
 | `diffmap.py` | unified-diff parser and hunk mapping for re-anchoring |
-| `render.py` | text pipeline, character pass (mentions, `<`, images), finding text, suggestions, layout, attribution line and marker, dedupe keys |
+| `render.py` | text pipeline, mentions; calls `neutralize.py` for `<`, `![` and the counts, finding text, suggestions, layout, attribution line and marker, dedupe keys |
 | `neutralize.py` | the character pass of the text pipeline (`<` and `![`, never on applicable suggestion lines) and the body counts (`raw_html`, `images`, `links`, `invisible`); `render.py` calls it |
 | `plan.py` | the posting plan shown by the dialog and `--dry-run`, and its `plan_sha256` |
 | `forge.py` | the forgectl edge: argv in `=` form, stdin input, the pre-check, result and envelope parsing by the fields pr-comment uses |

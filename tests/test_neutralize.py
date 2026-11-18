@@ -329,7 +329,7 @@ def test_image_count(text: str, images: int) -> None:
         ("a@b.co", 1),
         ("a@b", 0),
         ("a@b.", 0),
-        ("a@b.1", 0),
+        ("a@b.1", 1),
         ("@b.co", 0),
         ("a.b+c%d-e_f@x-y.zz", 1),
         ("a@b.co c@d.ee", 2),
@@ -453,3 +453,41 @@ def test_a_megabyte_of_text_is_counted_exactly() -> None:
     text = "<a ![](u) www.x.org​\n" * 40_000
     got = count_text(text)
     assert got == TextCounts(raw_html=40_000, images=40_000, links=40_000, invisible=40_000)
+
+
+# --- review round 1 fixes ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["&#" + "1" * 5000, "&#x" + "1" * 5000 + ";", "&#" + "9" * 5000 + ";//x"],
+)
+def test_huge_numeric_references_do_not_crash_count_text(text: str) -> None:
+    count_text(text)
+
+
+def test_huge_decimal_reference_still_lets_later_links_count() -> None:
+    assert _c("&#" + "1" * 5000 + ";https://evil.example").links == 1
+
+
+def test_numeric_reference_with_leading_zeros_decodes_as_before() -> None:
+    assert _c("&#0000000119;ww.example.com").links == 1
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["a@1.2.com", "a@b_c.com", "a@b.1", ";b@.X"],
+)
+def test_email_forms_cmark_linkifies_are_counted(text: str) -> None:
+    assert _c(text).links == 1
+
+
+@pytest.mark.parametrize("text", ["a@b", "a@", "@b.co"])
+def test_non_email_forms_are_not_counted(text: str) -> None:
+    assert _c(text).links == 0
+
+
+@pytest.mark.parametrize("lines", ["abc", b"abc"])
+def test_suggestion_lines_reject_a_bare_string(lines: object) -> None:
+    with pytest.raises(TypeError):
+        neutralize_suggestion_lines(lines, applicable=True)  # type: ignore[arg-type]

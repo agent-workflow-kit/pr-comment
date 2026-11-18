@@ -44,7 +44,13 @@ _SCHEME_RE: Final = re.compile(r"//(?=[^\s/])")
 _WWW_RE: Final = re.compile(r"(?<![A-Za-z0-9])www\.", re.IGNORECASE)
 _MAILTO_RE: Final = re.compile(r"mailto:", re.IGNORECASE)
 # E-mail form, found at the character before each `@` so overlapping forms are counted too.
-_EMAIL_RE: Final = re.compile(r"(?=[A-Za-z0-9._%+-]@[A-Za-z0-9-]+\.[A-Za-z])")
+_EMAIL_RE: Final = re.compile(r"(?=[A-Za-z0-9._%+-]@[A-Za-z0-9_.-]*\.[A-Za-z0-9])")
+
+# Numeric character references, so huge ones can be capped before html.unescape (its int() has a
+# digit limit and raises ValueError above it).
+_NUMERIC_REF_RE: Final = re.compile(r"&#(?:([xX])([0-9A-Fa-f]+)|([0-9]+))")
+_BEYOND_UNICODE_DEC: Final = "1114112"  # decodes to U+FFFD, like any value above U+10FFFF
+_BEYOND_UNICODE_HEX: Final = "110000"
 
 
 @dataclass(frozen=True)
@@ -84,15 +90,30 @@ def neutralize_suggestion_lines(lines: Iterable[str], *, applicable: bool) -> li
     replacement code and stay as they are; lines of a degraded or moved suggestion are untrusted
     text shown as code, so they are neutralized (before their ``<U+XXXX>`` markers are inserted).
     """
+    if isinstance(lines, (str, bytes)):
+        raise TypeError(f"expected an iterable of str lines, got {type(lines).__name__}")
     if applicable:
         return list(lines)
     return [neutralize_characters(line) for line in lines]
 
 
+def _cap_numeric_ref(match: re.Match[str]) -> str:
+    x, hex_digits, dec_digits = match.groups()
+    if x:
+        significant = hex_digits.lstrip("0")
+        if len(significant) > 6:
+            return f"&#{x}{_BEYOND_UNICODE_HEX}"
+        return match.group(0)
+    significant = dec_digits.lstrip("0")
+    if len(significant) > 7:
+        return "&#" + _BEYOND_UNICODE_DEC
+    return match.group(0)
+
+
 def count_text(text: str) -> TextCounts:
     """The counts of one untrusted text, taken before neutralizing (pipeline-clean text)."""
     _require_str(text)
-    decoded = _ESCAPE_RE.sub(r"\1", html.unescape(text))
+    decoded = _ESCAPE_RE.sub(r"\1", html.unescape(_NUMERIC_REF_RE.sub(_cap_numeric_ref, text)))
     links = (
         len(_SCHEME_RE.findall(decoded))
         + len(_WWW_RE.findall(decoded))
