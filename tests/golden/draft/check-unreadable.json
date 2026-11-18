@@ -1,0 +1,13 @@
+{
+  "draft_id": null,
+  "errors": [
+    {
+      "kind": null,
+      "message": "draft file cannot be opened",
+      "pointer": ""
+    }
+  ],
+  "findings": null,
+  "schema_version": null,
+  "valid": false
+}

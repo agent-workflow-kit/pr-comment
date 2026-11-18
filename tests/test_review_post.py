@@ -208,28 +208,6 @@ def test_a_confirmed_review_posts_the_plan_byte_for_byte_and_audits_the_pair(
     assert "file @" not in text and "body f1" not in text
 
 
-def test_a_gitlab_review_reports_the_body_thread_as_not_done_until_it_is_implemented(
-    cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path
-) -> None:
-    draft = draft_file(tmp_path, [finding("f1")], pr=GL_PR)
-    forgectl.script(
-        show(pr=GL_PR, backend="gitlab"),
-        dry(GL_PR),
-        ok("review", h.post_doc("review", GL_PR, ids=["gl:n:11"], thread_ids=["gl:d:" + "1" * 40])),
-    )
-    code, doc, _ = cli(*args_for(draft, pr=GL_PR))
-    assert code == 0, doc
-    validate("pr-comment/cli/review.json", doc)
-    assert doc["review_id"] is None and doc["thread_ids"] == ["gl:d:" + "1" * 40]
-    # TODO(#36) resolves the body thread; until then the result says it was not
-    assert doc["warnings"] == ["body_thread_unresolved"] and doc["body_thread_resolved"] is False
-    # the follow-up was not performed: the record says partial, landed (docs/interface.md, Results)
-    outcome = audit(state_home)[1]
-    assert outcome["result"] == "partial"
-    assert outcome["writes"][0]["result"] == "partial"
-    assert outcome["writes"][0]["lower"]["exit"] == 0
-
-
 def test_already_posted_is_success_and_is_recorded_as_such(
     cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path
 ) -> None:

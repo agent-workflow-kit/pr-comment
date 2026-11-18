@@ -88,12 +88,12 @@ def test_human_message_is_one_sanitized_line(
 
 
 def test_valid_config_loads_and_the_handler_runs(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = write_config(tmp_path, "timeout: 5s\n")
+    # The stub handler never reaches forgectl: the dispatch reaches it and reports `internal`.
+    monkeypatch.setitem(cli.HANDLERS, "draft new", cli._not_implemented)
     code, out, _ = run(capsys, "--json", "--config", config, "draft", "new", PR)
-    # No handler is written yet (and this one would never reach forgectl): the dispatch reaches it
-    # and reports `internal`.
     assert code == 1
     assert json.loads(out)["error"]["code"] == "internal"
 
@@ -101,15 +101,17 @@ def test_valid_config_loads_and_the_handler_runs(
 def test_draft_check_reads_no_config(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     config = write_config(tmp_path, "timeout: -5s\n")
     code, out, _ = run(capsys, "--json", "--config", config, "draft", "check", "x.json")
-    assert code == 1  # the unwritten handler ran: the invalid config was never read
-    assert json.loads(out)["error"]["code"] == "internal"
+    # The handler ran and refused the missing draft: the invalid config was never read.
+    assert code == 2
+    doc = json.loads(out)
+    assert doc["valid"] is False
+    assert "error" not in doc
 
 
 def test_export_reads_no_config(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     config = write_config(tmp_path, "timeout: -5s\n")
     code, out, _ = run(capsys, "--json", "--config", config, "export")
-    assert code == 1  # the unwritten handler ran: the invalid config was never read
-    assert json.loads(out)["error"]["code"] == "internal"
+    assert (code, out) == (0, "[]\n")  # the invalid config was never read
 
 
 def test_hostile_key_is_sanitized_in_message_and_details(

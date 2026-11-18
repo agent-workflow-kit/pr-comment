@@ -186,19 +186,177 @@ def test_forgectls_own_warnings_come_first_then_prcomments(rig: Rig) -> None:
     validate("pr-comment/cli/review.json", outcome.document)
 
 
-def test_a_gitlab_review_says_the_body_thread_was_not_resolved(tmp_path: Path) -> None:
-    gl = Rig(tmp_path, backend="gitlab")
-    try:
-        assert gl.prepared.plan.follow_ups  # TODO(#36) performs it
-        outcome = gl.post(
-            ok("review", posted_doc(h.GITLAB_PR, ids=["gl:n:3"], review_id=None, thread_ids=[]))
+BODY_T = "gl:d:" + "1" * 40
+
+
+class GitlabRig:
+    """A GitLab review rig scripting the review's answer, the ``comments`` read and the resolve."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.rig = Rig(tmp_path, backend="gitlab")
+        key = self.rig.prepared.plan.dedupe_key
+        self.thread = h.thread_doc(
+            BODY_T, [h.comment_doc("gl:n:3", f"body\n<!-- forgectl:dedupe:{key} -->")]
         )
-        assert outcome.document is not None
-        assert outcome.document["body_thread_resolved"] is False
-        assert outcome.document["warnings"] == ["body_thread_unresolved"]
-        assert [r["result"] for r in gl.audit()] == ["attempted", "partial"]
-    finally:
-        gl.close()
+
+    def review(self, **kw: Any) -> ForgectlResult:
+        kw.setdefault("ids", ["gl:n:3"])
+        kw.setdefault("thread_ids", [BODY_T])
+        return ok("review", posted_doc(h.GITLAB_PR, review_id=None, **kw))
+
+    def comments(self) -> ForgectlResult:
+        return ok("comments", h.comments_doc(h.GITLAB_PR, threads=[self.thread]))
+
+    def resolve(self) -> ForgectlResult:
+        return ok("resolve", h.resolve_doc("resolve", BODY_T, h.GITLAB_PR))
+
+    def post(self, *replies: Any) -> Outcome:
+        return self.rig.post(*replies)
+
+    def subcommands(self) -> list[str]:
+        return [c.subcommand for c in self.rig.gateway.calls]
+
+    def writes(self) -> list[dict[str, Any]]:
+        return list(self.rig.audit()[1]["writes"])
+
+
+@pytest.fixture
+def gl(tmp_path: Path) -> Iterator[GitlabRig]:
+    made = GitlabRig(tmp_path)
+    yield made
+    made.rig.close()
+
+
+def test_a_gitlab_review_resolves_the_body_thread_after_the_write(gl: GitlabRig) -> None:
+    assert gl.rig.prepared.plan.follow_ups
+    outcome = gl.post(gl.review(), gl.comments(), gl.resolve())
+    assert outcome.exit_code == 0 and outcome.document is not None
+    assert outcome.document["body_thread_resolved"] is True
+    assert outcome.document["body_thread_id"] == BODY_T and outcome.document["warnings"] == []
+    validate("pr-comment/cli/review.json", outcome.document)
+    assert gl.subcommands() == ["show", "review", "review", "comments", "resolve"]
+    assert [r["result"] for r in gl.rig.audit()] == ["attempted", "done"]
+    assert [w["index"] for w in gl.writes()] == [0, 1]
+    assert any("resolved the review body thread" in line for line in outcome.human)
+
+
+def test_a_signal_held_after_the_review_skips_the_follow_up(gl: GitlabRig) -> None:
+    import signal
+
+    def review_then_signal(call: Call) -> ForgectlResult:
+        signal.raise_signal(signal.SIGTERM)  # held by the run: it records and goes on
+        return gl.review()
+
+    outcome = gl.post(review_then_signal)
+    assert outcome.exit_code == 0 and outcome.document is not None
+    assert outcome.document["body_thread_resolved"] is False
+    assert outcome.document["warnings"] == ["body_thread_unresolved"]
+    assert gl.subcommands() == ["show", "review", "review"]  # no read, no resolve after a signal
+    assert [r["result"] for r in gl.rig.audit()] == ["attempted", "partial"]
+
+
+def test_a_signal_during_the_comments_read_ends_the_run_unknown_with_the_review_recorded(
+    gl: GitlabRig,
+) -> None:
+    interrupted = ForgectlInterrupted(
+        15, ForgectlResult(command="comments", write=False, exit_code=None, signal=15)
+    )
+    outcome = gl.post(gl.review(), interrupted)
+    assert outcome.exit_code == 12
+    assert error_of(outcome)["code"] == "outcome_unknown"
+    records = gl.rig.audit()
+    assert [r["result"] for r in records] == ["attempted", "partial"]
+    assert [w["result"] for w in records[1]["writes"]] == ["partial"]  # landed, follow-up not done
+    assert gl.subcommands() == ["show", "review", "review", "comments"]
+
+
+def test_a_comments_answer_that_is_not_a_comments_document_leaves_it_unresolved(
+    gl: GitlabRig,
+) -> None:
+    outcome = gl.post(gl.review(), ok("comments", {"nonsense": True}))
+    assert outcome.exit_code == 0 and outcome.document is not None
+    assert outcome.document["body_thread_resolved"] is False
+    assert outcome.document["warnings"] == ["body_thread_unresolved"]
+    assert gl.rig.audit()[1]["result"] == "partial"
+
+
+def test_a_resolve_that_cannot_start_is_a_failed_follow_up_not_a_failed_review(
+    gl: GitlabRig,
+) -> None:
+    missing = ToolMissing("forgectl is not installed")
+    outcome = gl.post(gl.review(), gl.comments(), missing)
+    assert outcome.exit_code == 0 and outcome.document is not None
+    assert outcome.document["body_thread_resolved"] is False
+    first, second = gl.writes()
+    assert first["result"] == "done"
+    assert (second["result"], second["lower"]["code"]) == ("failed", "tool_missing")
+    assert gl.rig.audit()[1]["result"] == "partial"
+
+
+def test_a_bug_before_the_resolve_ran_is_a_failed_write_and_the_review_stands(
+    gl: GitlabRig,
+) -> None:
+    outcome = gl.post(gl.review(), gl.comments(), GatewayInternalError("bug"))
+    assert outcome.exit_code == 0 and outcome.document is not None
+    assert outcome.document["body_thread_resolved"] is False
+    second = gl.writes()[1]
+    assert (second["result"], second["lower"]["code"]) == ("failed", "internal")
+
+
+def test_an_unexpected_error_while_the_resolve_is_in_flight_is_recorded_as_unknown(
+    gl: GitlabRig,
+) -> None:
+    outcome = gl.post(gl.review(), gl.comments(), RuntimeError("boom"))
+    assert outcome.exit_code == 0 and outcome.document is not None  # the review landed
+    assert outcome.document["body_thread_resolved"] is False
+    assert outcome.document["warnings"] == ["body_thread_unresolved"]
+    second = gl.writes()[1]
+    assert (second["action"], second["result"]) == ("resolve", "outcome_unknown")
+    assert gl.rig.audit()[1]["result"] == "partial"
+
+
+def test_an_unexpected_error_before_any_write_of_the_follow_up_is_a_skipped_follow_up(
+    gl: GitlabRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pr_comment import post as post_module
+
+    def broken(*args: Any, **kw: Any) -> Any:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(post_module, "find_body_thread", broken)
+    outcome = gl.post(gl.review(), gl.comments())
+    assert outcome.exit_code == 0 and outcome.document is not None
+    assert outcome.document["warnings"] == ["body_thread_unresolved"]
+    assert [r["result"] for r in gl.rig.audit()] == ["attempted", "partial"]
+    assert len(gl.writes()) == 1
+
+
+def test_an_unexpected_error_after_the_resolve_landed_still_says_resolved(
+    gl: GitlabRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pr_comment import post as post_module
+
+    def broken(*args: Any, **kw: Any) -> Any:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(post_module, "_resolve_result", broken)
+    outcome = gl.post(gl.review(), gl.comments(), gl.resolve())
+    assert outcome.exit_code == 0 and outcome.document is not None
+    assert outcome.document["body_thread_resolved"] is True
+    assert [w["result"] for w in gl.writes()] == ["done", "done"]
+    assert gl.rig.audit()[1]["result"] == "done"
+
+
+def test_a_review_that_failed_has_no_follow_up(gl: GitlabRig) -> None:
+    refused = ForgectlResult(
+        command="review",
+        write=True,
+        exit_code=20,
+        stdout=envelope("refused", reason="stale_head", details={"head_sha": "b" * 40}),
+    )
+    outcome = gl.post(refused)
+    assert outcome.exit_code == 20
+    assert gl.subcommands() == ["show", "review", "review"]
 
 
 # --- a document that is not the real run's answer ------------------------------------------------

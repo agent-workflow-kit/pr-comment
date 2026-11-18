@@ -547,7 +547,7 @@ def run_post(
     """Run the ``post-post`` hooks. Nothing here changes an outcome: every failure is a logged
     warning, an id a hook prints joins ``ids`` (recorded in the audit outcome). After a signal
     (``interrupted()``), the remaining hooks do not start. Returns the number of a signal that
-    arrived while a hook ran (the hook was ended), or ``None``: the caller decides what it means."""
+    ended a hook (the caller records that it was received), else None."""
     stopped = False
     signum: int | None = None
     for index, entry in enumerate(runner.hooks.post):

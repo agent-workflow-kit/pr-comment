@@ -187,7 +187,10 @@ def _run(capsys: pytest.CaptureFixture[str], argv: list[str]) -> tuple[int, str,
     return code, captured.out, captured.err
 
 
-def test_main_honors_quiet_and_verbose_on_a_failure(capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_honors_quiet_and_verbose_on_a_failure(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(cli.HANDLERS, "export", cli._not_implemented)
     base = ["export"]
     code, out, err = _run(capsys, base)
     assert (code, out) == (1, "")
@@ -206,9 +209,12 @@ def test_a_usage_error_honors_quiet_and_verbose(capsys: pytest.CaptureFixture[st
 
 
 def test_the_full_envelope_reaches_json_stdout_for_the_unimplemented_stub(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    code, out, _ = _run(capsys, ["export", "--json"])
+    monkeypatch.setitem(cli.HANDLERS, "resolve", cli._not_implemented)
+    code, out, _ = _run(
+        capsys, ["resolve", "https://example.test/o/r/pull/1", "--thread", "gh:rt:1", "--json"]
+    )
     document: dict[str, Any] = json.loads(out)
     assert code == 1
     assert len(document["error"]) == 13

@@ -9,7 +9,6 @@ import json
 import re
 import sys
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -295,7 +294,6 @@ MINIMAL: dict[str, list[str]] = {
 }
 POSTING = {"review", "comment", "reply", "approve"}
 NON_POSTING = sorted(set(MINIMAL) - POSTING)
-UNIMPLEMENTED = [c for c in NON_POSTING if c not in ("resolve", "unresolve")]
 SHA = "a" * 64
 
 GLOBAL_ARGV = [
@@ -799,23 +797,25 @@ def test_expect_plan_allowed_on_posting_commands(
     assert doc["error"]["code"] in ("usage", "invalid_draft")
 
 
-@pytest.mark.parametrize("command", UNIMPLEMENTED)
+@pytest.mark.parametrize("command", NON_POSTING)
 def test_unimplemented_handlers_return_internal_envelope(
     capsys: pytest.CaptureFixture[str],
-    golden_json: Callable[[str, Any], None],
+    monkeypatch: pytest.MonkeyPatch,
     command: str,
 ) -> None:
+    # Every command has a handler now: the stub is installed to keep its envelope pinned.
+    monkeypatch.setitem(cli.HANDLERS, command, cli._not_implemented)
     code, doc, _ = _run_json(capsys, [*MINIMAL[command], "--json"])
     assert code == 1
     assert doc["error"]["code"] == "internal"
     validate("pr-comment/cli/error.json", doc)
-    golden_json(f"cli/unimplemented-{command.replace(' ', '-')}.json", doc)
 
 
 def test_unimplemented_handler_human_output_goes_to_stderr(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    assert main(MINIMAL["export"]) == 1
+    monkeypatch.setitem(cli.HANDLERS, "resolve", cli._not_implemented)
+    assert main(MINIMAL["resolve"]) == 1
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "not implemented" in captured.err

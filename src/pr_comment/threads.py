@@ -305,7 +305,7 @@ def finish(run: ThreadRun, *, dry_run: bool) -> Outcome:
         0 if failure is None else failure.exit_code,
         result_document(run, dry_run=dry_run),
         tuple(human),
-        tuple(errors) if failure is not None else (),
+        human_errors=tuple(errors) if failure is not None else (),
     )
 
 

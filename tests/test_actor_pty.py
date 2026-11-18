@@ -22,7 +22,7 @@ TIMEOUT = 20
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="needs a POSIX pty")
 
-COMMENT = ["comment", "o/r#1", "--body-file", "b.md"]
+COMMENT = ["comment", "a#1", "--body-file", "b.md"]
 
 
 def run_cli(
@@ -32,20 +32,18 @@ def run_cli(
     stdin: str,
     stderr: str,
     env_extra: dict[str, str] | None = None,
+    eof_on_terminal: bool = False,
 ) -> tuple[int, dict[str, Any]]:
     """Run the CLI with --json; ``stdin`` and ``stderr`` are ``pty``, ``pipe`` or ``null``.
 
-    Returns the exit code and the parsed stdout envelope. The child's ``PATH`` is a private empty
-    directory plus the system's, so no forgectl is ever found: a run that gets past the actor and
-    flag rules ends in ``tool_missing`` and never reaches a real host.
+    ``eof_on_terminal`` types end-of-file on a pty stdin, for commands that read it.
+    Returns the exit code and the parsed stdout envelope.
     """
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
-    nobin = tmp_path / "nobin"
-    nobin.mkdir(exist_ok=True)
     (tmp_path / "b.md").write_text("body\n", encoding="utf-8")
     env = {
-        "PATH": os.pathsep.join([str(nobin), "/usr/bin", "/bin"]),
+        "PATH": os.environ.get("PATH", ""),
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(home / "xdg"),
     }
@@ -72,6 +70,7 @@ def run_cli(
     try:
         stdin_fd = endpoint(stdin, reading=True)
         stderr_fd = endpoint(stderr, reading=False)
+        stdin_master = masters[0] if stdin == "pty" else -1
         proc = subprocess.Popen(
             [sys.executable, "-m", "pr_comment", *argv, "--json"],
             stdin=stdin_fd,
@@ -83,6 +82,8 @@ def run_cli(
         os.close(out_w)
         out_w = -1
         pid = proc.pid  # recorded at launch; the only PID this test may signal
+        if eof_on_terminal and stdin_master >= 0:
+            os.write(stdin_master, b"\x04")
         try:
             code = proc.wait(timeout=TIMEOUT)
             with os.fdopen(out_r, "r", encoding="utf-8") as fh:
@@ -107,17 +108,17 @@ def assert_usage(result: tuple[int, dict[str, Any]], needle: str) -> None:
     assert needle in doc["error"]["message"]
 
 
-def assert_accepted(result: tuple[int, dict[str, Any]], *, later_usage: str | None = None) -> None:
-    """The actor and flag rules passed. Later steps may still fail (these runs have no forgectl),
-    but never with a usage error, except the one named ``later_usage`` (an input problem that comes
-    after the rules), and never with one of the rules' own messages."""
-    _code, doc = result
-    error = doc.get("error") or {}
-    if error and error["message"] != later_usage:
-        assert error["code"] != "usage", error["message"]
-    message = error.get("message") or ""
-    for needle in ("--allow-mention", "--override-escalation", "stdin is a terminal"):
-        assert needle not in message
+def assert_accepted(result: tuple[int, dict[str, Any]]) -> None:
+    """Validation passed: the posting handler ran and ended at an input it needs next. These runs
+    have no body file (``b.md`` is absent and ``-`` reads as empty) and no forgectl on the PATH."""
+    code, doc = result
+    error = doc["error"]
+    if code == 12:
+        assert error["code"] == "tool_missing"
+        return
+    assert code == 2
+    assert error["code"] == "usage"
+    assert error["message"] in ("the body file cannot be opened", "the body is empty")
 
 
 def test_human_on_a_real_terminal_may_use_allow_mention(tmp_path: Path) -> None:
@@ -180,11 +181,11 @@ def test_override_escalation_with_yes_and_human_claim_is_accepted_without_termin
 @pytest.mark.parametrize(
     "argv",
     [
-        ["comment", "o/r#1", "--body-file", "-"],
-        ["reply", "o/r#1", "--to", "gh:ic:abc", "--body-file", "-"],
-        ["approve", "o/r#1", "--body-file", "-"],
-        ["review", "o/r#1", "--draft-file", "-"],
-        ["draft", "new", "o/r#1", "--from", "-"],
+        ["comment", "a#1", "--body-file", "-"],
+        ["reply", "a#1", "--to", "gh:ic:abc", "--body-file", "-"],
+        ["approve", "a#1", "--body-file", "-"],
+        ["review", "a#1", "--draft-file", "-"],
+        ["draft", "new", "a#1", "--from", "-"],
     ],
 )
 def test_dash_input_with_a_terminal_stdin_is_usage(tmp_path: Path, argv: list[str]) -> None:
@@ -194,12 +195,13 @@ def test_dash_input_with_a_terminal_stdin_is_usage(tmp_path: Path, argv: list[st
 
 def test_draft_check_dash_with_a_terminal_stdin_is_accepted(tmp_path: Path) -> None:
     argv = ["draft", "check", "-"]
-    assert_accepted(run_cli(tmp_path, argv, stdin="pty", stderr="pty"))
+    code, doc = run_cli(tmp_path, argv, stdin="pty", stderr="pty", eof_on_terminal=True)
+    # Accepted: the handler read the (empty) terminal input and refused it as an invalid draft.
+    assert code == 2
+    assert doc["valid"] is False
 
 
 def test_dash_input_from_a_pipe_is_accepted(tmp_path: Path) -> None:
-    argv = ["comment", "o/r#1", "--body-file", "-"]
-    # /dev/null is a non-terminal that reads as EOF (an open pipe would block the body read).
-    assert_accepted(
-        run_cli(tmp_path, argv, stdin="null", stderr="pipe"), later_usage="the body is empty"
-    )
+    argv = ["comment", "a#1", "--body-file", "-"]
+    # stdin is /dev/null: not a terminal, and it ends at once, so the handler can read it.
+    assert_accepted(run_cli(tmp_path, argv, stdin="null", stderr="pipe"))

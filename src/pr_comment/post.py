@@ -42,8 +42,15 @@ confirmation and before ``attempted`` (a veto exits 11, an escalation 13 unless
 prints joins the write's forgectl call and the audit outcome, never the plan, the caller's ids or
 the automatic approval guard (which ran before any hook).
 
-Seam: TODO(#36) the GitLab review body thread resolve (``Plan.follow_ups``): until then it is
-reported as not done (``body_thread_unresolved``).
+The GitLab review body thread (``Plan.follow_ups``, issue #36) is the run's second write: after the
+review landed (also ``already_posted``), one ``comments`` read finds the thread
+(``gitlab_thread.py``) and ``forgectl resolve`` resolves it, inside the same audit pair and the same
+held signals (``writes`` index 1, its own ``pre-post`` and ``post-post`` hooks with ``action:
+resolve`` and ``write_index`` 1). The review has landed by then, so nothing about the follow-up
+changes the review's ``landed`` or retries it: a thread not found, a failed read or resolve, a veto
+or an escalation is exit 0 with ``body_thread_unresolved`` and the record result ``partial``; a
+rerun of the command finds the review ``already_posted`` and tries the resolve again. Only a signal
+during the follow-up ends the run (exit 12 ``outcome_unknown``, the documented signal rule).
 """
 
 from __future__ import annotations
@@ -74,7 +81,7 @@ from .audit import (
 from .config import LoadedConfig
 from .confirm import Interrupted
 from .files import StateDirs
-from .forge import PostRead, read_post
+from .forge import CommentsRead, Forge, PostRead, ResolveRead, read_post, read_resolve
 from .gateway import (
     FORWARDED_SIGNALS,
     ForgectlInterrupted,
@@ -84,6 +91,7 @@ from .gateway import (
     GatewayUsageError,
     ToolMissing,
 )
+from .gitlab_thread import BodyThread, find_body_thread
 from .hooks import (
     POST,
     PRE,
@@ -100,7 +108,7 @@ from .hooks import (
 from .jsonlog import LogWriter
 from .lower import LowerFailure, require_ok, tool_missing_outcome
 from .output import LOG, Outcome, error_outcome
-from .plan import Plan
+from .plan import Plan, empty_counts
 from .post_text import TEXT_ACTIONS
 from .post_text import human_lines as text_lines
 from .precheck import DRY_RUN_REASONS
@@ -264,18 +272,19 @@ def log_failure(log: LogWriter, attempt_id: str | None, pr: str | None, outcome:
 
 
 def _warnings(prepared: Prepared, read: PostRead) -> list[str]:
-    """forgectl's warnings, then pr-comment's own: the pre-check's, one for forgectl neutralizing
-    text pr-comment already neutralized, and the unresolved GitLab body thread (TODO(#36))."""
+    """forgectl's warnings, then pr-comment's own: the pre-check's and one for forgectl
+    neutralizing text pr-comment already neutralized. ``body_thread_unresolved`` is added by the
+    run after the follow-up (``_BodyThread``)."""
     out: list[str] = list(read.warnings)
     out += prepared.precheck.warnings
     if read.neutralized_lines or read.markers_removed:
         out.append(NEUTRALIZING_MISMATCH)
-    if prepared.plan.follow_ups:
-        out.append(BODY_THREAD_UNRESOLVED)
     return list(dict.fromkeys(out))
 
 
-def _human_lines(prepared: Prepared, read: PostRead, warnings: Sequence[str]) -> tuple[str, ...]:
+def _human_lines(
+    prepared: Prepared, read: PostRead, warnings: Sequence[str], thread: str | None = None
+) -> tuple[str, ...]:
     plan = prepared.plan
     if plan.action in TEXT_ACTIONS:
         return text_lines(prepared, read, warnings)
@@ -292,6 +301,8 @@ def _human_lines(prepared: Prepared, read: PostRead, warnings: Sequence[str]) ->
         )
     if read.review_id is not None:
         lines.append(f"review {read.review_id}")
+    if thread is not None:
+        lines.append(f"resolved the review body thread {thread}")
     if read.head_verified is False:
         lines.append(
             "head_verified is false: an earlier approval exists that forgectl cannot confirm "
@@ -438,12 +449,16 @@ def pre_outcome(
 
 
 class _WriteHooks:
-    """The hooks of the run's one forgectl write (index 0). The ids they print are kept apart from
-    the plan's: ``plan.decision_ids`` (the caller's) is never touched."""
+    """The hooks of the run's forgectl writes: the review (index 0) and, on GitLab, the body-thread
+    resolve (index 1, ``follow_up``). The ids they print are kept apart from the plan's:
+    ``plan.decision_ids`` (the caller's) is never touched; a later write sees the earlier ones'."""
 
     def __init__(self, prepared: Prepared, env: PostEnv) -> None:
         self._prepared = prepared
         self._env = env
+        self._index = 0
+        self._thread: BodyThread | None = None
+        self._head_sha = prepared.plan.head_sha
         plan = prepared.plan
         self.ids = DecisionIds(plan.decision_ids)
         self.runner = HookRunner(
@@ -463,21 +478,63 @@ class _WriteHooks:
         result: Mapping[str, Any] | None,
     ) -> dict[str, Any]:
         request = self._prepared.request
-        return payload_for(
+        payload = payload_for(
             self._prepared.plan,
             hook=hook,
             attempt_id=self._env.trail.attempt_id,
-            write_index=0,
+            write_index=self._index,
             decision_ids=decision_ids,
             override_escalation=request.override_escalation,
-            with_text=entry_text,
+            with_text=entry_text and self._thread is None,
             result=result,
         )
+        thread = self._thread
+        if thread is None:
+            return payload
+        # the follow-up resolve: the run's plan hash stays, the rest is a resolve's
+        # (``schemas/hooks/pre-post.json``); the author of the thread is not looked up
+        payload.update(
+            action="resolve",
+            head_sha=self._head_sha,
+            anchor_head=None,
+            base_ref=None,
+            event=None,
+            dedupe_key=None,
+            bodies=[],
+            to=None,
+            counts=empty_counts(),
+            thread_id=thread.id,
+            thread_author_is_self=None,
+            thread_path=thread.path,
+            thread_line=thread.line,
+        )
+        return payload
+
+    def follow_up(self, thread: BodyThread, head_sha: str) -> None:
+        """From now on the hooks are those of the resolve of ``thread`` (write index 1);
+        ``head_sha`` is the head of the ``comments`` read that found it."""
+        self._index = 1
+        self._thread = thread
+        self._head_sha = head_sha
 
     def write_args(self) -> list[str]:
-        """The plan's arguments plus one ``--decision-id`` per id a hook printed."""
+        """The plan's arguments plus one ``--decision-id`` per id a hook printed; for the
+        follow-up, ``resolve``'s own."""
         extra = [f"--decision-id={item}" for item in self.ids.from_hooks]
-        return [*self._prepared.plan.write_args(), *extra]
+        plan = self._prepared.plan
+        if self._thread is None:
+            return [*plan.write_args(), *extra]
+        tail = ["--override-escalation"] if plan.override_forgectl else []
+        decisions = [f"--decision-id={item}" for item in plan.decision_ids]
+        return [
+            plan.pr,
+            f"--thread={self._thread.id}",
+            "--yes",
+            f"--actor={plan.actor}",
+            *decisions,
+            *extra,
+            *tail,
+        ]
 
     def pre(self) -> Outcome | None:
         """Run the ``pre-post`` hooks: None to go on, else the run's outcome (veto or escalation:
@@ -500,21 +557,20 @@ class _WriteHooks:
 
     def post(
         self,
-        lowered: Lowered,
-        warnings: Sequence[str],
+        result: Mapping[str, Any],
         *,
         skip: bool,
         interrupted: Callable[[], bool],
-    ) -> None:
+    ) -> int | None:
         """Run the ``post-post`` hooks (also after a failed write). Never changes the outcome.
-        ``interrupted()`` is true once a signal was held: no further hook starts."""
+        ``interrupted()`` is true once a signal was held: no further hook starts. Returns the
+        number of a signal that ended a hook, else None: the caller holds it as received."""
         if not self._env.hooks.post:
-            return
+            return None
         if skip:
             self.runner.warn(POST, None, "hooks_skipped_after_signal")
-            return
-        result = _write_result(lowered, warnings)
-        run_post(
+            return None
+        return run_post(
             self.runner,
             self.ids,
             lambda entry, ids: self._payload(POST, entry.with_text, ids, result),
@@ -540,10 +596,228 @@ def post_review(prepared: Prepared, env: PostEnv) -> Outcome:
         return _post_with_audit(prepared, env, held, hooks)
 
 
+_RESOLVE_REASONS: Final = frozenset({"not_resolvable"})
+
+
+@dataclass(frozen=True)
+class _ResolveLowered:
+    """forgectl's answer to the body-thread resolve: ``read`` on success, else ``failure``."""
+
+    read: ResolveRead | None
+    failure: Outcome | None
+    lower: LowerResult
+
+
+def _resolve_result(lowered: _ResolveLowered) -> dict[str, Any]:
+    """The ``result`` of the resolve's ``post-post`` payload (``schemas/hooks/post-post.json``)."""
+    lower, read = lowered.lower, lowered.read
+    return {
+        "exit": lower.exit,
+        "code": lower.code,
+        "reason": lower.reason,
+        "ids": [],
+        "thread_ids": [],
+        "review_id": None,
+        "already_posted": None,
+        "neutralized_lines": None,
+        "head_verified": None,
+        "changed": read.changed if read is not None else None,
+        "warnings": [],
+    }
+
+
+class _BodyThread:
+    """The GitLab review body thread follow-up (docs/interface.md, GitLab review body thread).
+
+    ``run`` is called once, after the review landed. It never raises for a failure of the
+    follow-up and never touches the review's outcome: it leaves in ``writes`` the audit entry of
+    the resolve (index 1: done, failed, vetoed, escalated or unknown), in ``resolved`` what the
+    result says, and in ``interrupted`` a signal that ended a forgectl call (then the run ends 12
+    ``outcome_unknown``). ``unperformed`` is true when no write was tried and the thread is not
+    known to be resolved, so the audit says ``partial`` for the review's write.
+    """
+
+    def __init__(
+        self, prepared: Prepared, env: PostEnv, hooks: _WriteHooks, held: _DeferredSignals
+    ) -> None:
+        self._prepared = prepared
+        self._env = env
+        self._hooks = hooks
+        self._held = held
+        self._started: str | None = None  # set while the resolve may have reached the host
+        self._thread: str | None = None
+        self.writes: list[WriteRecord] = []
+        self.resolved: bool | None = None  # None until ``run``: then True or False
+        self.thread_id: str | None = None
+        self.unperformed = False
+        self.interrupted: ForgectlInterrupted | None = None
+
+    @property
+    def unresolved(self) -> bool:
+        return self.resolved is False
+
+    def _warn(self, reason: str) -> None:
+        plan = self._prepared.plan
+        self._env.log.write(
+            "warning",
+            pr=plan.pr,
+            attempt_id=self._env.trail.attempt_id,
+            details={"code": BODY_THREAD_UNRESOLVED, "reason": reason},
+        )
+
+    def _skip(self, reason: str) -> None:
+        """No write was tried: the thread stays unresolved."""
+        self.unperformed = True
+        self._warn(reason)
+
+    def run(self, read: PostRead) -> None:
+        self.resolved = False
+        try:
+            self._run(read)
+        except ForgectlInterrupted as exc:  # a read or a hook: no write was started
+            self.interrupted = exc
+            self.unperformed = True
+        except Exception as exc:  # the review landed: nothing here changes that
+            LOG.error(
+                "unexpected %s in the body-thread follow-up", type(exc).__name__, exc_info=exc
+            )
+            if self._started is not None:  # the resolve was sent: it may have landed
+                unknown = LowerResult(exit=12, code="outcome_unknown", reason=None)
+                self.writes.append(
+                    WriteRecord.from_lower(1, self._started, "resolve", self._thread, None, unknown)
+                )
+            else:
+                self.unperformed = not self.writes
+            self._warn("internal")
+
+    def _comments(self) -> CommentsRead | None:
+        env, plan = self._env, self._prepared.plan
+        try:
+            return Forge(env.gateway).comments(plan.pr)
+        except LowerFailure as failure:
+            log_failure(env.log, env.trail.attempt_id, plan.pr, failure.outcome)
+        except (ToolMissing, GatewayInternalError, GatewayUsageError):
+            pass
+        self._skip("comments_read_failed")
+        return None
+
+    def _run(self, read: PostRead) -> None:
+        plan = self._prepared.plan
+        if self._held.received:  # the user wants out: no further forgectl call
+            self._skip("skipped_after_signal")
+            return
+        if not (read.ids if read.already_posted else read.thread_ids):
+            self._skip("no_thread_in_the_answer")  # nothing names a thread: no read either
+            return
+        comments = self._comments()
+        if comments is None:
+            return
+        thread = find_body_thread(
+            comments,
+            key=plan.dedupe_key,
+            thread_ids=read.thread_ids,
+            ids=read.ids,
+            already_posted=read.already_posted,
+        )
+        if thread is None or not thread.id.startswith("gl:d:"):
+            self._skip("thread_not_found")
+            return
+        self.thread_id = self._thread = thread.id
+        if thread.resolved:  # already in the state asked for: no write, no hooks
+            self.resolved = True
+            return
+        if not thread.resolvable:
+            self._skip("not_resolvable")
+            return
+        self._resolve(thread, comments.head_sha)
+
+    def _lower(self, result: ForgectlResult, thread: BodyThread) -> _ResolveLowered:
+        plan, gateway = self._prepared.plan, self._env.gateway
+        try:
+            document = require_ok(
+                result, gateway=gateway, backend=plan.backend, reasons=_RESOLVE_REASONS
+            )
+            read = read_resolve(document, thread=thread.id, pr=plan.pr, gateway=gateway)
+        except LowerFailure as failure:
+            return _ResolveLowered(None, failure.outcome, lower_result_of(failure.outcome, None))
+        return _ResolveLowered(read, None, LowerResult(exit=0, code=None, reason=None))
+
+    def _resolve(self, thread: BodyThread, head_sha: str) -> None:
+        env, plan, hooks = self._env, self._prepared.plan, self._hooks
+        hooks.follow_up(thread, head_sha)
+        blocked = hooks.pre()
+        if blocked is not None:
+            # a veto or an escalation of the second write: the review landed, so this is a record
+            # of its own (``vetoed`` or ``escalated``, no forgectl result) and the run goes on
+            kind = "escalated" if _error_of(blocked).get("code") == "escalated" else "vetoed"
+            ts = format_ts(now_utc())
+            self.writes.append(WriteRecord.blocked(1, ts, "resolve", thread.id, None, kind))
+            log_failure(env.log, env.trail.attempt_id, plan.pr, blocked)
+            self._warn(kind)
+            return
+        if self._held.received:  # a signal during the hooks: the resolve is not sent
+            self._skip("skipped_after_signal")
+            return
+        started = format_ts(now_utc())
+        self._started = started
+        interrupted: ForgectlInterrupted | None = None
+        try:
+            result = env.gateway.call("resolve", hooks.write_args())
+        except ForgectlInterrupted as exc:
+            interrupted = exc
+            lowered = self._lower(exc.result, thread)
+        except ToolMissing as exc:  # nothing was sent: forgectl could not be started
+            missing = tool_missing_outcome(exc)
+            lowered = _ResolveLowered(None, missing, LowerResult(12, "tool_missing", None))
+        except (GatewayInternalError, GatewayUsageError) as exc:
+            failed = error_outcome("internal", type(exc).__name__)
+            lowered = _ResolveLowered(None, failed, LowerResult(1, "internal", None))
+        else:
+            lowered = self._lower(result, thread)
+        self._started = None
+        if interrupted is None and lowered.read is not None and not lowered.read.changed:
+            # forgectl wrote nothing (the thread was already resolved when it re-read it), kept
+            # no audit record and ran no post-post hook: like a thread found resolved
+            self.resolved = True
+            return
+        write = WriteRecord.from_lower(1, started, "resolve", thread.id, None, lowered.lower)
+        self.writes.append(write)
+        # what the result says is settled before the hooks run: they change nothing
+        self.resolved = interrupted is None and lowered.failure is None
+        signum = hooks.post(
+            _resolve_result(lowered),
+            skip=interrupted is not None or bool(self._held.received),
+            interrupted=lambda: bool(self._held.received),
+        )
+        if signum is not None:
+            self._held.received.append(signum)
+        if interrupted is not None:
+            self.interrupted = interrupted
+        elif lowered.failure is not None:
+            log_failure(env.log, env.trail.attempt_id, plan.pr, lowered.failure)
+            self._warn("resolve_failed")
+
+
+def _follow_up_interrupted_outcome(exc: ForgectlInterrupted) -> Outcome:
+    """Exit 12 ``outcome_unknown`` for a signal during the body-thread follow-up (docs/interface.md,
+    forgectl edge: Signals). The review landed; a rerun answers ``already_posted`` and tries the
+    resolve again."""
+    return error_outcome(
+        "outcome_unknown",
+        f"interrupted by signal {exc.signum} during the GitLab body-thread follow-up; the review "
+        "landed, whether its body thread was resolved is unknown",
+    )
+
+
 def _call_and_lower(
-    prepared: Prepared, env: PostEnv, hooks: _WriteHooks, held: _DeferredSignals
+    prepared: Prepared,
+    env: PostEnv,
+    hooks: _WriteHooks,
+    held: _DeferredSignals,
+    follow: _BodyThread,
 ) -> tuple[Lowered, Outcome]:
-    """The forgectl write and what it means: forgectl's lowered answer and the run's outcome."""
+    """The forgectl write and what it means: forgectl's lowered answer and the run's outcome. The
+    GitLab follow-up runs here too and leaves what it did in ``follow``."""
     plan = prepared.plan
     interrupted: ForgectlInterrupted | None = None
     lowered: Lowered
@@ -566,12 +840,15 @@ def _call_and_lower(
     warnings = () if lowered.read is None else _warnings(prepared, lowered.read)
     # After a signal the user wants out: the ``post-post`` hooks do not start. Otherwise they run
     # whatever the write's result was, and nothing they do changes it.
-    hooks.post(
-        lowered,
-        warnings,
+    signum = hooks.post(
+        _write_result(lowered, warnings),
         skip=interrupted is not None or bool(held.received),
         interrupted=lambda: bool(held.received),
     )
+    if signum is not None:  # a signal that ended a hook counts as received: no follow-up
+        held.received.append(signum)
+    if lowered.read is not None and plan.follow_ups and interrupted is None:
+        follow.run(lowered.read)
     if lowered.failure is not None:
         outcome = lowered.failure
     else:
@@ -586,19 +863,24 @@ def _call_and_lower(
                     "markers_removed": lowered.read.markers_removed,
                 },
             )
+        shown = [*warnings, BODY_THREAD_UNRESOLVED] if follow.unresolved else warnings
         document = result_document(
             prepared,
             dry_run=False,
             posted=lowered.read,
-            warnings=warnings,
-            body_thread_resolved=False if plan.follow_ups else None,
+            warnings=shown,
+            body_thread_resolved=follow.resolved if plan.follow_ups else None,
+            body_thread_id=follow.thread_id,
         )
-        outcome = Outcome(0, document, _human_lines(prepared, lowered.read, warnings))
+        resolved_thread = follow.thread_id if follow.resolved else None
+        outcome = Outcome(0, document, _human_lines(prepared, lowered.read, shown, resolved_thread))
     if interrupted is not None:
         # The run was interrupted: whatever forgectl left is in the audit outcome; the run ends as
         # outcome_unknown with forgectl's envelope when it printed one. A rerun answers
         # ``already_posted`` through the dedupe key.
         outcome = _interrupted_outcome(interrupted, lowered)
+    elif follow.interrupted is not None:
+        outcome = _follow_up_interrupted_outcome(follow.interrupted)
     return lowered, outcome
 
 
@@ -625,8 +907,9 @@ def _post_with_audit(
             log_failure(env.log, env.trail.attempt_id, plan.pr, final)
             return final
         raise Interrupted(held.received[0])
+    follow = _BodyThread(prepared, env, hooks, held)
     try:
-        lowered, outcome = _call_and_lower(prepared, env, hooks, held)
+        lowered, outcome = _call_and_lower(prepared, env, hooks, held, follow)
     except Exception as exc:  # after ``attempted`` nothing is known: the write may have landed
         LOG.error("unexpected %s after the write was attempted", type(exc).__name__, exc_info=exc)
         outcome = error_outcome(
@@ -636,10 +919,11 @@ def _post_with_audit(
         )
         lowered = Lowered(None, outcome, LowerResult(exit=12, code="outcome_unknown", reason=None))
     write = WriteRecord.from_lower(0, started, plan.action, None, plan.dedupe_key, lowered.lower)
-    if outcome.exit_code == 0 and plan.follow_ups:
-        # the main write landed and its follow-up was not performed (TODO(#36)): partial, landed
+    if follow.unperformed and lowered.failure is None:
+        # the main write landed and its follow-up made no write (no thread found, a failed read,
+        # a signal): the record says partial, landed. A follow-up that was tried has its own write.
         write = replace(write, result="partial")
-    final = _record(env, [write], outcome, hooks.ids.from_hooks)
+    final = _record(env, [write, *follow.writes], outcome, hooks.ids.from_hooks)
     if final is not outcome:  # the audit failure replaced the outcome: the original is logged too
         log_failure(env.log, env.trail.attempt_id, plan.pr, outcome)
     log_failure(env.log, env.trail.attempt_id, plan.pr, final)
