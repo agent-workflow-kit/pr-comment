@@ -1,0 +1,497 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "forgectl/config.json",
+  "title": "forgectl config",
+  "description": "~/.config/forgectl/config.yaml (XDG respected) plus config.d/*.yaml in lexical order: maps merge, hook lists append, other lists replace. Invalid config exits 2 (config_invalid). Precedence: flags, per-repo override, environment, global config, defaults.",
+  "type": "object",
+  "properties": {
+    "me": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Za-z0-9._@-]{1,64}$",
+          "default": null,
+          "description": "The <user> in human:<user>; null: the OS username."
+        },
+        "github": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9_-]{0,38}(?:\\[bot\\])?|[A-Za-z0-9_]|[A-Za-z0-9_.][A-Za-z0-9_.-]{0,253}[A-Za-z0-9_-])$",
+          "default": null,
+          "description": "Your login; null: the authenticated user."
+        },
+        "gitlab": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9_-]{0,38}(?:\\[bot\\])?|[A-Za-z0-9_]|[A-Za-z0-9_.][A-Za-z0-9_.-]{0,253}[A-Za-z0-9_-])$",
+          "default": null,
+          "description": "Your login; null: the authenticated user."
+        }
+      },
+      "additionalProperties": false,
+      "required": [],
+      "default": {}
+    },
+    "gh_bin": {
+      "type": "string",
+      "pattern": "^(/.*|[^/]+)$",
+      "default": "gh",
+      "description": "A bare name, resolved only against absolute PATH entries, or an absolute path."
+    },
+    "glab_bin": {
+      "type": "string",
+      "pattern": "^(/.*|[^/]+)$",
+      "default": "glab",
+      "description": "A bare name, resolved only against absolute PATH entries, or an absolute path."
+    },
+    "timeout": {
+      "$ref": "#/$defs/duration",
+      "default": "60s",
+      "description": "Budget for the host calls of a command."
+    },
+    "retries": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10,
+      "default": 3,
+      "description": "Read retries."
+    },
+    "hosts": {
+      "type": "object",
+      "default": {},
+      "description": "github.com and gitlab.com are built in; any other host must be declared with a backend.",
+      "properties": {
+        "github.com": {
+          "type": "object",
+          "properties": {
+            "backend": {
+              "const": "github",
+              "description": "Built in."
+            },
+            "token_env": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/env_name"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Variable holding the token. Configured but yielding nothing: exit 12, never the stored login."
+            },
+            "token_command": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1,
+              "default": null,
+              "description": "argv producing the token, run with no shell; an argument equal to {host} becomes the host."
+            },
+            "me": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9_-]{0,38}(?:\\[bot\\])?|[A-Za-z0-9_]|[A-Za-z0-9_.][A-Za-z0-9_.-]{0,253}[A-Za-z0-9_-])$",
+              "default": null,
+              "description": "Your login on this host."
+            }
+          },
+          "additionalProperties": false,
+          "required": []
+        },
+        "gitlab.com": {
+          "type": "object",
+          "properties": {
+            "backend": {
+              "const": "gitlab",
+              "description": "Built in."
+            },
+            "token_env": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/env_name"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Variable holding the token. Configured but yielding nothing: exit 12, never the stored login."
+            },
+            "token_command": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1,
+              "default": null,
+              "description": "argv producing the token, run with no shell; an argument equal to {host} becomes the host."
+            },
+            "me": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9_-]{0,38}(?:\\[bot\\])?|[A-Za-z0-9_]|[A-Za-z0-9_.][A-Za-z0-9_.-]{0,253}[A-Za-z0-9_-])$",
+              "default": null,
+              "description": "Your login on this host."
+            }
+          },
+          "additionalProperties": false,
+          "required": []
+        }
+      },
+      "patternProperties": {
+        "^(?!(?:github\\.com|gitlab\\.com)$)(?=[a-z0-9.-]{1,253}(?![a-z0-9.-]))[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*(?::[0-9]{1,5})?$": {
+          "type": "object",
+          "properties": {
+            "backend": {
+              "$ref": "#/$defs/backend"
+            },
+            "token_env": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/env_name"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Variable holding the token. Configured but yielding nothing: exit 12, never the stored login."
+            },
+            "token_command": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1,
+              "default": null,
+              "description": "argv producing the token, run with no shell; an argument equal to {host} becomes the host."
+            },
+            "me": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9_-]{0,38}(?:\\[bot\\])?|[A-Za-z0-9_]|[A-Za-z0-9_.][A-Za-z0-9_.-]{0,253}[A-Za-z0-9_-])$",
+              "default": null,
+              "description": "Your login on this host."
+            },
+            "api_prefix": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^(?:/(?!\\.\\.?(?:/|$))[A-Za-z0-9._-]{1,64}){1,8}$",
+              "default": null,
+              "description": "GitLab under a path, such as /gitlab."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "backend"
+          ],
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "backend": {
+                    "const": "github"
+                  }
+                },
+                "required": [
+                  "backend"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "api_prefix": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "repos": {
+      "type": "object",
+      "default": {},
+      "description": "Per-repo overrides hold only merge_method in v1: no setting lowers a safety rule.",
+      "patternProperties": {
+        "^(?=[a-z0-9.-]{1,253}(?![a-z0-9.-]))[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*(?::[0-9]{1,5})?(?:/(?!\\.\\.?(?:/|$))[A-Za-z0-9._-]+)+$": {
+          "type": "object",
+          "properties": {
+            "merge_method": {
+              "enum": [
+                "squash",
+                "merge",
+                "rebase",
+                null
+              ],
+              "default": null
+            }
+          },
+          "additionalProperties": false,
+          "required": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "hidden_repos": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 255,
+        "pattern": "^[A-Za-z0-9.:*?-]+(/(?!\\.\\.?(/|$))[A-Za-z0-9._*?-]+)+(?![\\s\\S])"
+      },
+      "default": [],
+      "description": "Repo ids (host/path) whose PRs no listing shows, `prs` and `browse` alike; * and ? are wildcards that also match /, everything else is literal, matched ASCII case-insensitively against the whole id. Commands naming one PR are not affected. Replaces on merge like any list."
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "ignore_authors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": [],
+          "description": "Logins whose comments and reviews `activity` ignores; * and ? are wildcards, everything else is literal. Replaces on merge like any list."
+        }
+      },
+      "additionalProperties": false,
+      "required": [],
+      "default": {}
+    },
+    "browse": {
+      "type": "object",
+      "properties": {
+        "refresh_interval": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "^0*[1-9][0-9]*(?:\\.[0-9]+)?s?$"
+            },
+            {
+              "type": "string",
+              "pattern": "^0*[1-9][0-9]{3,}(?:\\.[0-9]+)?ms$"
+            },
+            {
+              "type": "string",
+              "pattern": "^(?=.*[1-9])[0-9]+(?:\\.[0-9]+)?(?:m|h|d)$"
+            }
+          ],
+          "default": "120s",
+          "description": "Seconds between the automatic refreshes of `browse`, at least 1 (a number, or a string such as '90s'); a value in minutes, hours or days under 1 second is refused by forgectl itself. The number 0 turns them off. The flag --interval wins."
+        },
+        "full_refresh_every": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 5,
+          "description": "Every Nth automatic refresh reads every PR the old way (prs and a snapshot of each row); the others poll lightly and re-read only the PRs the poll found changed."
+        },
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16,
+          "default": 4,
+          "description": "Snapshot reads `browse` runs at once."
+        },
+        "detail_collapsed": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "facts",
+              "description",
+              "changes",
+              "ci",
+              "comments",
+              "reviews"
+            ]
+          },
+          "default": [
+            "changes"
+          ],
+          "description": "The detail pane sections of `browse` that start collapsed; the others start open. A list replaces on merge like any list. A section toggles with its number key (1 facts, 2 description, 3 changes, 4 ci, 5 comments, 6 reviews)."
+        },
+        "query": {
+          "type": "string",
+          "maxLength": 1000,
+          "default": "",
+          "description": "The query `browse` starts with: a filter and an `ORDER BY` in the query language of interface.md (for example `authored AND ci = failing ORDER BY age DESC`). Empty is no filter and the default order. The grammar is checked at load (an invalid query is `config_invalid`), which the schema cannot express. The `browse` action `set as default` writes it to `config.d/90-browse-query.yaml`."
+        }
+      },
+      "additionalProperties": false,
+      "required": [],
+      "default": {}
+    },
+    "log": {
+      "type": "object",
+      "properties": {
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 65536,
+          "maximum": 1073741824,
+          "default": 10485760,
+          "description": "log.jsonl rotates to log.jsonl.1 before a line would take it over this many bytes (10 MiB by default). audit.jsonl is never rotated."
+        },
+        "keep": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 3,
+          "description": "Rotated files kept, log.jsonl.1 (newest) to log.jsonl.<keep>; the oldest is deleted."
+        }
+      },
+      "additionalProperties": false,
+      "required": [],
+      "default": {}
+    },
+    "hooks": {
+      "type": "object",
+      "properties": {
+        "pre-merge": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hook_entry_pre"
+          },
+          "default": []
+        },
+        "post-merge": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hook_entry_post"
+          },
+          "default": []
+        },
+        "pre-post": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hook_entry_pre"
+          },
+          "default": []
+        },
+        "post-post": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hook_entry_post"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "required": [],
+      "default": {}
+    }
+  },
+  "additionalProperties": false,
+  "required": [],
+  "$defs": {
+    "backend": {
+      "enum": [
+        "github",
+        "gitlab"
+      ]
+    },
+    "duration": {
+      "anyOf": [
+        {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^(?=.*[1-9])[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d)$"
+        },
+        {
+          "type": "string",
+          "pattern": "^(?=.*[1-9])[0-9]+(?:\\.[0-9]+)?$"
+        }
+      ],
+      "description": "Seconds as a positive number, a string <number><unit> with unit ms, s, m, h or d (e.g. '30s'), or a bare number string meaning seconds; zero is refused."
+    },
+    "env_name": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "hook_entry_post": {
+      "type": "object",
+      "properties": {
+        "cmd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Run through sh -c in its own process group."
+        },
+        "timeout": {
+          "$ref": "#/$defs/duration",
+          "default": "30s"
+        },
+        "async": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run detached under a watchdog that enforces its timeout."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cmd"
+      ],
+      "description": "Failures are logged and warned, never fatal."
+    },
+    "hook_entry_pre": {
+      "type": "object",
+      "properties": {
+        "cmd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Run through sh -c in its own process group."
+        },
+        "timeout": {
+          "$ref": "#/$defs/duration",
+          "default": "30s"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cmd"
+      ],
+      "description": "Exit 13 escalates; any other non-zero exit or a timeout vetoes."
+    }
+  }
+}

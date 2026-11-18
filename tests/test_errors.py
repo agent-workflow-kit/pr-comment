@@ -470,11 +470,19 @@ def test_write_and_from_forgectl_are_rejected_for_codes_that_do_not_use_them(cod
         landed_retry(code, from_forgectl=True)
 
 
-def test_from_forgectl_is_only_for_audit_failed_and_excludes_write() -> None:
+def test_from_forgectl_is_only_for_audit_failed_and_takes_an_optional_write_pair() -> None:
     with pytest.raises(ValueError, match="from_forgectl"):
         landed_retry("lower_contract_mismatch", from_forgectl=True)
-    with pytest.raises(ValueError, match="not both"):
-        landed_retry("audit_failed", from_forgectl=True, write=(True, "none"))
+    assert landed_retry("audit_failed", from_forgectl=True, write=(False, "same_command")) == (
+        False,
+        "same_command",
+    )
+    assert landed_retry("audit_failed", from_forgectl=True, write=(None, "same_command")) == (
+        None,
+        "same_command",
+    )
+    with pytest.raises(ValueError, match="pair"):
+        landed_retry("audit_failed", from_forgectl=True, write=(True, "same_command"))
 
 
 def test_a_forgectl_escalation_cannot_name_a_pr_comment_hook() -> None:
