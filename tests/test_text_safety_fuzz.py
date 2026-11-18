@@ -12,21 +12,25 @@ Budget: ``CASES`` drafts from fixed seeds in ``make verify``, deterministic. A d
     TEXT_SAFETY_FUZZ_CASES=200000 TEXT_SAFETY_FUZZ_SEED=7 uv run pytest -m fuzz_long
 
 A failing draft is shrunk and reported as JSON; save it as a new case of
-``tests/test_text_safety.py`` (then regenerate that golden file) and fix the cause.
+``tests/test_text_safety.py`` (then regenerate that golden file with
+``pytest --regen-golden tests/test_text_safety.py``) and fix the cause.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import random
 import re
 from typing import Any
 
+import jsonschema
 import pytest
 
 from pr_comment import assemble, render, textpipe
 from pr_comment.mentions import MentionNeutralizer
 from tests import textsafety
+from tests.schema_harness import build_registry, load_schemas
 from tests.textsafety import (
     Refused,
     draft_json,
@@ -362,12 +366,8 @@ def _mutations() -> list[tuple[str, list[Patch]]]:
         ("entity tails not seen", [(MentionNeutralizer, "neutralize", _no_entity_tail)]),
         ("suggestion fences not refused", [(textpipe, "suggestion_fence", lambda _t: False)]),
         (
-            "a suggestion line fence not refused and not isolated from an open body fence",
-            [
-                (textsafety, "text_issues", lambda _d: []),
-                (render, "_refuse_suggestion_fences", lambda _l: None),
-                (render, "_isolate_run", lambda m: m.group()),
-            ],
+            "a suggestion line fence not isolated from an open body fence",
+            [(render, "_isolate_run", lambda m: m.group())],
         ),
         ("a title is not escaped", [(render, "escape_title", lambda t: t)]),
         (
@@ -387,3 +387,46 @@ def test_the_fuzz_catches_a_broken_step(mutation: tuple[str, list[Patch]]) -> No
         with pytest.raises(pytest.fail.Exception):
             for seed in SEEDS:
                 fuzz(seed, CASES // len(SEEDS))
+
+
+def _without_suggestion_line_pointers(document: object) -> list[dict[str, str]]:
+    return [i for i in real_text_issues(document) if "/suggestion/" not in i["pointer"]]
+
+
+real_text_issues = textsafety.text_issues
+
+
+def test_a_suggestion_line_fence_check_is_pinned_by_the_golden_refusal_not_by_the_fuzz() -> None:
+    """Dropping the draft check of suggestion lines (``text_issues`` pointers under
+    ``/suggestion/``) is not caught by the fuzz: the render step still refuses, with a
+    ``ValueError`` that is no ``Refused``. The golden refusal case
+    ``suggestion_fence_in_a_suggestion_line`` is what pins the check, and it fails here."""
+    from tests.test_text_safety import ALL_CASES, test_every_golden_body_passes_the_oracle
+
+    (case,) = [c for c in ALL_CASES if c.name == "suggestion_fence_in_a_suggestion_line"]
+    test_every_golden_body_passes_the_oracle(case)  # holds with the check in place
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(textsafety, "text_issues", _without_suggestion_line_pointers)
+        with pytest.raises(ValueError):
+            test_every_golden_body_passes_the_oracle(case)
+
+
+def test_a_shrunk_report_round_trips_through_the_pipeline_and_the_schema() -> None:
+    """The JSON a failing fuzz prints is a valid draft: it loads, runs and fits the schema."""
+    rng = random.Random(5)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(render, "neutralize_characters", _no_image_pass)
+        for _ in range(500):
+            doc, options = document(rng)
+            if failing(doc, options):
+                printed = report(doc, options)
+                break
+        else:
+            pytest.fail("the broken image pass was not caught in 500 drafts")
+    loaded = json.loads(printed[printed.index("\n{\n") + 1 :])
+    run_review(loaded, **options)  # without the break it runs and the oracle is satisfied
+    schemas = load_schemas()
+    schema = next(s for s in schemas.values() if s.get("$id", "").endswith("review-draft.json"))
+    validator = jsonschema.Draft202012Validator(schema, registry=build_registry())
+    errors = list(validator.iter_errors(loaded))
+    assert errors == []

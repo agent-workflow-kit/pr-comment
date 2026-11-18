@@ -1834,6 +1834,137 @@ x = 1
 <!-- raw HTML omitted -->
 <!-- raw HTML omitted -->
 
+== footnote_definition/draft_body
+-- input (default options)
+{
+  "body": "x[^1]\n\n[^1]: x\n    @victim",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+x[^1]
+
+[^1]: x
+    ＠victim
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<p>x<a href="x">^1</a></p>
+<p>＠victim</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== footnote_definition/inline_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "x[^1]\n\n[^1]: x\n    @victim",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "severity": "minor",
+      "suggestion": {
+        "lines": [
+          "x = 1"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+**minor**
+
+x[^1]
+
+[^1]: x
+    ＠victim
+
+```suggestion
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p><strong>minor</strong></p>
+<p>x<a href="x">^1</a></p>
+<p>＠victim</p>
+<pre lang="suggestion"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== footnote_definition/moved_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "x[^1]\n\n[^1]: x\n    @victim",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py",
+        "suggestion": {
+          "lines": [
+            "x = 1"
+          ]
+        }
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+x[^1]
+
+[^1]: x
+    ＠victim
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>Findings that could not be anchored</h3>
+<p><code>src/a.py:10</code> (at 89abcdef0123) — the commented line changed after this review was drafted</p>
+<p>x<a href="x">^1</a></p>
+<p>＠victim</p>
+<p><em>Suggestion shown as code: this finding could not be posted inline.</em></p>
+<pre lang="text"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
 == autolinks/draft_body
 -- input (default options)
 {

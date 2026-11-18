@@ -6,8 +6,9 @@ mentions, ``<`` and ``![`` (``render.py``), the attribution line, the layouts an
 pre-applied neutralizing (``assemble.py``). It returns the bodies pr-comment would hand to forgectl
 on stdin. TODO(#27): once the posting commands build the plan, drive the plan builder instead.
 
-The oracle renders such a body with the pinned ``cmarkgfm`` (GitHub's engine) in two ways, the safe
-default and an unsafe probe that lets raw HTML through (with liberal tag recognition), and lists
+The oracle renders such a body with the pinned ``cmarkgfm`` (GitHub's engine) in three ways, the
+safe default, an unsafe probe that lets raw HTML through (with liberal tag recognition) and the safe
+default with footnotes on (mentions and suggestions only), and lists
 what a reader or a host could not tolerate. It decodes text the way an HTML5 parser does
 (``html.unescape``, unterminated references included), because cmark copies raw HTML blocks
 verbatim and a downstream parser decodes them. ``violations`` returns names, so a test can show
@@ -274,6 +275,8 @@ class Page(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.tags: list[tuple[str, dict[str, str | None]]] = []
         self.comments: list[str] = []
+        self.pis: list[str] = []
+        self.decls: list[str] = []
         self.nodes: list[Node] = []
         self.pres: list[tuple[str, str]] = []
         self._stack: list[str] = []
@@ -305,6 +308,15 @@ class Page(HTMLParser):
     def handle_comment(self, data: str) -> None:
         self.comments.append(data)
 
+    def handle_pi(self, data: str) -> None:
+        self.pis.append(data)
+
+    def handle_decl(self, decl: str) -> None:
+        self.decls.append(decl)
+
+    def unknown_decl(self, data: str) -> None:
+        self.decls.append(data)
+
     def handle_data(self, data: str) -> None:
         applicable = any(is_suggestion_lang(lang) for lang in self._pre_lang)
         self.nodes.append(Node(data, "code" in self._stack, applicable, "pre" in self._stack))
@@ -314,6 +326,11 @@ class Page(HTMLParser):
 
 def is_suggestion_lang(lang: str) -> bool:
     return lang.strip().lower().startswith("suggestion")
+
+
+# The oracle keeps its own renderers rather than the ``cmark`` and ``cmark_unsafe`` helpers of
+# tests/test_assemble.py and tests/test_mentions.py: the probe must also recognize tags liberally,
+# which those helpers do not, and the pinned options live in this one place.
 
 
 def render_safe(markdown: str) -> str:
@@ -326,6 +343,14 @@ def render_probe(markdown: str) -> str:
     downstream parser would be handed, were a construct to survive."""
     return cmarkgfm.github_flavored_markdown_to_html(  # pyright: ignore[reportUnknownMemberType]
         markdown, options=Options.CMARK_OPT_UNSAFE | Options.CMARK_OPT_LIBERAL_HTML_TAG
+    )
+
+
+def render_footnotes(markdown: str) -> str:
+    """The safe rendering with footnotes on (GitHub supports them): a footnote definition holds
+    block content that the plain rendering shows as a paragraph."""
+    return cmarkgfm.github_flavored_markdown_to_html(  # pyright: ignore[reportUnknownMemberType]
+        markdown, options=Options.CMARK_OPT_FOOTNOTES
     )
 
 
@@ -349,15 +374,22 @@ def live_mentions(page: Page, written: str | None = None) -> list[str]:
     ``written`` is the text of pr-comment's own applicable suggestion block, as the source has it,
     when an open fence of an earlier part swallowed it: its raw lines are replacement code that
     pr-comment leaves unneutralized by design, and in a ``pre`` block they are code (the oracle
-    requires that they are shown there)."""
+    requires that they are shown there). Only that block, as one run of lines of the swallowing
+    ``pre`` node, is exempt."""
     found: list[str] = []
     for node in page.nodes:
         if node.in_applicable:
             continue
         text = node.text
         if written is not None and node.in_pre:
-            exempt = set(_unindented(written).split("\n"))
-            text = "\n".join(line for line in text.split("\n") if line.lstrip(" \t") not in exempt)
+            # only the written block itself, one contiguous run of lines (the last, as pr-comment
+            # appends it after the body), is exempt; a line of the body that merely equals one of
+            # its lines is not
+            flat, tail = _unindented(text), _unindented(written)
+            at = flat.rfind("\n" + tail)
+            at = 0 if at < 0 and flat.startswith(tail) else at + 1 if at >= 0 else -1
+            if at >= 0:
+                text = flat[:at] + flat[at + len(tail) :]
         if LIVE_MENTION.search(text):
             found.append(node.text)
     return found
@@ -371,6 +403,7 @@ def violations(text: str, expect: Expect | None = None) -> list[str]:
     safe_html = render_safe(posted)
     probe_html = render_probe(posted)
     safe, probe = parse(safe_html), parse(probe_html)
+    footnotes = parse(render_footnotes(posted))
     found: list[str] = []
 
     for name, attributes in probe.tags:
@@ -386,10 +419,18 @@ def violations(text: str, expect: Expect | None = None) -> list[str]:
         found.append("raw HTML comment")
     if len(probe.comments) > len(ALLOWED_COMMENTS):
         found.append("more comments than the marker and the dedupe line")
-    if safe_html.count("raw HTML omitted") != len(probe.comments):
+    if probe.pis:
+        found.append("raw HTML processing instruction")
+    if probe.decls:
+        found.append("raw HTML declaration")
+    # every piece of raw HTML the safe rendering omits must be the marker or the dedupe line
+    allowed = [c for c in probe.comments if c.strip() in ALLOWED_COMMENTS]
+    if safe_html.count("raw HTML omitted") != len(allowed):
         found.append("raw HTML omitted")
 
     suggestions = [(lang, body) for lang, body in safe.pres if is_suggestion_lang(lang)]
+    if suggestions != [(lang, body) for lang, body in footnotes.pres if is_suggestion_lang(lang)]:
+        found.append("footnotes change the applicable suggestions")
     written: str | None = None
     if expect.suggestion is None:
         if suggestions:
@@ -407,7 +448,7 @@ def violations(text: str, expect: Expect | None = None) -> list[str]:
                     "a suggestion pr-comment wrote is neither applicable nor shown as code"
                 )
 
-    for page_name, page in (("safe", safe), ("probe", probe)):
+    for page_name, page in (("safe", safe), ("probe", probe), ("footnotes", footnotes)):
         if live_mentions(page, written):
             found.append(f"live mention ({page_name} rendering)")
 

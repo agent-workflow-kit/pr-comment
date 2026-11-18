@@ -20,7 +20,12 @@ from typing import Any
 import jsonschema
 import pytest
 
-from pr_comment.assemble import MARKER, forgectl_neutralize, has_marker
+from pr_comment.assemble import (
+    MARKER,
+    forgectl_neutralize,
+    has_marker,
+    render_inline_finding,
+)
 from pr_comment.mentions import MentionNeutralizer
 from pr_comment.neutralize import count_text
 from tests.golden_harness import find_real_names
@@ -52,9 +57,12 @@ BAD_BODIES = [
     ("![](https://t.example/p)", "image"),
     ("[r]: /u\n\n![t][r]", "image"),
     ("<!-- hidden -->", "raw HTML comment"),
+    ("<?php\nx", "raw HTML processing instruction"),
+    ("<!DOCTYPE x>", "raw HTML declaration"),
     ("x <b>y</b>", "raw HTML omitted"),
     ('<a href="u" onclick="x()">y</a>', "attribute onclick"),
     ("@victim", "live mention (safe rendering)"),
+    ("x[^1]\n\n[^1]: x\n    @victim", "live mention (footnotes rendering)"),
     ("&#64;victim", "live mention (safe rendering)"),
     ("> - @victim", "live mention (safe rendering)"),
     ("`@victim`", "live mention (safe rendering)"),
@@ -93,6 +101,22 @@ def test_the_oracle_accepts_an_applicable_suggestion_only_as_written() -> None:
     assert violations(body.replace("```suggestion", "```suggestion:-1+0"), expect) != []
     twice = body.replace(MARKER, "```suggestion\na < b\n@x\n```\n\n" + MARKER)
     assert violations(twice, expect) != []
+
+
+def test_the_oracle_flags_a_processing_instruction_that_swallows_the_marker() -> None:
+    # The block runs to the end, so the marker is no comment of its own and the omitted count
+    # still matches: only the instruction check can see it.
+    assert "raw HTML processing instruction" in violations("<?php\nx\n\n" + MARKER)
+
+
+def test_the_oracle_exempts_only_the_exact_written_suggestion_block() -> None:
+    expect = Expect(suggestion=(("@victim",), "suggestion"))
+    # swallowed by an open fence of the body: the written block is the tail of the code block
+    swallowed = "```\nopen\n\n```suggestion\n@victim\n```\n\n" + MARKER
+    assert violations(swallowed, expect) == []
+    # the body's own line equal to a suggestion line is a live mention
+    forged = "```\n@victim\n\n```suggestion\n@victim\n```\n\n" + MARKER
+    assert "live mention (safe rendering)" in violations(forged, expect)
 
 
 def test_the_oracle_flags_a_marker_of_pr_comment_that_is_not_visible() -> None:
@@ -275,6 +299,7 @@ SPIKE_B: list[Case] = [
     ),
     *everywhere("tables_and_lists", "- @victim\n1. @victim\n| a |\n|---|\n| @victim |"),
     *everywhere("headings_and_rules", "# @victim\n---\n@victim\n==="),
+    *everywhere("footnote_definition", "x[^1]\n\n[^1]: x\n    @victim"),
     *everywhere("autolinks", "https://example.org/@victim <https://example.org> user@example.org"),
 ]
 
@@ -397,6 +422,10 @@ def test_golden_files_hold_placeholder_names_only() -> None:
 
 
 def test_golden_drafts_validate_against_the_schema() -> None:
+    # Only the input drafts are validated here. todo(#27): validate the posting command's --json
+    # output against schemas/ once the plan builder lands; no command emits it yet.
+    # control_character_in_a_body is exempt because its body holds a control character that the
+    # draft schema itself forbids: the case exists to show the pipeline refuses it.
     schemas = load_schemas()
     schema = next(s for s in schemas.values() if s.get("$id", "").endswith("review-draft.json"))
     validator = jsonschema.Draft202012Validator(schema, registry=build_registry())
@@ -532,14 +561,13 @@ def test_decision_2_a_suggestion_swallowed_by_an_open_body_fence_is_inert_and_si
     code = [text for lang, text in parse(render_safe(inline.text)).pres]
     # the body's open fence ends at the suggestion's own closing fence
     assert len(code) == 1 and code[0].endswith("```suggestion\nx = 1\n")
-    from pr_comment.assemble import render_inline_finding
-
     assert case.document is not None
     result = render_inline_finding(
         case.document["findings"][0], MentionNeutralizer(), host="github"
     )
     assert result.degraded is None
-    assert inline.expect.suggestion is not None  # the oracle allows it to be present or swallowed
+    # the swallowed suggestion text is inside the code block, as the oracle requires
+    assert "x = 1" in code[0]
 
 
 def test_decision_3_a_fullwidth_at_passes_unchanged() -> None:
@@ -562,7 +590,7 @@ def test_finding_a_line_break_only_body_posts_a_marker_only_inline_comment(blank
     """The draft rule ``body`` is non-empty accepts a body of line breaks only; ``build_inline``
     drops trailing line feeds, so the comment is the hidden marker and shows nothing. Safe, but
     an empty comment; a stricter draft rule (a body with a non-blank character) would refuse it.
-    Reported on the draft rules (issue #13); not changed here."""
+    Tracked in issue #67 (refuse a finding body with no non-blank character); not changed here."""
     _, inline = run_review(make_document(findings=[make_finding(body=blank)]))
     assert inline.text == MARKER
     assert violations(inline.text, inline.expect) == []
