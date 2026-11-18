@@ -150,7 +150,7 @@ def require_ok(result: ForgectlResult, *, gateway: Gateway, backend: str | None 
     Exit 0 with output that is not one JSON object is ``lower_contract_mismatch``; so is a
     forgectl that exits 0 and left stdout cut at the limit.
     """
-    if result.exit_code != 0:
+    if result.timed_out or result.exit_code != 0:
         raise LowerFailure(failure_outcome(result, gateway=gateway, backend=backend))
     try:
         document = _load_json(result, None)

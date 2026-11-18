@@ -821,6 +821,54 @@ print("finished", result.exit_code, result.signal, still_ignored)
 """
 
 
+SIGNAL_IGNORING_DRIVER = """\
+import os, signal, sys
+signal.signal({signum}, signal.SIG_IGN)
+from pr_comment.gateway import ForgectlInterrupted, ProcessGateway
+
+gateway = ProcessGateway(environ={{"PATH": {path!r}}}, deadline=60.0, interrupt_grace=20.0)
+try:
+    result = gateway.call("show", ["gh.example/o/r#1"])
+except ForgectlInterrupted:
+    print("interrupted")
+    sys.exit(1)
+print("finished", result.exit_code, signal.getsignal({signum}) == signal.SIG_IGN)
+"""
+
+
+@pytest.mark.parametrize("signum", [signal.SIGHUP, signal.SIGINT])
+def test_an_inherited_ignored_signal_is_kept_and_does_not_interrupt(
+    tmp_path: Path, tracker: Tracker, signum: signal.Signals
+) -> None:
+    make_fake(
+        tmp_path,
+        """
+        open(D + "/ready", "w").close()
+        time.sleep(1.5)
+        print('{}')
+        """,
+    )
+    tracker.watch(tmp_path)
+    script = tmp_path / "ignoring_signal.py"
+    script.write_text(SIGNAL_IGNORING_DRIVER.format(signum=int(signum), path=str(tmp_path / "bin")))
+    driver = subprocess.Popen(
+        [sys.executable, str(script)],
+        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": SRC, "HOME": str(tmp_path)},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        _wait_for(tmp_path / "ready")
+        driver.send_signal(signum)  # to the exact driver pid this test started
+        out, err = driver.communicate(timeout=30)
+    finally:
+        if driver.poll() is None:
+            driver.kill()
+            driver.wait()
+    assert out.strip() == b"finished 0 True", err
+
+
 def test_an_inherited_ignored_sigchld_does_not_turn_a_failure_into_success(
     tmp_path: Path, tracker: Tracker
 ) -> None:

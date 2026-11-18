@@ -66,6 +66,16 @@ def test_require_ok_returns_the_document() -> None:
     assert require_ok(ok("show", {"pr": "x"}), gateway=GATEWAY) == {"pr": "x"}
 
 
+@pytest.mark.parametrize(("write", "code"), [(False, "network_error"), (True, "outcome_unknown")])
+def test_require_ok_treats_exit_zero_with_a_fired_deadline_as_a_failure(
+    write: bool, code: str
+) -> None:
+    res = result(0, {"pr": "x"}, write=write, timed_out=True)
+    with pytest.raises(LowerFailure) as info:
+        require_ok(res, gateway=GATEWAY)
+    assert error_of(info.value.outcome)["code"] == code
+
+
 @pytest.mark.parametrize(
     "raw",
     [b"", b"not json", b"[]", b'"s"', b"\xff\xfe{}", b'{"a": NaN}', b"[" * 100000, b"{} {}"],

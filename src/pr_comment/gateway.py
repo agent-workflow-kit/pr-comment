@@ -402,6 +402,8 @@ class _Forwarder:
     def __enter__(self) -> _Forwarder:
         if threading.current_thread() is threading.main_thread():
             for sig in FORWARDED_SIGNALS:
+                if signal.getsignal(sig) == signal.SIG_IGN:
+                    continue  # inherited ignore (nohup, background): keep it for us and the child
                 self._saved[sig] = signal.signal(sig, self._handle)
         return self
 
