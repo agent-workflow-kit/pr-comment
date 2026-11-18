@@ -6,6 +6,7 @@ mapping, so nothing here can touch the real state directory.
 
 from __future__ import annotations
 
+import errno
 import os
 import re
 import stat
@@ -647,6 +648,65 @@ def test_a_directory_not_owned_by_us_is_not_chmodded_and_removal_refuses(
     finally:
         monkeypatch.undo()
     assert mode_of(sub) == 0o500
+    os.chmod(sub, 0o700)
+    hook.remove(tmp_fd)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can open mode 0 directories")
+def test_an_unreadable_directory_not_owned_by_us_is_never_chmodded(
+    tmp_fd: int, state_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hook = files.create_hook_dir(tmp_fd, state_path / "tmp")
+    sub = hook.path / "sub"
+    sub.mkdir()
+    os.chmod(sub, 0o000)
+    real = os.geteuid()
+    chmods: list[object] = []
+    calls = 0
+
+    def euid() -> int:
+        # The hook directory itself is ours; only the nested directory looks foreign.
+        nonlocal calls
+        calls += 1
+        return real if calls == 1 else real + 1
+
+    def spy_chmod(path: object, *a: object, **kw: object) -> None:
+        chmods.append(path)
+
+    monkeypatch.setattr(files, "os", os_proxy(geteuid=euid, chmod=spy_chmod))
+    try:
+        with pytest.raises(StateUnsafeError) as info:
+            hook.remove(tmp_fd)
+    finally:
+        monkeypatch.undo()
+    assert info.value.details["path"] == str(sub)
+    assert chmods == []
+    assert mode_of(sub) == 0o000
+    os.chmod(sub, 0o700)
+    hook.remove(tmp_fd)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can open mode 0 directories")
+def test_a_missing_proc_is_reported_not_treated_as_a_vanished_entry(
+    tmp_fd: int, state_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hook = files.create_hook_dir(tmp_fd, state_path / "tmp")
+    sub = hook.path / "sub"
+    sub.mkdir()
+    os.chmod(sub, 0o000)
+
+    def no_proc_chmod(path: object, *a: object, **kw: object) -> None:
+        raise FileNotFoundError(errno.ENOENT, "No such file or directory", str(path))
+
+    monkeypatch.setattr(files, "os", os_proxy(chmod=no_proc_chmod))
+    try:
+        with pytest.raises(StateUnsafeError) as info:
+            hook.remove(tmp_fd)
+    finally:
+        monkeypatch.undo()
+    assert info.value.details["path"] == str(sub)
+    assert info.value.details["errno"] == "ENOENT"
+    assert sub.is_dir()
     os.chmod(sub, 0o700)
     hook.remove(tmp_fd)
 

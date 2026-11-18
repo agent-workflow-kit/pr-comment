@@ -298,7 +298,11 @@ def _open_removable_dir(parent_fd: int, name: str, path: Path, euid: int) -> int
             st = os.fstat(pfd)
             if not stat.S_ISDIR(st.st_mode) or st.st_uid != euid:
                 raise _unsafe("not an owned directory; left in place", path)
-            os.chmod(f"/proc/self/fd/{pfd}", 0o700)
+            try:
+                os.chmod(f"/proc/self/fd/{pfd}", 0o700)
+            except FileNotFoundError as exc:
+                # The descriptor is open, so the entry is not gone: /proc is unavailable.
+                raise _unsafe("cannot make directory removable", path, exc) from exc
         finally:
             os.close(pfd)
         fd = os.open(name, _DIR_FLAGS, dir_fd=parent_fd)
