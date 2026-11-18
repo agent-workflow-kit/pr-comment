@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from pr_comment import cli
+from pr_comment import cli, errors
 from pr_comment.cli import build_parser, main
 from tests.schema_harness import validate
 
@@ -649,7 +649,7 @@ def test_non_ascii_text_is_escaped_in_json_and_cannot_break_an_ascii_stream(
 
 
 def test_sanitize_replaces_control_format_and_surrogate_characters_only() -> None:
-    sanitize = cli._sanitize  # pyright: ignore[reportPrivateUsage]
+    sanitize = errors.sanitize
     assert sanitize("a\tb\n") == "a<U+0009>b<U+000A>"
     assert sanitize("\u200b\ud800") == "<U+200B><U+D800>"
     assert sanitize("plain \u00e9\u4e2d") == "plain \u00e9\u4e2d"

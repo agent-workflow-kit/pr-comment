@@ -1,0 +1,22 @@
+{
+  "error": {
+    "code": "escalated",
+    "decision_ids": [],
+    "details": null,
+    "escalated_by": "pr-comment",
+    "escalated_hooks": [
+      {
+        "hook": "pre-post",
+        "index": 1
+      }
+    ],
+    "hook": "pre-post",
+    "hook_stderr": "needs a human",
+    "landed": null,
+    "lower_error": null,
+    "message": "a hook escalated",
+    "reason": null,
+    "retry": null,
+    "retry_after": null
+  }
+}
