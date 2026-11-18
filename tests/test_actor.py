@@ -333,20 +333,73 @@ def test_parser_still_builds() -> None:
     assert build_parser() is not None
 
 
-def test_the_tty_default_actor_takes_me_name_from_the_config_in_the_run_context() -> None:
-    import argparse
-    import dataclasses
+# --- the config seam (#5 + #7): `me.name` takes precedence over the OS username ----------------
+
+
+def test_me_name_replaces_the_os_username_for_a_tty_default() -> None:
+    ctx = run(ns(), stdin_tty=True, stderr_tty=True, user="osuser")
+    updated = actor_mod.with_me_name(ctx, "alice")
+    assert (updated.actor, updated.actor_source) == ("human:alice", "tty")
+    assert (updated.stdin_tty, updated.interactive) == (ctx.stdin_tty, ctx.interactive)
+
+
+def test_without_me_name_the_os_username_stays() -> None:
+    ctx = run(ns(), stdin_tty=True, stderr_tty=True, user="osuser")
+    assert actor_mod.with_me_name(ctx, None) == ctx
+
+
+def test_me_name_does_not_touch_a_flag_or_the_auto_default() -> None:
+    flagged = run(ns(actor="human:bob"), stdin_tty=True, stderr_tty=True)
+    assert actor_mod.with_me_name(flagged, "alice") == flagged
+    auto = run(ns(), stdin_tty=False, stderr_tty=False)
+    assert actor_mod.with_me_name(auto, "alice") == auto
+
+
+@pytest.mark.parametrize("bad", ["bad name", "x" * 65, "", "a\nb", "a\ud800"])
+def test_me_name_outside_the_grammar_is_ignored(bad: str) -> None:
+    ctx = run(ns(), stdin_tty=True, stderr_tty=True, user="osuser")
+    assert actor_mod.with_me_name(ctx, bad) == ctx
+
+
+def test_main_uses_the_config_me_name_as_the_tty_actor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text("me:\n  name: alice\n", encoding="utf-8")
+    config.chmod(0o600)
+    seen: list[RunContext] = []
+
+    def handler(args: argparse.Namespace) -> Any:
+        seen.append(args.run)
+        raise RuntimeError("stop")
 
     from pr_comment import cli
-    from pr_comment.actor import RunContext
 
-    run = RunContext("human:os-user", "tty", True, True)
-    args = argparse.Namespace(run=run)
-    cli._use_me_name(args, "carol")  # pyright: ignore[reportPrivateUsage]
-    assert args.run == dataclasses.replace(run, actor="human:carol")
-    assert args.run.audit_fields()["actor"] == "human:carol"
-    assert cli._actor(args) == "human:carol"  # pyright: ignore[reportPrivateUsage]
-    flagged = RunContext("human:x", "flag", True, True)
-    kept = argparse.Namespace(run=flagged)
-    cli._use_me_name(kept, "carol")  # pyright: ignore[reportPrivateUsage]
-    assert kept.run is flagged
+    monkeypatch.setitem(cli.HANDLERS, "comment", handler)
+    monkeypatch.setattr(sys, "stdin", _Stream(True))
+    monkeypatch.setattr(sys, "stderr", _Stream(True))
+    main(["--config", str(config), "comment", "o/r#1", "--body-file", "b", "--json"])
+    assert [(r.actor, r.actor_source) for r in seen] == [("human:alice", "tty")]
+
+
+def test_main_without_me_name_keeps_the_os_username(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    from pr_comment import cli
+
+    seen: list[RunContext] = []
+
+    def handler(args: argparse.Namespace) -> Any:
+        seen.append(args.run)
+        raise RuntimeError("stop")
+
+    monkeypatch.setitem(cli.HANDLERS, "comment", handler)
+    monkeypatch.setattr(cli, "resolve_run", _resolve_with_fake_os_user)
+    monkeypatch.setattr(sys, "stdin", _Stream(True))
+    monkeypatch.setattr(sys, "stderr", _Stream(True))
+    main(["comment", "o/r#1", "--body-file", "b", "--json"])
+    assert [r.actor for r in seen] == ["human:osuser"]
+
+
+def _resolve_with_fake_os_user(args: argparse.Namespace, **kw: Any) -> RunContext:
+    return resolve_run(args, os_user=lambda: "osuser", **kw)

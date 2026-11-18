@@ -110,8 +110,11 @@ Each becomes a `live` test in the plan.
 | `prepare.py` | the posting orders up to the plan (usage, reads, re-anchoring, the plan, the pre-check), `--expect-plan` binding and the `--dry-run` result; the dialog and the writes are not here |
 | `forge.py` | the forgectl edge: argv in `=` form, stdin input, result and envelope parsing by the fields pr-comment uses |
 | `gateway.py` | the only subprocess boundary |
+| `files.py` | state and temporary directory checks, no-follow and exclusive creation, hook directory removal, sweeping |
 | `hooks.py` | `pre-post` and `post-post` |
-| `audit.py` | audit and log records, `export` |
+| `appendfile.py` | the append-only line file under the state directory (no-follow, regular file, 0600, torn-line handling) |
+| `audit.py` | audit record pairs, write results and their aggregation, `export` |
+| `jsonlog.py` | `log.jsonl` events and the config warnings |
 | `display.py` | display sanitizing with forgectl's rules (`sanitize_text`, `sanitize_line`, `sanitize_bytes`) and the shared predicate `is_marked` / `count_marked` |
 | `confirm.py` | the TTY dialog and the summary (shows untrusted text through `display.py`) |
 

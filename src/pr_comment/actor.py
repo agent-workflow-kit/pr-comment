@@ -12,7 +12,7 @@ import argparse
 import os
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 # Same grammar as the actor name in the --actor grammar and `me.name`.
@@ -82,6 +82,19 @@ def _human_default(os_user: Callable[[], str | None]) -> str:
     if not isinstance(name, str) or not _NAME_RE.fullmatch(name):
         return UNKNOWN_HUMAN
     return f"human:{name}"
+
+
+def with_me_name(run: RunContext, me_name: str | None) -> RunContext:
+    """The run with the config's ``me.name`` as the default human actor.
+
+    Only a run whose actor came from the TTY default (``actor_source == "tty"``) changes: an
+    ``--actor`` flag and the ``auto:unknown`` default never use ``me.name``. A missing or invalid
+    name leaves the OS-username default in place. The flag rules do not depend on the name, so
+    the run is first resolved (and validated) without the config and updated once it is read.
+    """
+    if run.actor_source != "tty" or me_name is None or not _NAME_RE.fullmatch(me_name):
+        return run
+    return replace(run, actor=f"human:{me_name}")
 
 
 def reads_stdin(args: argparse.Namespace) -> bool:
