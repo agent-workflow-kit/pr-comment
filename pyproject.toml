@@ -5,7 +5,10 @@ description = "Posts reviews, replies and comments to PRs, safely and with attri
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
-dependencies = []
+dependencies = [
+    "pydantic>=2.9",
+    "pyyaml>=6",
+]
 
 [project.scripts]
 pr-comment = "pr_comment.cli:main"
@@ -18,7 +21,25 @@ build-backend = "hatchling.build"
 packages = ["src/pr_comment"]
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6", "pyright>=1.1.380", "pymarkdownlnt>=0.9.41"]
+# Test-only: the schema and golden harnesses and the Markdown oracle. Never imported at runtime.
+test = [
+    "pytest>=8",
+    "jsonschema>=4.23",
+    "referencing>=0.35",
+    # `format: date-time` is only enforced when this is installed.
+    "rfc3339-validator>=0.1.4",
+    "packaging>=24",
+    # GitHub's Markdown engine, the oracle for the text-safety tests: exact pin.
+    "cmarkgfm==2025.10.22",
+]
+dev = [
+    {include-group = "test"},
+    "ruff>=0.6",
+    "pyright>=1.1.380",
+    "pymarkdownlnt>=0.9.41",
+    "types-pyyaml>=6",
+    "types-jsonschema>=4.23",
+]
 
 [tool.ruff]
 line-length = 100
