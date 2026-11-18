@@ -39,7 +39,7 @@ _Suggestion shown as code: it cannot be posted as an applicable suggestion safel
 _Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
 
 ````text
-```suggestion
+```python
 ````
 
 ---

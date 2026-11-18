@@ -20,7 +20,7 @@ reason (TODO(#22)).
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -182,11 +182,16 @@ def render_finding_text(
     finding: Mapping[str, Any],
     mentions: MentionNeutralizer,
     *,
-    suggestion_block: str | None = None,
+    suggestion_block: str | Callable[[], str | None] | None = None,
 ) -> str:
     """The bold prefix (when present), a blank line, the body and the suggestion block (when
     given). ``suggestion_block`` is pr-comment's own text (``render_suggestion``) and is added
-    as it is."""
+    as it is. A caller that renders the suggestion itself passes a zero-argument callable, called
+    after the title and the body, so ``mentions`` reports names in the order the text appears.
+
+    todo(#20): ensure an open fence in the body cannot be closed by suggestion lines or
+    swallow/forge the block (layout)
+    """
     pieces: list[str] = []
     prefix = render_prefix(finding, mentions)
     if prefix is not None:
@@ -194,8 +199,9 @@ def render_finding_text(
     body = _str_field(finding, "body")
     if body:
         pieces.append(_clean(textpipe.normalize_lines(body), mentions))
-    if suggestion_block:
-        pieces.append(suggestion_block)
+    block = suggestion_block() if callable(suggestion_block) else suggestion_block
+    if block:
+        pieces.append(block)
     return _SEPARATOR.join(pieces)
 
 
@@ -205,8 +211,8 @@ DEGRADE_NOTE: Final = (
 )
 MOVED_NOTE: Final = "_Suggestion shown as code: this finding could not be posted inline._"
 
-# cmark-gfm (GitHub's engine) keeps a fence length in one byte: a fence of 256 or more characters
-# wraps and a shorter run in the content then closes it. No fence is longer than this.
+# cmark-gfm (GitHub's engine) clamps a fence length to 255: a fence of 256 or more characters is
+# closed by any run of 255 or more in the content. No fence is longer than this.
 MAX_FENCE: Final = 255
 # Shown inside a run of backticks that no fence can enclose (both backtick and tilde runs of
 # 255 or more in one suggestion), every MAX_FENCE - 1 characters; an ASCII ``<`` only in ours.
@@ -234,6 +240,13 @@ def _suggestion_lines(finding: Mapping[str, Any]) -> list[str] | None:
     if not isinstance(lines, list) or not all(isinstance(line, str) for line in lines):  # pyright: ignore[reportUnknownVariableType]
         raise ValueError("suggestion lines must be a list of str")
     return [_one_line(line, "suggestion line") for line in lines]  # pyright: ignore[reportUnknownVariableType]
+
+
+def _refuse_suggestion_fences(lines: Sequence[str]) -> None:
+    """Text pipeline step 2 for suggestion lines: a line that holds a suggestion fence could, with
+    an open fence before it, forge an applicable block, so no render call emits one."""
+    if any(textpipe.suggestion_fence(line) for line in lines):
+        raise ValueError("a suggestion line holds a suggestion fence")
 
 
 def degrade_reason(lines: Sequence[str]) -> str | None:
@@ -306,6 +319,7 @@ def render_suggestion(
     lines = _suggestion_lines(finding)
     if lines is None:
         return None
+    _refuse_suggestion_fences(lines)
     if moved:
         return SuggestionBlock(MOVED_NOTE + _SEPARATOR + _text_block(lines, mentions), None)
     line: Any = finding.get("line")
@@ -352,7 +366,7 @@ class MovedFinding:
     finding: Mapping[str, Any]
     reason: str
     anchor: Anchor
-    suggestion_block: str | None = None
+    suggestion_block: str | Callable[[], str | None] | None = None
 
 
 def render_moved_entry(moved: MovedFinding, mentions: MentionNeutralizer) -> str:
@@ -367,6 +381,7 @@ def render_moved_entry(moved: MovedFinding, mentions: MentionNeutralizer) -> str
     text = render_finding_text(moved.finding, mentions, suggestion_block=moved.suggestion_block)
     if moved.suggestion_block is None:
         # After the title and body, so mentions are reported in the order the text appears.
+        # host is irrelevant for a moved block (always code, never a suggestion fence).
         shown = render_suggestion(moved.finding, mentions, host="github", moved=True)
         if shown is not None:
             text = _SEPARATOR.join([text, shown.block] if text else [shown.block])

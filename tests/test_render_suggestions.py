@@ -205,14 +205,25 @@ REASON_CASES = [
     (["````"], "fence"),
     (["~~~"], "fence"),
     ([" ~~~~ x"], "fence"),
-    (["```suggestion"], "fence"),
+    (["```python"], "fence"),
+    # todo(#20): the leading space on a `/` line in a degraded block (step 6) arrives with #20
     (["/cmd"], "slash_line"),
     (["/"], "slash_line"),
     (["ok", "/* c */"], "slash_line"),
     # order: invisible_chars, fence, slash_line
     (["/x", "```", "‮"], "invisible_chars"),
+    # todo(#20): the /x line gets its leading space in the degraded block with #20
     (["/x", "```"], "fence"),
     (["```", "/x"], "fence"),
+]
+INVISIBLE_CASES = [
+    (["\ue000"], "invisible_chars"),  # Co U+E000
+    (["\u0378"], "invisible_chars"),  # Cn U+0378 (unassigned in Python 3.12 and 3.13)
+    (["\U000e0100"], "invisible_chars"),
+    (["\u034f"], "invisible_chars"),
+    (["\u2800"], "invisible_chars"),
+    (["\u180b"], "invisible_chars"),
+    (["\u180e"], "invisible_chars"),
 ]
 OK_CASES = [
     [],
@@ -220,11 +231,12 @@ OK_CASES = [
     ["a/b", " /x", "\t/x", "x//y"],
     ["``", "~~", "`~`~`~"],
     ["a\tb"],
+    ["a\tb\u00a0c"],  # tab and NBSP stay applicable
     ["é z "],
 ]
 
 
-@pytest.mark.parametrize(("lines", "reason"), REASON_CASES)
+@pytest.mark.parametrize(("lines", "reason"), REASON_CASES + INVISIBLE_CASES)
 def test_degrade_reason(lines: list[str], reason: str) -> None:
     assert degrade_reason(lines) == reason
 
@@ -234,7 +246,7 @@ def test_no_degrade_reason(lines: list[str]) -> None:
     assert degrade_reason(lines) is None
 
 
-@pytest.mark.parametrize(("lines", "reason"), REASON_CASES)
+@pytest.mark.parametrize(("lines", "reason"), REASON_CASES + INVISIBLE_CASES)
 @pytest.mark.parametrize("host", ["github", "gitlab"])
 def test_degraded_suggestion_is_a_text_block_with_a_note(
     lines: list[str], reason: str, host: str
@@ -245,6 +257,12 @@ def test_degraded_suggestion_is_a_text_block_with_a_note(
     assert "suggestion" not in [lang for lang, _ in pre_blocks(r.block)]
     assert "```suggestion" not in r.block.replace("<U+", "").split("\n\n", 1)[1].split("\n")[0]
     assert pre_blocks(r.block)[0][0] == "text"
+
+
+def test_the_first_unassigned_code_point_is_invisible_on_every_python() -> None:
+    # Category Cn follows the running Python's Unicode tables (docs/interface.md: Suggestions);
+    # U+0378 is unassigned in 3.12 and 3.13.
+    assert degrade_reason(["a\u0378"]) == "invisible_chars"
 
 
 def test_golden_per_reason(golden: Callable[[str, str], None]) -> None:
@@ -339,7 +357,7 @@ def test_a_long_backtick_run_gets_the_longest_fence_cmark_keeps() -> None:
 
 @pytest.mark.parametrize("n", [255, 256, 257, 511, 5000])
 def test_a_backtick_run_no_fence_fits_uses_a_tilde_fence(n: int) -> None:
-    # cmark-gfm stores a fence length in one byte, so a 256-long fence would be closed by a
+    # cmark-gfm clamps a fence length to 255, so a 256-long fence would be closed by a
     # shorter run in the content.
     run = "`" * n
     r = block(sug("a", run, "~~~~", "b"))
@@ -368,10 +386,43 @@ def test_a_huge_suggestion_is_rendered_whole() -> None:
     assert r.degraded == "fence"
 
 
-def test_the_words_suggestion_in_lines_do_not_make_a_suggestion_block() -> None:
-    r = block(sug("suggestion", "```suggestion", "~~~suggestion:-1+0"))
+def test_the_word_suggestion_in_lines_does_not_make_a_suggestion_block() -> None:
+    r = block(sug("suggestion", "```", "~~~"))
     assert [lang for lang, _ in pre_blocks(r.block)] == ["text"]
     assert r.degraded == "fence"
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        ["```suggestion"],
+        ["a", "~~~suggestion:-1+0"],
+        ["> ```Suggestion"],
+        ["~~~~", "~~~suggestion", "evil()"],
+        ["```", "```suggestion", "evil()"],
+    ],
+)
+@pytest.mark.parametrize("moved", [False, True])
+def test_a_suggestion_line_with_a_suggestion_fence_is_refused(
+    lines: list[str], moved: bool
+) -> None:
+    with pytest.raises(ValueError, match="suggestion fence"):
+        render_suggestion(sug(*lines), mn(), host="github", moved=moved)
+
+
+@pytest.mark.parametrize(
+    ("body", "lines"),
+    [
+        ("~~~~", ["~~~~", "~~~suggestion", "evil()"]),
+        ("```", ["```", "```suggestion", "evil()"]),
+    ],
+)
+def test_an_open_body_fence_cannot_forge_an_applicable_block(body: str, lines: list[str]) -> None:
+    # todo(#20) owns the layout; here no render call may emit a suggestion block for these.
+    f = sug(*lines, body=body)
+    for moved in (False, True):
+        with pytest.raises(ValueError, match="suggestion fence"):
+            render_suggestion(f, mn(), host="github", moved=moved)
 
 
 def test_applicable_with_the_word_suggestion_is_one_block() -> None:
@@ -397,6 +448,7 @@ def test_tilde_line_in_a_closed_body_is_still_not_applicable() -> None:
     assert [lang for lang, _ in pre_blocks(text)] == ["text"]
 
 
+# todo(#20): the leading space on a `/` line arrives with #20; until then the slash is kept as is.
 def test_slash_line_degrades_and_keeps_its_slash() -> None:
     r = block(sug("/approve"))
     assert r.degraded == "slash_line"
@@ -488,3 +540,21 @@ def test_finding_text_joins_the_block_with_a_blank_line() -> None:
 
 def test_an_explicit_null_side_means_right() -> None:
     assert block(sug("x", side=None)).degraded is None
+
+
+def test_mentions_are_reported_in_order_title_body_suggestion() -> None:
+    f = sug("/x @bob", title="hi @alice", body="see @carol")
+    mentions = MentionNeutralizer("neutralize")
+    render_finding_text(f, mentions, suggestion_block=lambda: block_with(f, mentions))
+    assert mentions.names == ("alice", "carol", "bob")
+
+
+def block_with(f: dict[str, Any], mentions: MentionNeutralizer) -> str:
+    r = render_suggestion(f, mentions, host="github")
+    assert r is not None
+    return r.block
+
+
+def test_a_suggestion_callable_may_return_none() -> None:
+    f = sug("x", body="b")
+    assert render_finding_text(f, mn(), suggestion_block=lambda: None) == "b"

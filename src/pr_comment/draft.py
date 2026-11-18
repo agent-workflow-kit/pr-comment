@@ -319,20 +319,20 @@ _TEXT_KIND_MESSAGES: Final = {
 
 
 def _text_fields(finding: object, pointer: str) -> Iterator[tuple[str, str, bool]]:
-    """``(pointer, text, multi_line)`` for each text field of one finding that is a string."""
+    """``(pointer, text, check_fence)`` for each text field of one finding that is a string."""
     if not isinstance(finding, dict):
         return
     fields: dict[str, Any] = finding  # pyright: ignore[reportUnknownVariableType]
-    for key, multi_line in (("path", False), ("title", False), ("body", True)):
+    for key, check_fence in (("path", False), ("title", False), ("body", True)):
         value = fields.get(key)
         if type(value) is str:
-            yield f"{pointer}/{key}", value, multi_line
+            yield f"{pointer}/{key}", value, check_fence
     suggestion: object = fields.get("suggestion")
     lines: object = suggestion.get("lines") if isinstance(suggestion, dict) else None  # pyright: ignore[reportUnknownMemberType]
     if isinstance(lines, list):
         for index, line in enumerate(lines):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
             if type(line) is str:
-                yield f"{pointer}/suggestion/lines/{index}", line, False
+                yield f"{pointer}/suggestion/lines/{index}", line, True
 
 
 def _all_text_fields(document: object) -> Iterator[tuple[str, str, bool]]:
@@ -359,18 +359,18 @@ def text_issues(document: object) -> list[dict[str, str]]:
     """Text pipeline steps 1 and 2 over every text field: ``{pointer, kind}`` entries.
 
     Step 1 problems (``control_character``) come before step 2 problems (``suggestion_fence``),
-    each in document order. Suggestion fences are looked for only in multi-line text (the draft
-    ``body`` and a finding ``body``); a suggestion line holding a fence degrades later. Only the
-    pointer and the kind are returned, never the text. Fields of the wrong type are skipped
-    (``validate_document`` reports them).
+    each in document order. Suggestion fences are looked for in the draft ``body``, each finding
+    ``body`` and each suggestion line (a line with a plain fence run still just degrades later).
+    Only the pointer and the kind are returned, never the text. Fields of the wrong type are
+    skipped (``validate_document`` reports them).
     """
     controls: list[dict[str, str]] = []
     fences: list[dict[str, str]] = []
-    for pointer, text, multi_line in _all_text_fields(document):
+    for pointer, text, check_fence in _all_text_fields(document):
         normalized = textpipe.normalize_lines(text)
         if textpipe.has_forbidden_character(normalized):
             controls.append({"pointer": pointer, "kind": textpipe.CONTROL_CHARACTER})
-        elif multi_line and textpipe.suggestion_fence(normalized):
+        elif check_fence and textpipe.suggestion_fence(normalized):
             fences.append({"pointer": pointer, "kind": textpipe.SUGGESTION_FENCE})
     return controls + fences
 
