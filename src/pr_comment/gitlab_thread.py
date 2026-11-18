@@ -36,8 +36,14 @@ def marker_line(key: str) -> str:
 
 
 def _last_line(body: str) -> str | None:
-    lines = [line.rstrip() for line in body.splitlines() if line.strip()]
-    return lines[-1] if lines else None
+    """The last non-empty line as forgectl reads it: CRLF is one newline, a line ends at ``\\n``
+    only (never at U+2028, a vertical tab or U+0085), and only an ASCII space, tab or CR is
+    trimmed (a no-break space is text)."""
+    for line in reversed(body.replace("\r\n", "\n").split("\n")):
+        trimmed = line.rstrip(" \t\r")
+        if trimmed:
+            return trimmed
+    return None
 
 
 def _has_marker(thread: ThreadRead, key: str) -> bool:
@@ -52,14 +58,18 @@ def find_body_thread(
     ids: Sequence[str],
     already_posted: bool,
 ) -> BodyThread | None:
-    """The body thread of the review posted with ``key``, or None when it is not exactly one."""
+    """The body thread of the review posted with ``key``, or None when it is not exactly one. A
+    ``comments`` read that is not complete may lack the thread: nothing is found in it."""
+    if not comments.complete:
+        return None
     if already_posted:
         wanted = set(ids)
         candidates = [t for t in comments.threads if any(c.id in wanted for c in t.comments)]
     else:
         wanted = set(thread_ids)
         candidates = [t for t in comments.threads if t.id in wanted]
-    found = [t for t in candidates if _has_marker(t, key)]
+    # the body is a general discussion: a thread with a place is an inline finding
+    found = [t for t in candidates if t.path is None and t.line is None and _has_marker(t, key)]
     if len(found) != 1:
         return None
     thread = found[0]

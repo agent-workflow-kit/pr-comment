@@ -56,6 +56,41 @@ def test_a_line_that_is_not_exactly_this_runs_marker_is_not_the_body_thread(body
     assert find(read(thread(T1, body))) is None
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        f"x\n{MARK}\u2028",  # forgectl splits on \n only: U+2028 is not a line break
+        f"x\n{MARK}\x0b",
+        f"x\n{MARK}\x0c",
+        f"x\n{MARK}\x85",
+        f"x\n{MARK}\u00a0",  # a no-break space is not trimmed
+        f"x\n\u00a0{MARK}",
+        f"x\n{MARK}\n\u00a0",  # a line of only a no-break space is the last non-empty line
+        f"x\n{MARK}\n\u2028",
+        f"x\n{MARK}\u3000",
+    ],
+)
+def test_only_ascii_space_tab_and_cr_are_trimmed_and_only_a_newline_ends_a_line(body: str) -> None:
+    assert find(read(thread(T1, body))) is None
+
+
+def test_an_inline_thread_that_carries_the_marker_line_is_not_the_body_thread() -> None:
+    inline = thread(T1, f"finding\n{MARK}", path="src/a.py", line=3)
+    assert find(read(inline)) is None
+
+
+def test_a_thread_with_only_a_path_or_only_a_line_is_not_a_body_thread() -> None:
+    assert find(read(thread(T1, f"x\n{MARK}", path="src/a.py"))) is None
+    assert find(read(thread(T1, f"x\n{MARK}", line=3))) is None
+
+
+def test_a_comments_read_that_is_not_complete_finds_nothing() -> None:
+    doc = CommentsRead.model_validate(
+        h.comments_doc(h.GITLAB_PR, threads=[thread(T1, f"x\n{MARK}")], complete=False)
+    )
+    assert find(doc) is None
+
+
 def test_only_the_first_comment_counts() -> None:
     assert find(read(thread(T1, "plain", f"reply\n{MARK}"))) is None
 

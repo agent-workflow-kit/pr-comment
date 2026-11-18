@@ -240,9 +240,13 @@ def files_doc(
 
 
 def comments_doc(
-    pr: str = PR, *, head_sha: str = HEAD, threads: Sequence[Mapping[str, Any]] = ()
+    pr: str = PR,
+    *,
+    head_sha: str = HEAD,
+    threads: Sequence[Mapping[str, Any]] = (),
+    complete: bool = True,
 ) -> dict[str, Any]:
-    return {"pr": pr, "head_sha": head_sha, "threads": list(threads), "complete": True}
+    return {"pr": pr, "head_sha": head_sha, "threads": list(threads), "complete": complete}
 
 
 def comment_doc(cid: str, body: str = "hello", *, review_id: str | None = None) -> dict[str, Any]:
@@ -266,6 +270,8 @@ def thread_doc(
     resolvable: bool = True,
     resolved: bool = False,
     head_sha: str = HEAD,
+    path: str | None = None,
+    line: int | None = None,
 ) -> dict[str, Any]:
     """One thread of a ``comments`` read. A thread without a path is a general one (a review body
     on GitLab); a resolved thread must be resolvable."""
@@ -274,8 +280,8 @@ def thread_doc(
         "resolvable": resolvable,
         "resolved": resolved,
         "outdated": False,
-        "path": None,
-        "line": None,
+        "path": path,
+        "line": line,
         "side": None,
         "start_line": None,
         "commit_sha": head_sha,

@@ -13,17 +13,19 @@ from __future__ import annotations
 import json
 import os
 import signal
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from pr_comment import hooks as hooks_module
 from pr_comment import keys
 from tests import forgectl_harness as h
 from tests.forgectl_harness import FakeForgectl, ProcessCall, fail, ok, refuse
 from tests.posting import DRAFT_ID, A, finding
 from tests.schema_harness import validate
-from tests.test_hooks import pids  # noqa: F401  (a fixture)
+from tests.test_hooks import alive, pids, signal_self_when_started  # noqa: F401  (pids: fixture)
 from tests.test_post_hooks import Hooks, hooks  # noqa: F401  (hooks: a fixture)
 from tests.test_review_post import (  # noqa: F401  (cli and state_home are fixtures)
     GL_PR,
@@ -296,7 +298,10 @@ def test_a_review_with_no_thread_ids_reads_nothing(
     assert doc["body_thread_resolved"] is False and doc["body_thread_id"] is None
     assert doc["warnings"] == ["body_thread_unresolved"]
     assert subcommands(forgectl) == ["show", "review", "review"]
-    assert audit(state_home)[1]["result"] == "partial"
+    outcome = audit(state_home)[1]
+    assert outcome["result"] == "partial" and len(outcome["writes"]) == 1
+    assert outcome["writes"][0]["result"] == "partial"  # landed, its follow-up not tried
+    assert outcome["writes"][0]["lower"]["exit"] == 0
 
 
 def test_a_failed_comments_read_leaves_the_review_landed_and_unresolved(
@@ -454,6 +459,12 @@ def _payloads(path: Path) -> list[dict[str, Any]]:
     return [json.loads(x) for x in lines]
 
 
+def _all_zero(counts: Any) -> bool:
+    if isinstance(counts, dict):
+        return all(_all_zero(v) for v in counts.values())  # pyright: ignore[reportUnknownVariableType]
+    return counts == 0
+
+
 def test_hooks_run_around_the_resolve_with_write_index_1_and_its_own_payload(
     cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path, hooks: Hooks
 ) -> None:
@@ -478,6 +489,8 @@ def test_hooks_run_around_the_resolve_with_write_index_1_and_its_own_payload(
     assert second["thread_id"] == BODY_T and second["event"] is None
     assert second["dedupe_key"] is None and second["bodies"] == [] and second["base_ref"] is None
     assert second["anchor_head"] is None and second["to"] is None
+    assert second["thread_author_is_self"] is None and second["actor"] == "human:alice"
+    assert _all_zero(second["counts"]) and not _all_zero(pres[0]["counts"])  # the review's differ
     assert second["object_id"] == GL_PR and second["head_sha"] == h.HEAD
     result = posts[1]["result"]
     assert result["exit"] == 0 and result["code"] is None and result["changed"] is True
@@ -631,3 +644,240 @@ def test_the_deadline_of_the_resolve_is_a_failed_follow_up_not_a_failed_review(
     assert records[1]["result"] == "partial"
     assert records[1]["writes"][1]["result"] == "outcome_unknown"
     assert len(resolves(forgectl)) == 1
+
+
+# --- items of the first review: the thread, the answer, the signals ---------------------------
+
+
+def _reasons(state_home: Path) -> list[str]:
+    return [
+        e["details"]["reason"]
+        for e in log(state_home)
+        if e["event"] == "warning" and e["details"] and e["details"].get("code")
+    ]
+
+
+def test_a_comments_read_that_is_not_complete_is_a_thread_not_found(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path
+) -> None:
+    incomplete = ok("comments", h.comments_doc(GL_PR, threads=[body_thread()], complete=False))
+    code, doc, _ = run_review(cli, forgectl, tmp_path, [gl_post(), incomplete])
+    assert code == 0, doc
+    assert doc["body_thread_resolved"] is False and doc["body_thread_id"] is None
+    assert doc["warnings"] == ["body_thread_unresolved"] and resolves(forgectl) == []
+    assert "thread_not_found" in _reasons(state_home)
+    assert audit(state_home)[1]["writes"][0]["result"] == "partial"
+
+
+def test_an_already_posted_review_with_an_incomplete_read_resolves_nothing(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path
+) -> None:
+    incomplete = ok("comments", h.comments_doc(GL_PR, threads=[body_thread()], complete=False))
+    draft = draft_file(tmp_path, [finding("f1")], pr=GL_PR)
+    forgectl.script(
+        gl_show(),
+        gl_dry(already_posted=True),
+        gl_post(already_posted=True, ids=["gl:n:11"], thread_ids=[]),
+        incomplete,
+    )
+    code, doc, _ = cli(*args_for(draft, pr=GL_PR))
+    assert code == 0, doc
+    assert doc["body_thread_resolved"] is False and resolves(forgectl) == []
+
+
+def test_an_inline_thread_with_the_marker_line_is_never_the_body_thread(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path
+) -> None:
+    placed = h.thread_doc(
+        BODY_T, [h.comment_doc("gl:n:11", f"finding\n{MARK}")], path="src/a.py", line=3
+    )
+    code, doc, _ = run_review(cli, forgectl, tmp_path, [gl_post(), comments(placed)])
+    assert code == 0, doc
+    assert doc["body_thread_resolved"] is False and resolves(forgectl) == []
+    assert "thread_not_found" in _reasons(state_home)
+
+
+def test_an_answer_with_changed_false_is_not_a_write_and_runs_no_post_post_hook(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path, hooks: Hooks
+) -> None:
+    # forgectl: changed false means the thread was already in the state when it re-read it, so
+    # it wrote nothing, recorded nothing and ran no post-post hook
+    pre = log_hook(hooks, tmp_path, "pre")
+    post = log_hook(hooks, tmp_path, "post")
+    steps = [gl_post(), comments(body_thread()), resolved(changed=False)]
+    code, doc, _ = run_review(
+        cli, forgectl, tmp_path, steps, "--hook", f"pre-post={pre}", "--hook", f"post-post={post}"
+    )
+    assert code == 0, doc
+    validate("pr-comment/cli/review.json", doc)
+    assert doc["body_thread_resolved"] is True and doc["warnings"] == []
+    assert len(resolves(forgectl)) == 1
+    assert [p["write_index"] for p in _payloads(tmp_path / "pre.jsonl")] == [0, 1]
+    assert [p["write_index"] for p in _payloads(tmp_path / "post.jsonl")] == [0]
+    records = audit(state_home)
+    validate_audit(records)
+    outcome = records[1]
+    assert outcome["result"] == "done" and len(outcome["writes"]) == 1  # the review's only
+
+
+def test_a_hook_id_equal_to_a_caller_id_is_not_passed_twice_to_the_resolve(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path, hooks: Hooks
+) -> None:
+    gate = hooks.script('cat > /dev/null\necho \'{"decision_id": ["d1", "gate:1", "gate:1"]}\'')
+    steps = [gl_post(), comments(body_thread()), resolved()]
+    code, doc, _ = run_review(
+        cli, forgectl, tmp_path, steps, "--decision-id", "d1", "--hook", f"pre-post={gate}"
+    )
+    assert code == 0, doc
+    (call,) = resolves(forgectl)
+    assert flag(call, "--decision-id") == ["d1", "gate:1"]
+    assert audit(state_home)[1]["hook_decision_id"] == ["gate:1"]
+
+
+def test_an_id_a_post_post_hook_prints_for_the_review_reaches_the_resolve_once(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path, hooks: Hooks
+) -> None:
+    # too late for the review's own forgectl call, but the resolve is a later call
+    late = hooks.script('cat > /dev/null\necho \'{"decision_id": "late:1"}\'')
+    steps = [gl_post(), comments(body_thread()), resolved()]
+    code, doc, _ = run_review(cli, forgectl, tmp_path, steps, "--hook", f"post-post={late}")
+    assert code == 0, doc
+    review = [c for c in forgectl.writes() if c.subcommand == "review"]
+    assert all(flag(c, "--decision-id") == [] for c in review)
+    (call,) = resolves(forgectl)
+    assert flag(call, "--decision-id") == ["late:1"]
+    assert audit(state_home)[1]["hook_decision_id"] == ["late:1"]
+
+
+def _signal_after_hook(
+    monkeypatch: pytest.MonkeyPatch, hook: str, action: str | None = None
+) -> None:
+    """Deliver SIGTERM to this process right after a hook of kind ``hook`` (for ``action``, when
+    given) ended, so the signal lands outside any hook, while the signals are held."""
+    original = hooks_module.HookRunner.run_sync
+
+    def run_then_signal(self: Any, which: str, index: int, entry: Any, payload: Any) -> Any:
+        result = original(self, which, index, entry, payload)
+        if which == hook and (action is None or payload["action"] == action):
+            os.kill(os.getpid(), signal.SIGTERM)
+        return result
+
+    monkeypatch.setattr(hooks_module.HookRunner, "run_sync", run_then_signal)
+
+
+def _skipped_after_a_signal(
+    code: int, doc: Any, forgectl: FakeForgectl, state_home: Path, *, calls: list[str]
+) -> None:
+    assert code == 0, doc
+    validate("pr-comment/cli/review.json", doc)
+    assert doc["ids"] == ["gl:n:11", "gl:n:12"]
+    assert doc["body_thread_resolved"] is False and doc["warnings"] == ["body_thread_unresolved"]
+    assert "skipped_after_signal" in _reasons(state_home)
+    assert subcommands(forgectl) == calls
+    records = audit(state_home)
+    validate_audit(records)
+    outcome = records[1]
+    assert outcome["result"] == "partial" and len(outcome["writes"]) == 1
+    assert outcome["writes"][0]["result"] == "partial"  # landed; the follow-up was not tried
+
+
+@pytest.mark.usefixtures("default_signals")
+def test_a_signal_held_after_the_review_skips_the_follow_up(
+    cli: Run,
+    forgectl: FakeForgectl,
+    tmp_path: Path,
+    state_home: Path,
+    hooks: Hooks,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post = hooks.recorder("post")
+    _signal_after_hook(monkeypatch, "post-post")
+    code, doc, _ = run_review(cli, forgectl, tmp_path, [gl_post()], "--hook", f"post-post={post}")
+    _skipped_after_a_signal(code, doc, forgectl, state_home, calls=["show", "review", "review"])
+
+
+@pytest.mark.usefixtures("default_signals")
+def test_a_signal_during_the_review_post_post_hook_skips_the_follow_up(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path, hooks: Hooks, pids: Path
+) -> None:
+    slow = hooks.script("sleep 60 & echo $! >> " + str(pids) + "; wait")
+    with signal_self_when_started(pids, 2, signal.SIGTERM):
+        code, doc, _ = run_review(
+            cli, forgectl, tmp_path, [gl_post()], "--hook", f"post-post={slow}"
+        )
+    _skipped_after_a_signal(code, doc, forgectl, state_home, calls=["show", "review", "review"])
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and any(alive(int(p)) for p in pids.read_text().split()):
+        time.sleep(0.05)
+    assert not any(alive(int(p)) for p in pids.read_text().split())
+
+
+@pytest.mark.usefixtures("default_signals")
+def test_a_signal_after_the_follow_up_pre_post_hook_makes_no_resolve_call(
+    cli: Run,
+    forgectl: FakeForgectl,
+    tmp_path: Path,
+    state_home: Path,
+    hooks: Hooks,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pre = log_hook(hooks, tmp_path, "pre")
+    _signal_after_hook(monkeypatch, "pre-post", "resolve")
+    code, doc, _ = run_review(
+        cli, forgectl, tmp_path, [gl_post(), comments(body_thread())], "--hook", f"pre-post={pre}"
+    )
+    _skipped_after_a_signal(
+        code, doc, forgectl, state_home, calls=["show", "review", "review", "comments"]
+    )
+    assert resolves(forgectl) == []
+
+
+def test_a_signal_during_the_follow_up_comments_read_is_outcome_unknown(
+    forgectl: FakeForgectl, tmp_path: Path, state_home: Path
+) -> None:
+    draft = draft_file(tmp_path, [finding("f1")], pr=GL_PR)
+    forgectl.script(
+        gl_show(),
+        gl_dry(),
+        gl_post(),
+        ok("comments", h.comments_doc(GL_PR), hang={"phase": "before_write"}),
+    )
+    n = forgectl.next_call_number() + 4  # show, the pre-check, --version, the review, comments
+    proc = _start_cli(forgectl, tmp_path, state_home, *args_for(draft, pr=GL_PR))
+    forgectl.wait_ready(n)
+    os.kill(proc.pid, signal.SIGTERM)  # the exact pid this test started
+    stdout, _ = proc.communicate(timeout=60)
+    assert proc.returncode == 12
+    doc = json.loads(stdout)
+    validate("pr-comment/cli/error.json", doc)
+    assert doc["error"]["code"] == "outcome_unknown"
+    records = audit(state_home)
+    validate_audit(records)
+    assert [r["result"] for r in records] == ["attempted", "partial"]
+    (only,) = records[1]["writes"]
+    assert only["result"] == "partial" and only["lower"]["exit"] == 0  # landed, follow-up unknown
+    assert resolves(forgectl) == [] and len(forgectl.writes()) == 1
+
+
+@pytest.mark.usefixtures("default_signals")
+def test_a_signal_during_the_follow_up_pre_post_hook_is_outcome_unknown(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path, hooks: Hooks, pids: Path
+) -> None:
+    pattern = '\'"action": *"resolve"\''
+    slow = hooks.script(
+        f"cat > {tmp_path}/seen\n"
+        f"if grep -q {pattern} {tmp_path}/seen; then sleep 60 & echo $! >> {pids}; wait; fi"
+    )
+    steps = [gl_post(), comments(body_thread())]
+    # the review's hook: one word ($$); the resolve's: $$ and the sleep
+    with signal_self_when_started(pids, 3, signal.SIGTERM):
+        code, doc, _ = run_review(cli, forgectl, tmp_path, steps, "--hook", f"pre-post={slow}")
+    assert code == 12, doc
+    validate("pr-comment/cli/error.json", doc)
+    assert doc["error"]["code"] == "outcome_unknown"
+    assert resolves(forgectl) == [] and len(forgectl.writes()) == 1
+    records = audit(state_home)
+    validate_audit(records)
+    assert [r["result"] for r in records] == ["attempted", "partial"]
+    (only,) = records[1]["writes"]
+    assert only["result"] == "partial" and only["lower"]["exit"] == 0

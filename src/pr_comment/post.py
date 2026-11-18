@@ -107,7 +107,7 @@ from .hooks import (
 from .jsonlog import LogWriter
 from .lower import LowerFailure, require_ok, tool_missing_outcome
 from .output import LOG, Outcome, error_outcome
-from .plan import Plan
+from .plan import Plan, empty_counts
 from .post_text import TEXT_ACTIONS
 from .post_text import human_lines as text_lines
 from .precheck import DRY_RUN_REASONS
@@ -449,6 +449,7 @@ class _WriteHooks:
             dedupe_key=None,
             bodies=[],
             to=None,
+            counts=empty_counts(),
             thread_id=thread.id,
             thread_author_is_self=None,
             thread_path=thread.path,
@@ -538,15 +539,16 @@ class _WriteHooks:
         *,
         skip: bool,
         interrupted: Callable[[], bool],
-    ) -> None:
+    ) -> int | None:
         """Run the ``post-post`` hooks (also after a failed write). Never changes the outcome.
-        ``interrupted()`` is true once a signal was held: no further hook starts."""
+        ``interrupted()`` is true once a signal was held: no further hook starts. Returns the
+        number of a signal that ended a hook, else None: the caller holds it as received."""
         if not self._env.hooks.post:
-            return
+            return None
         if skip:
             self.runner.warn(POST, None, "hooks_skipped_after_signal")
-            return
-        run_post(
+            return None
+        return run_post(
             self.runner,
             self.ids,
             lambda entry, ids: self._payload(POST, entry.with_text, ids, result),
@@ -731,6 +733,9 @@ class _BodyThread:
             log_failure(env.log, env.trail.attempt_id, plan.pr, blocked)
             self._warn(kind)
             return
+        if self._held.received:  # a signal during the hooks: the resolve is not sent
+            self._skip("skipped_after_signal")
+            return
         started = format_ts(now_utc())
         self._started = started
         interrupted: ForgectlInterrupted | None = None
@@ -747,16 +752,23 @@ class _BodyThread:
             lowered = _ResolveLowered(None, failed, LowerResult(1, "internal", None))
         else:
             lowered = self._lower(result, thread)
+        self._started = None
+        if interrupted is None and lowered.read is not None and not lowered.read.changed:
+            # forgectl wrote nothing (the thread was already resolved when it re-read it), kept
+            # no audit record and ran no post-post hook: like a thread found resolved
+            self.resolved = True
+            return
         write = WriteRecord.from_lower(1, started, "resolve", thread.id, None, lowered.lower)
         self.writes.append(write)
-        self._started = None
         # what the result says is settled before the hooks run: they change nothing
         self.resolved = interrupted is None and lowered.failure is None
-        hooks.post(
+        signum = hooks.post(
             _resolve_result(lowered),
             skip=interrupted is not None or bool(self._held.received),
             interrupted=lambda: bool(self._held.received),
         )
+        if signum is not None:
+            self._held.received.append(signum)
         if interrupted is not None:
             self.interrupted = interrupted
         elif lowered.failure is not None:
@@ -806,11 +818,13 @@ def _call_and_lower(
     warnings = () if lowered.read is None else _warnings(prepared, lowered.read)
     # After a signal the user wants out: the ``post-post`` hooks do not start. Otherwise they run
     # whatever the write's result was, and nothing they do changes it.
-    hooks.post(
+    signum = hooks.post(
         _write_result(lowered, warnings),
         skip=interrupted is not None or bool(held.received),
         interrupted=lambda: bool(held.received),
     )
+    if signum is not None:  # a signal that ended a hook counts as received: no follow-up
+        held.received.append(signum)
     if lowered.read is not None and plan.follow_ups and interrupted is None:
         follow.run(lowered.read)
     if lowered.failure is not None:
