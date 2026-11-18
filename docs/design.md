@@ -93,7 +93,7 @@ Each becomes a `live` test in the plan.
 | Module | Responsibility |
 |---|---|
 | `cli.py` | argparse, global flags, actor resolution, interactive detection, dispatch (`HANDLERS`) |
-| `grammars.py` | the value grammars of every forwarded flag, config value and hook-supplied decision id, shared by `cli.py` and, once they land, `config.py` and `hooks.py` |
+| `grammars.py` | the value grammars of every forwarded flag, config value and hook-supplied decision id, shared by `cli.py`, `config.py` and `hooks.py` |
 | `config.py` | Pydantic config, drop-ins, environment, per-repo merge, footer placeholder validation |
 | `yamlstrict.py` | the strict YAML reader `config.py` uses (core-schema scalars, no anchors, aliases, merge keys, duplicate or non-string keys; node and depth caps) |
 | `draft.py` | draft loading (no-follow, caps), schema, version and consistency checks, `draft check`, `draft new` |

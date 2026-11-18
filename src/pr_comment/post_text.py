@@ -7,9 +7,7 @@ one forgectl call with ``plan.write_args()`` and ``plan.input`` on stdin, the lo
 retried, a signal during the write is exit 12 ``outcome_unknown``, a failed audit append is
 ``audit_failed`` with the write's own ``landed`` and ``retry``). A comment or a reply has no
 inline findings, no follow-up write and no event, so this module only holds what differs: the
-human lines of a finished run.
-
-Seam: TODO(#33) the ``pre-post`` and ``post-post`` hooks, in ``post.post_review``.
+human lines of a finished run. The ``pre-post`` and ``post-post`` hooks run in ``post.post_review``.
 """
 
 from __future__ import annotations

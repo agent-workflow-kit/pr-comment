@@ -8,10 +8,12 @@ leaves one alive (never by pattern). No forgectl is involved.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
 import stat
+import subprocess
 import threading
 import time
 from collections.abc import Iterator, Mapping, Sequence
@@ -20,8 +22,9 @@ from typing import Any
 
 import pytest
 
+from pr_comment import hooks as hooks_module
 from pr_comment.config import HookEntry
-from pr_comment.files import StateDirs, open_state_dirs
+from pr_comment.files import StateDirs, create_file_exclusive, open_state_dirs
 from pr_comment.gateway import ForgectlInterrupted
 from pr_comment.hooks import (
     POST,
@@ -40,12 +43,29 @@ BASE_ENV = {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}
 PR = "example.test/o/r#7"
 
 
-def _state(pid: int) -> str | None:
+def _stat_fields(pid: int) -> list[str] | None:
     try:
         text = Path(f"/proc/{pid}/stat").read_text()
     except OSError:
         return None
-    return text.rpartition(")")[2].split()[0]
+    return text.rpartition(")")[2].split()
+
+
+def _state(pid: int) -> str | None:
+    fields = _stat_fields(pid)
+    return None if fields is None else fields[0]
+
+
+def start_ticks(pid: int) -> int | None:
+    """The start time of ``pid`` (field 22 of ``/proc/<pid>/stat``, clock ticks since boot)."""
+    fields = _stat_fields(pid)
+    return int(fields[19]) if fields is not None and len(fields) > 19 else None
+
+
+def start_mark() -> int:
+    """Now, in the unit of ``start_ticks``: a process that started later is one this test made."""
+    uptime = float(Path("/proc/uptime").read_text().split()[0])
+    return int(uptime * os.sysconf("SC_CLK_TCK"))
 
 
 def alive(pid: int) -> bool:
@@ -71,19 +91,54 @@ def wait_file(path: Path, seconds: float = 5.0) -> bool:
     return False
 
 
+def kill_recorded(path: Path, mark: int) -> None:
+    """SIGKILL each PID in ``path`` that is still alive and started after ``mark`` (so a PID that
+    went to an unrelated, older process is never signaled): exact PIDs, never a pattern."""
+    for word in path.read_text().split():
+        if not word.isdigit():
+            continue
+        pid = int(word)
+        started = start_ticks(pid)
+        if started is not None and started >= mark - 1 and alive(pid):
+            with contextlib.suppress(OSError):
+                os.kill(pid, signal.SIGKILL)
+
+
 @pytest.fixture
 def pids(tmp_path: Path) -> Iterator[Path]:
     """A file hooks append their PIDs to (``echo $$ >> $PIDS``); after the test every recorded PID
-    that is still alive gets SIGKILL: exactly those PIDs, never a pattern."""
+    that is still alive and started after the test began gets SIGKILL."""
     path = tmp_path / "pids"
     path.touch()
+    mark = start_mark()
     yield path
-    for word in path.read_text().split():
-        if word.isdigit() and alive(int(word)):
-            try:
-                os.kill(int(word), signal.SIGKILL)
-            except OSError:
-                pass
+    kill_recorded(path, mark)
+
+
+@contextlib.contextmanager
+def signal_self_when_started(
+    marker: Path, words: int, signum: int, seconds: float = 30.0
+) -> Iterator[None]:
+    """Send ``signum`` to this process once ``marker`` holds ``words`` words (the hook has started
+    and said so), never on a timer. Gives up after ``seconds`` (the test then fails on its own)."""
+    stop = threading.Event()
+
+    def watch() -> None:
+        end = time.monotonic() + seconds
+        while not stop.is_set() and time.monotonic() < end:
+            with contextlib.suppress(OSError):
+                if len(marker.read_text().split()) >= words:
+                    os.kill(os.getpid(), signum)
+                    return
+            stop.wait(0.01)
+
+    thread = threading.Thread(target=watch, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(5)
 
 
 @pytest.fixture
@@ -132,6 +187,7 @@ def tmp_entries(dirs: StateDirs) -> list[str]:
 # --- exit codes -------------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("default_signals")  # ``kill -TERM $$`` needs TERM not inherited ignored
 @pytest.mark.parametrize(
     ("cmd", "verdict", "reason"),
     [
@@ -150,6 +206,15 @@ def test_exit_status_maps_to_a_verdict(
 ) -> None:
     result = run_one(runner(dirs), entry(cmd))
     assert (result.verdict, result.reason) == (verdict, reason)
+
+
+def test_a_command_that_cannot_be_passed_to_the_shell_vetoes_instead_of_raising(
+    dirs: StateDirs,
+) -> None:
+    r = runner(dirs, pre=[entry("exit 0\0")])
+    verdict = run_pre(r, DecisionIds(()), lambda e, d: PAYLOAD)
+    assert verdict.vetoed is not None and verdict.vetoed.reason == "not_started"
+    assert tmp_entries(dirs) == []
 
 
 def test_a_hook_that_cannot_be_found_is_not_ok(dirs: StateDirs) -> None:
@@ -222,18 +287,61 @@ def test_the_hook_runs_in_its_own_process_group_and_session(
     assert pgid != os.getpgrp() and sid != os.getsid(0)
 
 
+@pytest.mark.usefixtures("default_signals")
 def test_a_signal_to_pr_comment_stops_the_hook_and_raises(dirs: StateDirs, pids: Path) -> None:
     cmd = f"echo $$ >> {pids}; sleep 60 & echo $! >> {pids}; wait"
-    timer = threading.Timer(0.5, os.kill, (os.getpid(), signal.SIGTERM))
-    timer.start()
-    try:
+    with signal_self_when_started(pids, 2, signal.SIGTERM):
         with pytest.raises(ForgectlInterrupted) as caught:
             run_one(runner(dirs), entry(cmd, timeout=30))
-    finally:
-        timer.cancel()
     assert caught.value.signum == signal.SIGTERM
     assert all(wait_dead(int(p)) for p in pids.read_text().split())
     assert tmp_entries(dirs) == []
+
+
+@pytest.mark.usefixtures("default_signals")  # a hook inherits an ignored TERM, which it cannot trap
+def test_a_timeout_sends_sigterm_to_the_whole_group_before_the_kill(
+    dirs: StateDirs, tmp_path: Path, pids: Path
+) -> None:
+    # The leader ignores TERM and only a background child traps it: the child's file proves the
+    # TERM reached the group (not the leader alone) before the SIGKILL that follows the grace.
+    termed = tmp_path / "termed"
+    ready = tmp_path / "ready"
+    child = (
+        f"trap 'echo termed > {termed}; exit 0' TERM; echo $$ >> {pids}; echo up > {ready}; "
+        "while :; do sleep 0.05; done"
+    )
+    # (the child is started before the leader's trap: an ignored signal cannot be trapped)
+    cmd = (
+        f'echo $$ >> {pids}; sh -c "{child}" & '
+        f"while [ ! -s {ready} ]; do sleep 0.02; done; trap '' TERM; "
+        "while :; do sleep 0.05; done"
+    )
+    result = run_one(runner(dirs, term_grace=1.5), entry(cmd, timeout=1.0))
+    assert result.timed_out
+    assert termed.read_text().strip() == "termed"
+    assert all(wait_dead(int(p)) for p in pids.read_text().split())
+
+
+def test_a_timeout_never_touches_a_process_of_another_session(
+    dirs: StateDirs, tmp_path: Path
+) -> None:
+    bystander = subprocess.Popen(
+        ["sleep", "60"],
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    pid, started = bystander.pid, start_ticks(bystander.pid)
+    try:
+        result = run_one(runner(dirs), entry("sleep 60", timeout=0.3))
+        assert result.timed_out
+        assert alive(pid) and start_ticks(pid) == started
+        assert bystander.poll() is None
+    finally:
+        if start_ticks(pid) == started and bystander.poll() is None:
+            bystander.kill()
+        bystander.wait(10)
 
 
 # --- input and output -------------------------------------------------------------------------
@@ -421,15 +529,12 @@ def test_post_post_failures_only_warn_and_every_hook_runs(dirs: StateDirs, tmp_p
     assert ids.from_hooks == ["late"]
 
 
+@pytest.mark.usefixtures("default_signals")
 def test_post_post_stops_starting_hooks_after_a_signal(dirs: StateDirs, tmp_path: Path) -> None:
     marker = tmp_path / "order"
     post = [entry(f"echo 0 >> {marker}; sleep 60", timeout=30), entry(f"echo 1 >> {marker}")]
-    timer = threading.Timer(0.5, os.kill, (os.getpid(), signal.SIGINT))
-    timer.start()
-    try:
+    with signal_self_when_started(marker, 1, signal.SIGINT):
         run_post(runner(dirs, post=post), DecisionIds(()), lambda e, d: PAYLOAD)
-    finally:
-        timer.cancel()
     assert marker.read_text().split() == ["0"]
 
 
@@ -438,7 +543,11 @@ def test_an_async_hook_is_detached_and_not_waited_for(
 ) -> None:
     done = tmp_path / "done"
     got = tmp_path / "got.json"
-    cmd = f"echo $$ >> {pids}; cat > {got}; sleep 1; echo ok > {done}"
+    ids = tmp_path / "ids"
+    cmd = (
+        f"echo $$ >> {pids}; ps -o pid=,pgid=,sid= -p $$ > {ids}; "
+        f"cat > {got}; sleep 1; echo ok > {done}"
+    )
     r = runner(dirs, post=[entry(cmd, async_=True)])
     started = time.monotonic()
     run_post(r, DecisionIds(()), lambda e, d: PAYLOAD)
@@ -446,7 +555,33 @@ def test_an_async_hook_is_detached_and_not_waited_for(
     assert wait_file(done, 10)
     assert json.loads(got.read_text()) == PAYLOAD
     (pid,) = (int(x) for x in pids.read_text().split())
-    assert os.getsid(pid) == pid if alive(pid) else True  # its own session, while it lives
+    hook_pid, pgid, sid = (int(x) for x in ids.read_text().split())
+    assert hook_pid == pid  # its own session and group: it leads both
+    assert pid == pgid == sid
+    assert pgid != os.getpgrp() and sid != os.getsid(0)
+
+
+@pytest.mark.parametrize("failure", ["no_shell", "payload_write", "nul_in_command"])
+def test_an_async_hook_that_cannot_start_leaves_no_directory_behind(
+    dirs: StateDirs, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    cmd = "exit 0"
+    if failure == "no_shell":
+        monkeypatch.setattr(hooks_module, "SHELL", "/nonexistent/sh")
+    elif failure == "nul_in_command":
+        cmd = "exit 0\0"
+    else:
+
+        def broken(dir_fd: int, data: bytes) -> int:
+            os.close(create_file_exclusive(dir_fd, hooks_module.PAYLOAD_FILE))  # left behind
+            raise OSError("disk full")
+
+        monkeypatch.setattr(hooks_module, "_payload_descriptor", broken)
+    r = runner(dirs, post=[entry(cmd, async_=True)])
+    assert r.spawn_detached(POST, entry(cmd, async_=True), PAYLOAD) is False
+    assert tmp_entries(dirs) == []
+    run_post(r, DecisionIds(()), lambda e, d: PAYLOAD)  # warns "hook_not_started", never raises
+    assert tmp_entries(dirs) == []
 
 
 def test_an_async_hooks_stdout_is_never_read_for_ids(dirs: StateDirs, tmp_path: Path) -> None:

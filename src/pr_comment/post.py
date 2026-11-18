@@ -52,7 +52,7 @@ import hashlib
 import os
 import signal
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import FrameType, TracebackType
 from typing import Any, Final
@@ -463,6 +463,9 @@ class _WriteHooks:
             f"pre-post hook {first.index} escalated: a human must decide; "
             "rerun with --override-escalation=pr-comment to allow"
         )
+        detail = first_line(first.stderr)
+        if detail:
+            message += f": {detail}"
         return error_outcome(
             "escalated",
             message,
@@ -473,8 +476,16 @@ class _WriteHooks:
             decision_ids=found,
         )
 
-    def post(self, lowered: Lowered, warnings: Sequence[str], *, skip: bool) -> None:
-        """Run the ``post-post`` hooks (also after a failed write). Never changes the outcome."""
+    def post(
+        self,
+        lowered: Lowered,
+        warnings: Sequence[str],
+        *,
+        skip: bool,
+        interrupted: Callable[[], bool],
+    ) -> None:
+        """Run the ``post-post`` hooks (also after a failed write). Never changes the outcome.
+        ``interrupted()`` is true once a signal was held: no further hook starts."""
         if not self._env.hooks.post:
             return
         if skip:
@@ -485,6 +496,7 @@ class _WriteHooks:
             self.runner,
             self.ids,
             lambda entry, ids: self._payload(POST, entry.with_text, ids, result),
+            interrupted=interrupted,
         )
 
 
@@ -532,7 +544,12 @@ def _call_and_lower(
     warnings = () if lowered.read is None else _warnings(prepared, lowered.read)
     # After a signal the user wants out: the ``post-post`` hooks do not start. Otherwise they run
     # whatever the write's result was, and nothing they do changes it.
-    hooks.post(lowered, warnings, skip=interrupted is not None or bool(held.received))
+    hooks.post(
+        lowered,
+        warnings,
+        skip=interrupted is not None or bool(held.received),
+        interrupted=lambda: bool(held.received),
+    )
     if lowered.failure is not None:
         outcome = lowered.failure
     else:

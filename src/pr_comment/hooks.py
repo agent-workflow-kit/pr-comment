@@ -14,7 +14,8 @@ write. This module is the only place pr-comment starts one. Rules:
   of stderr is cut to 4096 bytes. A hook that exceeds its timeout gets SIGTERM to its process group,
   a grace period and SIGKILL to the group; the group is signaled only while its leader is unreaped
   and its start time matches (``gateway._Child``). Nothing is ever signaled by pattern. The group
-  is killed when the leader ends too, so a hook cannot leave a background child behind.
+  is killed when the leader ends too, so a hook's background children do not outlive it (a hook
+  that starts a new session or group, for example with ``setsid``, escapes).
 - ``pre-post``: exit 0 continues, 13 escalates (the remaining hooks still run), anything else
   vetoes at once (later hooks do not run). A timeout, a death by signal, an unreadable status or a
   hook that cannot be started vetoes: a hook that did not answer never allows a write.
@@ -346,7 +347,9 @@ class HookRunner:
                     cwd=str(workdir.path),
                     own_group=True,
                 )
-            except (ToolMissing, GatewayInternalError):
+            except (ToolMissing, GatewayInternalError, ValueError):
+                # ``ValueError`` (``UnicodeError`` included): a command that cannot be passed to
+                # exec (a NUL, a lone surrogate). A hook that did not start never allows a write.
                 return HookResult(index, "fail", "not_started")
         finally:
             try:
@@ -356,8 +359,6 @@ class HookRunner:
         warnings: list[str] = []
         if raw.leftover:
             warnings.append("hook_left_output_open")
-        if raw.stdin_unread:
-            pass  # a hook need not read its input: not a problem
         stderr = stderr_report(raw.stderr)
         if raw.timed_out:
             return HookResult(index, "fail", "timeout", timed_out=True, stderr=stderr,
@@ -376,9 +377,12 @@ class HookRunner:
         return HookResult(index, verdict, f"exit_{code}", exit_code=code, stderr=stderr,
                           warnings=tuple(warnings))  # fmt: skip
 
-    def spawn_detached(self, hook: str, entry: HookEntry, payload: Mapping[str, Any]) -> bool:
+    def spawn_detached(
+        self, hook: str, entry: HookEntry, payload: Mapping[str, Any], index: int | None = None
+    ) -> bool:
         """Start an ``async`` hook detached; True when it was started. Never waits and never
-        reads its output; its stdin is the payload, held by an unlinked file."""
+        reads its output; its stdin is the payload, held by an unlinked file. When it cannot be
+        started its working directory is removed again (a removal failure is a warning)."""
         dirs = self._dirs
         if dirs is None:
             return False
@@ -388,6 +392,7 @@ class HookRunner:
             return False
         env = hook_environment(self._environ, self.hooks.deny, hook=hook, pr=self._pr)
         stdin_fd = -1
+        proc: subprocess.Popen[bytes] | None = None
         try:
             stdin_fd = _payload_descriptor(workdir.fd, encode_payload(payload))
             proc = subprocess.Popen(
@@ -403,14 +408,21 @@ class HookRunner:
             )
         except (OSError, ValueError):
             return False
+        else:
+            _DETACHED.append(proc)
+            return True
         finally:
             if stdin_fd >= 0:
                 with contextlib.suppress(OSError):
                     os.close(stdin_fd)
-            with contextlib.suppress(OSError):
-                os.close(workdir.fd)
-        _DETACHED.append(proc)
-        return True
+            if proc is not None:
+                with contextlib.suppress(OSError):
+                    os.close(workdir.fd)  # the hook owns its directory from here on
+            else:
+                try:
+                    workdir.remove(dirs.tmp_fd)  # closes the descriptor, once
+                except StateUnsafeError:
+                    self.warn(hook, index, "hook_directory_not_removed")
 
 
 def _payload_descriptor(dir_fd: int, data: bytes) -> int:
@@ -481,7 +493,7 @@ def run_post(
             continue
         payload = payload_for_entry(entry, ids.all())
         if entry.async_:
-            if not runner.spawn_detached(POST, entry, payload):
+            if not runner.spawn_detached(POST, entry, payload, index):
                 runner.warn(POST, index, "hook_not_started")
             continue
         try:

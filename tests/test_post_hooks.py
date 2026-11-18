@@ -14,16 +14,16 @@ import json
 import os
 import signal
 import time
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from pr_comment import hooks as hooks_module
 from tests.forgectl_harness import FakeForgectl, fail, ok
 from tests.posting import PR, A, finding
 from tests.schema_harness import validate
-from tests.test_hooks import alive
+from tests.test_hooks import alive, pids, signal_self_when_started  # noqa: F401  (pids: fixture)
 from tests.test_review_post import (  # noqa: F401  (cli and state_home are fixtures)
     ACTOR,
     Run,
@@ -40,19 +40,6 @@ from tests.test_review_post import (  # noqa: F401  (cli and state_home are fixt
     show,
     state_home,
 )
-
-
-@pytest.fixture
-def pids(tmp_path: Path) -> Iterator[Path]:
-    path = tmp_path / "pids"
-    path.touch()
-    yield path
-    for word in path.read_text().split():
-        if word.isdigit() and alive(int(word)):
-            try:
-                os.kill(int(word), signal.SIGKILL)
-            except OSError:
-                pass
 
 
 class Hooks:
@@ -252,6 +239,7 @@ def test_an_escalation_runs_the_rest_then_exits_13_with_the_first_stderr(
         {"hook": "pre-post", "index": 2},
     ]
     assert error["hook"] == "pre-post" and error["hook_stderr"] == "first\n"
+    assert error["message"].endswith(": first") and "second" not in error["message"]
     assert hooks.order() == ["e1", "ok1", "e2"]
     assert forgectl.writes() == [] and audit(state_home) == []
     assert [e["event"] for e in log(state_home) if e["event"] == "escalated"] == ["escalated"]
@@ -379,6 +367,55 @@ def test_a_hook_id_never_satisfies_the_approval_guard(
     )  # fmt: skip
     assert code == 20 and doc["error"]["reason"] == "auto_approve_disabled"
     assert forgectl.writes() == [] and not (tmp_path / "pids").read_text().strip()
+
+
+def test_a_hook_id_never_stands_in_for_the_callers_decision_id(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, hooks: Hooks, state_home: Path
+) -> None:
+    # automatic approval is allowed here, so the refusal can only be the missing decision id
+    config = tmp_path / "config.yaml"
+    config.write_text("allow_auto_approve: true\n", encoding="utf-8")
+    config.chmod(0o600)
+    gate = hooks.script('echo \'{"decision_id": "gate:allow"}\'')
+    forgectl.script(show())
+    code, doc, _ = cli(
+        "approve", PR, "--expected-head", A, "--expected-base", "main", "--json",
+        "--actor", "auto:bot", "--yes", "--config", str(config), "--hook", f"pre-post={gate}",
+    )  # fmt: skip
+    assert code == 20 and doc["error"]["reason"] == "auto_approve_disabled"
+    assert "--decision-id" in doc["error"]["message"]
+    assert forgectl.writes() == [] and not (tmp_path / "pids").read_text().strip()
+
+
+def test_an_escalating_hooks_id_is_neither_forwarded_nor_recorded(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, hooks: Hooks, state_home: Path
+) -> None:
+    esc = hooks.script('echo \'{"decision_id": "esc:1"}\'; exit 13')
+    good = hooks.script('echo \'{"decision_id": "good:1"}\'')
+    code, doc, _ = review_run(
+        cli,
+        forgectl,
+        tmp_path,
+        "--override-escalation=pr-comment",
+        "--hook", f"pre-post={esc}",
+        "--hook", f"pre-post={good}",
+    )  # fmt: skip
+    assert code == 0, doc
+    assert flag(reviews(forgectl)[-1], "--decision-id") == ["good:1"]
+    assert audit(state_home)[1]["hook_decision_id"] == ["good:1"]
+
+
+def test_a_veto_message_carries_only_the_first_stderr_line_sanitized(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, hooks: Hooks
+) -> None:
+    veto = hooks.script("printf 'first \\033[31mred\\033[0m\\007 end\\nsecond line\\n' >&2; exit 3")
+    code, doc, _ = blocked_run(cli, forgectl, tmp_path, "--hook", f"pre-post={veto}")
+    assert code == 11
+    message = doc["error"]["message"]
+    assert "first" in message and "second" not in message
+    assert not any(ord(c) < 0x20 or ord(c) == 0x7F for c in message)
+    assert "<U+001B>" in message
+    assert "second line" in doc["error"]["hook_stderr"]  # the field itself is the full stderr
 
 
 def test_decision_ids_are_capped_at_32_in_all(
@@ -592,24 +629,115 @@ def test_a_comment_payload_has_null_event_anchor_and_thread_fields(
     assert [c.subcommand for c in calls_of(forgectl)] == ["show", "comment", "comment"]
 
 
+# --- reply and approve: the null fields of the payload ----------------------------------------
+
+
+def with_text_config(tmp_path: Path, pre: str, post: str) -> Path:
+    config = tmp_path / "hooks-config.yaml"
+    config.write_text(
+        f"hooks:\n  pre-post:\n    - cmd: {pre}\n      with_text: true\n"
+        f"  post-post:\n    - cmd: {post}\n      with_text: true\n",
+        encoding="utf-8",
+    )
+    return config
+
+
+def test_a_reply_payload_has_to_set_and_null_event_anchor_and_thread_fields(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, hooks: Hooks
+) -> None:
+    from tests import forgectl_harness as h
+
+    body = tmp_path / "body.txt"
+    body.write_text("thanks, fixed", encoding="utf-8")
+    config = with_text_config(tmp_path, hooks.recorder("pre"), hooks.recorder("post"))
+    forgectl.script(
+        show(),
+        ok("reply", h.post_doc("reply", dry_run=True, threaded=False)),
+        ok("reply", h.post_doc("reply", ids=["gh:ic:IC_1"], threaded=False)),
+    )
+    code, doc, _ = cli(
+        "reply", PR, "--to", "gh:ic:IC_9", "--body-file", str(body), "--json", "--actor", ACTOR,
+        "--yes", "--config", str(config),
+    )  # fmt: skip
+    assert code == 0, doc
+    for name, schema in (("pre", "pre-post"), ("post", "post-post")):
+        payload = hooks.payload(name)
+        validate(f"pr-comment/hooks/{schema}.json", payload)
+        assert payload["action"] == "reply" and payload["to"] == "gh:ic:IC_9"
+        assert payload["event"] is None and payload["anchor_head"] is None
+        assert payload["thread_id"] is None and payload["thread_author_is_self"] is None
+        assert payload["thread_path"] is None and payload["thread_line"] is None
+        assert "thanks, fixed" in payload["bodies"][0]["text"]
+
+
+def test_an_approve_payload_has_the_event_set_and_a_null_anchor(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, hooks: Hooks
+) -> None:
+    from tests import forgectl_harness as h
+
+    config = with_text_config(tmp_path, hooks.recorder("pre"), hooks.recorder("post"))
+    forgectl.script(
+        show(),
+        ok("approve", h.post_doc("approve", dry_run=True)),
+        ok("approve", h.post_doc("approve", ids=["gh:r:R_1"], review_id="gh:r:R_1")),
+    )
+    code, doc, _ = cli(
+        "approve", PR, "--expected-head", A, "--expected-base", "main", "--json", "--actor",
+        ACTOR, "--yes", "--config", str(config),
+    )  # fmt: skip
+    assert code == 0, doc
+    for name, schema in (("pre", "pre-post"), ("post", "post-post")):
+        payload = hooks.payload(name)
+        validate(f"pr-comment/hooks/{schema}.json", payload)
+        assert payload["action"] == "approve" and payload["event"] == "approve"
+        assert payload["anchor_head"] is None and payload["to"] is None
+        assert payload["thread_id"] is None and payload["head_sha"] == A
+
+
 # --- signals -----------------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("default_signals")
 def test_a_signal_during_a_pre_post_hook_ends_the_run_before_any_write(
     cli: Run, forgectl: FakeForgectl, tmp_path: Path, hooks: Hooks, state_home: Path, pids: Path
 ) -> None:
-    import threading
-
     slow = hooks.script("sleep 60 & echo $! >> " + str(pids) + "; wait")
-    timer = threading.Timer(1.0, os.kill, (os.getpid(), signal.SIGTERM))
-    timer.start()
-    try:
+    with signal_self_when_started(pids, 2, signal.SIGTERM):
         code, doc, _ = blocked_run(cli, forgectl, tmp_path, "--hook", f"pre-post={slow}")
-    finally:
-        timer.cancel()
     assert code == 128 + signal.SIGTERM and doc is None
     assert forgectl.writes() == [] and audit(state_home) == []
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline and any(alive(int(p)) for p in pids.read_text().split()):
         time.sleep(0.05)
     assert not any(alive(int(p)) for p in pids.read_text().split())
+
+
+@pytest.mark.usefixtures("default_signals")
+def test_a_signal_between_two_post_post_hooks_stops_the_second_from_starting(
+    cli: Run,
+    forgectl: FakeForgectl,
+    tmp_path: Path,
+    hooks: Hooks,
+    state_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = hooks.recorder("first")
+    second = hooks.recorder("second")
+    original = hooks_module.HookRunner.run_sync
+
+    def run_then_signal(self: Any, hook: str, index: int, *rest: Any) -> Any:
+        result = original(self, hook, index, *rest)
+        if index == 0:  # the hook has ended; the signal lands before the next one starts
+            os.kill(os.getpid(), signal.SIGTERM)
+        return result
+
+    monkeypatch.setattr(hooks_module.HookRunner, "run_sync", run_then_signal)
+    code, doc, _ = review_run(
+        cli, forgectl, tmp_path, "--hook", f"post-post={first}", "--hook", f"post-post={second}"
+    )
+    assert hooks.order() == ["first"] and not hooks.ran("second")
+    assert any(
+        e["event"] == "warning" and e["details"]["reason"] == "hook_skipped_after_signal"
+        for e in log(state_home)
+    ), (code, doc)
+    assert len(forgectl.writes()) == 1 and audit(state_home)[1]["result"] == "done"
