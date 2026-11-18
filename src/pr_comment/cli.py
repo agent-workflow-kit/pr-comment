@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, NoReturn, cast
 
 from . import __version__, grammars
+from .draft import run_check
 from .errors import sanitize
 from .grammars import MAX_DECISION_IDS, MAX_THREADS
 from .output import LOG, PROG, Outcome, check_outcome, error_outcome, internal_outcome, render
@@ -411,21 +412,27 @@ def _not_implemented(args: argparse.Namespace) -> Outcome:
 
 # One handler per command path. Later issues replace the entries with real handlers.
 # TODO(#29): review; TODO(#30): comment and reply; TODO(#31): approve and review --approve;
-# TODO(#35): resolve and unresolve; TODO(#15): draft check; TODO(#37): draft new;
-# TODO(#38): export.
+# TODO(#35): resolve and unresolve; TODO(#37): draft new; TODO(#38): export.
+def _draft_check(args: argparse.Namespace) -> Outcome:
+    # TODO(#5): `-` with a TTY stdin exits 2 usage (the TTY rule is not in this base).
+    return run_check(args.path)
+
+
 HANDLERS: dict[str, Handler] = {
-    key: _not_implemented
-    for key in (
-        "review",
-        "comment",
-        "reply",
-        "approve",
-        "resolve",
-        "unresolve",
-        "draft check",
-        "draft new",
-        "export",
-    )
+    **{
+        key: _not_implemented
+        for key in (
+            "review",
+            "comment",
+            "reply",
+            "approve",
+            "resolve",
+            "unresolve",
+            "draft new",
+            "export",
+        )
+    },
+    "draft check": _draft_check,
 }
 
 _VALUE_FLAGS = frozenset(flag for spec in _GLOBAL_FLAGS if spec.takes_value for flag in spec.flags)

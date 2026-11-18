@@ -1,0 +1,350 @@
+"""``pr-comment draft check``: offline draft validation and its result document.
+
+The draft is untrusted: no result, human line or error may echo its content.
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import os
+import subprocess
+import sys
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from pr_comment import cli
+from pr_comment.cli import main
+from tests.schema_harness import validate
+from tests.test_draft import CANARY, DRAFT_ID, good
+
+Doc = dict[str, Any]
+
+
+def write(tmp_path: Path, doc: object, name: str = "draft.json") -> str:
+    path = tmp_path / name
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    return str(path)
+
+
+def run(capsys: pytest.CaptureFixture[str], argv: list[str]) -> tuple[int, Doc, str]:
+    code = main([*argv, "--json"])
+    captured = capsys.readouterr()
+    return code, json.loads(captured.out), captured.err
+
+
+def test_valid_draft_exits_0_with_the_result_document(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, golden_json: Callable[[str, Any], None]
+) -> None:
+    code, doc, _ = run(capsys, ["draft", "check", write(tmp_path, good())])
+    assert code == 0
+    assert doc == {
+        "valid": True,
+        "schema_version": 1,
+        "draft_id": DRAFT_ID,
+        "findings": 3,
+        "errors": [],
+    }
+    validate("pr-comment/cli/draft-check.json", doc)
+    golden_json("draft/check-valid.json", doc)
+
+
+def test_schema_error_exits_2_with_pointer_and_null_kind(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, golden_json: Callable[[str, Any], None]
+) -> None:
+    bad = good()
+    bad["findings"][0]["line"] = 0
+    code, doc, _ = run(capsys, ["draft", "check", write(tmp_path, bad)])
+    assert code == 2
+    assert doc["valid"] is False
+    assert doc["errors"] == [
+        {
+            "pointer": "/findings/0/line",
+            "message": "must be an integer of at least 1, or null",
+            "kind": None,
+        }
+    ]
+    assert doc["findings"] == 3
+    validate("pr-comment/cli/draft-check.json", doc)
+    golden_json("draft/check-schema-error.json", doc)
+
+
+def test_invalid_text_error_carries_the_kind(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, golden_json: Callable[[str, Any], None]
+) -> None:
+    bad = good()
+    bad["findings"][0]["body"] = f"{CANARY}\x00"
+    bad["body"] = "```suggestion\nx\n```"
+    code, doc, err = run(capsys, ["draft", "check", write(tmp_path, bad)])
+    assert code == 2
+    assert [(e["pointer"], e["kind"]) for e in doc["errors"]] == [
+        ("/findings/0/body", "control_character"),
+        ("/body", "suggestion_fence"),
+    ]
+    assert CANARY not in json.dumps(doc) + err
+    validate("pr-comment/cli/draft-check.json", doc)
+    golden_json("draft/check-invalid-text.json", doc)
+
+
+def test_field_with_control_character_is_not_also_fence_checked(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    bad = good()
+    bad["body"] = "```suggestion\nx\n```\x00"
+    _, doc, _ = run(capsys, ["draft", "check", write(tmp_path, bad)])
+    assert [e["kind"] for e in doc["errors"]] == ["control_character"]
+
+
+def test_schema_and_text_errors_are_reported_together(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    bad = good()
+    bad["event"] = "nope"
+    bad["body"] = "a\x00"
+    _, doc, _ = run(capsys, ["draft", "check", write(tmp_path, bad)])
+    assert [(e["pointer"], e["kind"]) for e in doc["errors"]] == [
+        ("/event", None),
+        ("/body", "control_character"),
+    ]
+    validate("pr-comment/cli/draft-check.json", doc)
+
+
+def test_unreadable_file_has_null_metadata(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, golden_json: Callable[[str, Any], None]
+) -> None:
+    code, doc, err = run(capsys, ["draft", "check", str(tmp_path / "missing.json")])
+    assert code == 2
+    assert doc == {
+        "valid": False,
+        "schema_version": None,
+        "draft_id": None,
+        "findings": None,
+        "errors": [{"pointer": "", "message": "draft file cannot be opened", "kind": None}],
+    }
+    assert "missing.json" not in json.dumps(doc) + err
+    validate("pr-comment/cli/draft-check.json", doc)
+    golden_json("draft/check-unreadable.json", doc)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"",
+        b"not json",
+        b"\xff\xfe",
+        b"\xef\xbb\xbf{}",
+        b'{"a": 1, "a": 2}',
+        b"[1, 2]",
+        b"NaN",
+        b"[" * 100000,
+    ],
+)
+def test_malformed_input_is_one_root_error(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, raw: bytes
+) -> None:
+    path = tmp_path / "d.json"
+    path.write_bytes(raw)
+    code, doc, _ = run(capsys, ["draft", "check", str(path)])
+    assert code == 2
+    assert doc["valid"] is False
+    assert doc["errors"]
+    assert doc["schema_version"] is None
+    assert doc["draft_id"] is None
+    assert doc["findings"] is None
+    validate("pr-comment/cli/draft-check.json", doc)
+
+
+def test_unsupported_version_reports_the_version(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    bad = good()
+    bad["schema_version"] = 2
+    code, doc, _ = run(capsys, ["draft", "check", write(tmp_path, bad)])
+    assert code == 2
+    assert doc["schema_version"] == 2
+    assert doc["errors"][0]["pointer"] == "/schema_version"
+    validate("pr-comment/cli/draft-check.json", doc)
+
+
+def test_untrusted_metadata_is_nulled_not_echoed(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    bad = good()
+    bad["draft_id"] = f"{CANARY}-not-an-id"
+    bad["schema_version"] = "1"
+    bad["findings"] = {"x": 1}
+    _, doc, err = run(capsys, ["draft", "check", write(tmp_path, bad)])
+    assert doc["draft_id"] is None
+    assert doc["schema_version"] is None
+    assert doc["findings"] is None
+    assert CANARY not in json.dumps(doc) + err
+    validate("pr-comment/cli/draft-check.json", doc)
+
+
+def test_boolean_schema_version_is_not_an_integer(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    bad = good()
+    bad["schema_version"] = True
+    _, doc, _ = run(capsys, ["draft", "check", write(tmp_path, bad)])
+    assert doc["schema_version"] is None
+
+
+@pytest.mark.parametrize("base_ref", ["refs/heads/x", "refs", "@", ".hidden/x", "a/.b", "a..b"])
+def test_base_ref_uses_the_branch_grammar(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, base_ref: str
+) -> None:
+    bad = good()
+    bad["anchor"]["base_ref"] = base_ref
+    code, doc, _ = run(capsys, ["draft", "check", write(tmp_path, bad)])
+    assert code == 2
+    assert [e["pointer"] for e in doc["errors"]] == ["/anchor/base_ref"]
+
+
+def test_hostile_draft_never_echoes_content(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    bad = good()
+    bad["pr"] = CANARY
+    bad["findings"][0]["id"] = f"{CANARY} bad id"
+    bad["findings"][1]["path"] = f"{CANARY}\n"
+    bad["findings"][2]["title"] = f"{CANARY}‮"
+    bad["extra"] = CANARY
+    bad["meta"] = CANARY
+    code = main(["draft", "check", write(tmp_path, bad), "--json"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert CANARY not in captured.out + captured.err
+
+
+def test_many_errors_are_capped(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    bad = good()
+    bad["findings"] = [{"id": f"f{i}", "path": "a", "line": 1, "body": "x\x00"} for i in range(300)]
+    _, doc, _ = run(capsys, ["draft", "check", write(tmp_path, bad)])
+    assert len(doc["errors"]) <= 101
+    assert doc["errors"][-1]["message"] == "further errors omitted"
+    assert doc["findings"] == 300
+    validate("pr-comment/cli/draft-check.json", doc)
+
+
+def test_stdin_input(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    class Stdin:
+        buffer = io.BytesIO(json.dumps(good()).encode())
+
+    monkeypatch.setattr(sys, "stdin", Stdin)
+    code, doc, _ = run(capsys, ["draft", "check", "-"])
+    assert code == 0
+    assert doc["valid"] is True
+
+
+def test_stdin_invalid_draft_has_a_pointer(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bad = good()
+    bad["findings"][0]["id"] = bad["findings"][1]["id"]
+
+    class Stdin:
+        buffer = io.BytesIO(json.dumps(bad).encode())
+
+    monkeypatch.setattr(sys, "stdin", Stdin)
+    code, doc, _ = run(capsys, ["draft", "check", "-"])
+    assert code == 2
+    assert doc["errors"][0]["pointer"] == "/findings/1/id"
+    assert doc["errors"][0]["kind"] is None
+
+
+def test_meta_passes_through_without_error(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    doc = good()
+    doc["meta"] = {"review_run": {"x": [1, 2, {"y": None}]}}
+    code, result, _ = run(capsys, ["draft", "check", write(tmp_path, doc)])
+    assert code == 0
+    assert result["valid"] is True
+
+
+# --- human output ----------------------------------------------------------------------------
+
+
+def test_human_output_valid(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    code = main(["draft", "check", write(tmp_path, good())])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert captured.out == ""
+    assert "valid" in captured.err
+    assert "3 findings" in captured.err
+
+
+def test_human_output_invalid_lists_pointer_and_message(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    bad = good()
+    bad["findings"][0]["body"] = f"{CANARY}\x00"
+    code = main(["draft", "check", write(tmp_path, bad)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "/findings/0/body" in captured.err
+    assert "control character" in captured.err
+    assert CANARY not in captured.err
+
+
+def test_quiet_drops_the_human_lines(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    code = main(["draft", "check", write(tmp_path, good()), "--quiet"])
+    assert code == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_handler_is_registered() -> None:
+    assert cli.HANDLERS["draft check"].__name__ != "_not_implemented"
+
+
+# --- offline ---------------------------------------------------------------------------------
+
+
+def test_draft_check_starts_no_forgectl_and_writes_nothing(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    xdg = tmp_path / "xdg"
+    fake = tmp_path / "bin"
+    for directory in (home, xdg, fake):
+        directory.mkdir()
+    marker = tmp_path / "forgectl-ran"
+    stub = fake / "forgectl"
+    stub.write_text(f"#!/bin/sh\ntouch {marker}\nexit 1\n", encoding="utf-8")
+    stub.chmod(0o755)
+    draft = tmp_path / "draft.json"
+    draft.write_text(json.dumps(good()), encoding="utf-8")
+    env = {
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(xdg),
+        "XDG_STATE_HOME": str(xdg),
+        "XDG_DATA_HOME": str(xdg),
+        "PATH": f"{fake}{os.pathsep}{os.environ.get('PATH', '')}",
+    }
+    result = subprocess.run(
+        [sys.executable, "-m", "pr_comment", "draft", "check", str(draft), "--json"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["valid"] is True
+    assert not marker.exists()
+    assert list(home.iterdir()) == []
+    assert list(xdg.iterdir()) == []
+
+
+def test_draft_check_does_not_use_the_gateway(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pr_comment import gateway
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("gateway used")
+
+    monkeypatch.setattr(gateway, "run", boom)
+    assert main(["draft", "check", write(tmp_path, good()), "--json"]) == 0
