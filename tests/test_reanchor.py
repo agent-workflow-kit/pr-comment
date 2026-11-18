@@ -404,29 +404,34 @@ def compare(status: str, diff: str | None, to_sha: str = B) -> Doc:
 
 def test_compare_ahead_builds_a_mapper() -> None:
     diff = hunk_diff("a.py", "@@ -2,0 +3 @@\n+n\n")
-    mapper = mapper_from_compare(compare("ahead", diff), head_sha=B)
+    mapper = mapper_from_compare(compare("ahead", diff), head_sha=B, from_sha=A)
     assert mapper.map_right("a.py", 5).line == 6  # type: ignore[union-attr]
 
 
 def test_compare_identical_keeps_lines() -> None:
-    mapper = mapper_from_compare(compare("identical", ""), head_sha=B)
+    mapper = mapper_from_compare(compare("identical", ""), head_sha=B, from_sha=A)
     assert mapper.available
     assert mapper.map_right("a.py", 5).line == 5  # type: ignore[union-attr]
 
 
 @pytest.mark.parametrize("status", ["behind", "diverged", "unavailable"])
 def test_compare_without_a_diff_is_unavailable(status: str) -> None:
-    mapper = mapper_from_compare(compare(status, None), head_sha=B)
+    mapper = mapper_from_compare(compare(status, None), head_sha=B, from_sha=A)
     assert not mapper.available
 
 
 def test_too_large_compare_is_unavailable() -> None:
-    assert not mapper_from_compare(None, head_sha=B).available
+    assert not mapper_from_compare(None, head_sha=B, from_sha=A).available
+
+
+def test_compare_requires_from_sha() -> None:
+    with pytest.raises(TypeError):
+        mapper_from_compare(compare("ahead", ""), head_sha=B)  # type: ignore[call-arg]  # pyright: ignore
 
 
 def test_force_push_moves_every_right_side_finding() -> None:
     draft = make_draft([finding("f1", "a.py", 3), finding("f2", "b.py", 4, start=2)])
-    mapper = mapper_from_compare(compare("diverged", None), head_sha=B)
+    mapper = mapper_from_compare(compare("diverged", None), head_sha=B, from_sha=A)
     out = reanchor(
         draft, head_sha=B, base_ref="main", base_sha=C, merge_base_sha=None, mapper=mapper
     )
@@ -441,7 +446,7 @@ def error_document(outcome: Any) -> Doc:
 
 def test_compare_to_sha_must_equal_b() -> None:
     with pytest.raises(StaleHeadError) as info:
-        mapper_from_compare(compare("ahead", "", to_sha=C), head_sha=B)
+        mapper_from_compare(compare("ahead", "", to_sha=C), head_sha=B, from_sha=A)
     assert info.value.head_sha == C
     outcome = info.value.outcome()
     assert outcome.exit_code == 20
@@ -451,15 +456,16 @@ def test_compare_to_sha_must_equal_b() -> None:
 
 
 def test_compare_to_sha_is_lowercased_before_the_check() -> None:
-    assert mapper_from_compare(compare("identical", "", to_sha=B.upper()), head_sha=B).available
+    shape = compare("identical", "", to_sha=B.upper())
+    assert mapper_from_compare(shape, head_sha=B, from_sha=A).available
     with pytest.raises(StaleHeadError) as info:
-        mapper_from_compare(compare("ahead", "", to_sha=C.upper()), head_sha=B)
+        mapper_from_compare(compare("ahead", "", to_sha=C.upper()), head_sha=B, from_sha=A)
     assert error_document(info.value.outcome())["details"] == {"head_sha": C}
 
 
 def test_compare_to_sha_is_checked_even_without_a_diff() -> None:
     with pytest.raises(StaleHeadError):
-        mapper_from_compare(compare("diverged", None, to_sha=C), head_sha=B)
+        mapper_from_compare(compare("diverged", None, to_sha=C), head_sha=B, from_sha=A)
 
 
 @pytest.mark.parametrize(
@@ -480,7 +486,7 @@ def test_compare_to_sha_is_checked_even_without_a_diff() -> None:
 )
 def test_malformed_compare_fails_closed_with_a_contract_error(shape: Any) -> None:
     with pytest.raises(CompareContractError) as info:
-        mapper_from_compare(shape, head_sha=B)
+        mapper_from_compare(shape, head_sha=B, from_sha=A)
     outcome = info.value.outcome()
     assert outcome.exit_code == 12
     error = error_document(outcome)

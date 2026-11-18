@@ -81,15 +81,15 @@ def _sha_field(compare: Mapping[str, Any], name: str) -> str:
 
 
 def mapper_from_compare(
-    compare: Mapping[str, Any] | None, *, head_sha: str, from_sha: str | None = None
+    compare: Mapping[str, Any] | None, *, head_sha: str, from_sha: str
 ) -> DiffMapper:
     """The right-side mapper for a parsed ``forgectl compare`` result (step 1).
 
     ``compare`` is ``None`` when forgectl exited 20 ``too_large``. A result that is not shaped as
     the schema says (not a mapping, a ``to_sha`` that is not 40 hex characters, a ``diff`` that is
-    neither text nor null, or, when ``from_sha`` (A) is given, a ``from_sha`` that is not A) raises
-    ``CompareContractError``, failing closed. Otherwise its ``to_sha`` (lowercased) must equal
-    ``head_sha`` (B), else ``StaleHeadError``. ``diff: null`` (``behind``, ``diverged``,
+    neither text nor null, or a ``from_sha`` that is not the required ``from_sha`` argument (A))
+    raises ``CompareContractError``, failing closed. Otherwise its ``to_sha`` (lowercased) must
+    equal ``head_sha`` (B), else ``StaleHeadError``. ``diff: null`` (``behind``, ``diverged``,
     ``unavailable``), ``too_large`` and a diff that cannot be read unambiguously give an
     unavailable mapper, which moves every right-side finding (``diff_unavailable``). An
     ``identical`` compare has an empty diff.
@@ -99,7 +99,7 @@ def mapper_from_compare(
     if not isinstance(compare, Mapping):  # pyright: ignore[reportUnnecessaryIsInstance]
         raise CompareContractError("compare")
     to_sha = _sha_field(compare, "to_sha")
-    if from_sha is not None and _sha_field(compare, "from_sha") != from_sha:
+    if _sha_field(compare, "from_sha") != from_sha:
         raise CompareContractError("from_sha")
     diff = compare.get("diff")
     if diff is not None and not isinstance(diff, str):
