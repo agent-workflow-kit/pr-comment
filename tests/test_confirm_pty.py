@@ -77,6 +77,14 @@ class Result:
         return text[: text.index(PROMPT)] if PROMPT in text else text
 
 
+def _prompt_is_up(terminal: bytes) -> bool:
+    """True when the real prompt is on the terminal: ``Post? [y/N] `` flush left. A draft's own text
+    can hold that string, but the dialog shows it behind its ``  | `` margin, never at the start
+    of a line; answering on such a match is early and the child discards the typed answer."""
+    lines = terminal.replace(b"\r\n", b"\n").split(b"\n")
+    return any(line.startswith(PROMPT.encode()) for line in lines)
+
+
 def run_cli(
     tmp_path: Path,
     forgectl: FakeForgectl,
@@ -162,7 +170,7 @@ def run_cli(
                 time.sleep(1.0)  # the child is blocked writing a dialog bigger than the pty holds
                 os.write(master, typeahead_midway)
                 typeahead_midway = b""
-            if not acted and PROMPT.encode() in terminal:
+            if not acted and _prompt_is_up(terminal):
                 acted = True
                 if send is not None:
                     os.kill(pid, send)

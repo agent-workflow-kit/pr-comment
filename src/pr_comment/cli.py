@@ -7,18 +7,16 @@ errors exit 2 ``usage``; a command whose handler is not written yet exits 1 ``in
 from __future__ import annotations
 
 import argparse
-import getpass
 import importlib.metadata
 import logging
 import os
-import re
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, NoReturn, cast
 
 from . import __version__, grammars
-from .actor import ActorError, resolve_run, stream_is_tty, with_me_name
+from .actor import NAME_RE, ActorError, os_username, resolve_run, stream_is_tty, with_me_name
 from .audit import AuditTrail, AuditUnavailableError, audit_unavailable_error
 from .config import ConfigError, load_config
 from .confirm import Interrupted, confirm
@@ -440,18 +438,13 @@ def _not_implemented(args: argparse.Namespace) -> Outcome:
     return error_outcome("internal", f"{args.command} is not implemented yet")
 
 
-_ME_NAME = re.compile(r"[A-Za-z0-9._@-]{1,64}")
-
-
 def _me_name(loaded: Any) -> str:
-    """``me.name`` or the OS user name; ``unknown`` when it does not match the name grammar."""
+    """``me.name`` or the OS user name from the password database (never from ``USER`` or
+    ``LOGNAME``); ``unknown`` when it does not match the name grammar."""
     name: str | None = loaded.config.me.name
     if name is None:
-        try:
-            name = getpass.getuser()
-        except (KeyError, OSError):
-            name = None
-    return name if name is not None and _ME_NAME.fullmatch(name) else "unknown"
+        name = os_username()
+    return name if name is not None and NAME_RE.fullmatch(name) else "unknown"
 
 
 def _actor(args: argparse.Namespace) -> str:
@@ -573,15 +566,20 @@ def _confirm_and_post(
     is ever posted without the guard.
     """
     request = prepared.request
+    pr = prepared.plan.pr
     if request.command == "review" and request.approve:
-        return error_outcome("internal", "review --approve is not implemented yet")
+        stub = error_outcome("internal", "review --approve is not implemented yet")
+        log_failure(session.log, session.attempt_id, pr, stub)
+        return stub
     refused = _confirmed(args, prepared, session)
     if refused is not None:
         return refused
     if request.command != "review":
-        return error_outcome(
+        stub = error_outcome(
             "internal", "posting is not implemented yet: the plan passed its pre-check"
         )
+        log_failure(session.log, session.attempt_id, pr, stub)
+        return stub
     assert session.trail is not None  # opened in step 1, before the first read
     env = PostEnv(
         gateway=gateway,

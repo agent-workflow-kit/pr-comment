@@ -196,7 +196,7 @@ def test_a_gitlab_review_says_the_body_thread_was_not_resolved(tmp_path: Path) -
         assert outcome.document is not None
         assert outcome.document["body_thread_resolved"] is False
         assert outcome.document["warnings"] == ["body_thread_unresolved"]
-        assert [r["result"] for r in gl.audit()] == ["attempted", "done"]
+        assert [r["result"] for r in gl.audit()] == ["attempted", "partial"]
     finally:
         gl.close()
 

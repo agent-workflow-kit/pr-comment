@@ -398,8 +398,9 @@ _M = TypeVar("_M", bound=_Model)
 # --- a write's result ----------------------------------------------------------------------------
 
 _WARNING_RE: Final = re.compile(r"[a-z][a-z0-9_]*")
-MAX_WARNINGS: Final = 64
-Warning_ = Annotated[str, _fullmatch(_WARNING_RE, "warning", 64)]
+# forgectl's schema (cli/review.json) bounds neither the number of warnings nor their length, so
+# a landed answer is never refused for either (the output cap of the gateway is the only limit).
+Warning_ = Annotated[str, _fullmatch(_WARNING_RE, "warning", 32 * 1024 * 1024)]
 PostId = Annotated[str, _grammar(check_reply_target)]
 
 
@@ -415,7 +416,7 @@ class PostRead(_Model):
     follow_up_done: bool
     neutralized_lines: Count
     markers_removed: Count
-    warnings: Annotated[list[Warning_], Field(max_length=MAX_WARNINGS)]
+    warnings: list[Warning_]
     head_verified: bool | None
     dry_run: bool
 

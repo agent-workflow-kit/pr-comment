@@ -16,7 +16,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 # Same grammar as the actor name in the --actor grammar and `me.name`.
-_NAME_RE = re.compile(r"[A-Za-z0-9._@-]{1,64}")
+NAME_RE = re.compile(r"[A-Za-z0-9._@-]{1,64}")
 UNKNOWN_HUMAN = "human:unknown"
 DEFAULT_AUTO = "auto:unknown"
 
@@ -79,7 +79,7 @@ def _human_default(os_user: Callable[[], str | None]) -> str:
         name = os_user()
     except (KeyError, OSError):
         return UNKNOWN_HUMAN
-    if not isinstance(name, str) or not _NAME_RE.fullmatch(name):
+    if not isinstance(name, str) or not NAME_RE.fullmatch(name):
         return UNKNOWN_HUMAN
     return f"human:{name}"
 
@@ -92,7 +92,7 @@ def with_me_name(run: RunContext, me_name: str | None) -> RunContext:
     name leaves the OS-username default in place. The flag rules do not depend on the name, so
     the run is first resolved (and validated) without the config and updated once it is read.
     """
-    if run.actor_source != "tty" or me_name is None or not _NAME_RE.fullmatch(me_name):
+    if run.actor_source != "tty" or me_name is None or not NAME_RE.fullmatch(me_name):
         return run
     return replace(run, actor=f"human:{me_name}")
 

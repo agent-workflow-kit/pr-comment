@@ -18,6 +18,12 @@ Rules that keep a post from happening twice or being lost:
   ``landed``/``retry`` (never a retry of something that landed).
 - A signal during the write ends the run as ``outcome_unknown`` (exit 12), after the outcome record
   holds forgectl's own answer when it had one (``ForgectlInterrupted.result``).
+- SIGINT, SIGTERM and SIGHUP are held from just before the ``attempted`` record until the outcome
+  record is appended (``_DeferredSignals``), so a signal never leaves a landed write with only an
+  ``attempted`` record. A signal held that way does not change the run: forgectl's answer is
+  recorded and the run ends with it (a signal during the forgectl call is the gateway's).
+- An unexpected error after ``attempted`` (the call, lowering, the result document) is recorded as
+  ``outcome_unknown`` and ends the run as exit 12 ``outcome_unknown``: the write may have landed.
 - A forgectl failure keeps forgectl's exit code, code, reason and details (``lower.py``);
   ``backend`` is passed so ``outcome_partial`` is read per backend.
 
@@ -30,8 +36,11 @@ module is reached.
 from __future__ import annotations
 
 import hashlib
+import signal
+import threading
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from types import FrameType, TracebackType
 from typing import Any, Final
 
 from .actor import RunContext
@@ -51,6 +60,7 @@ from .audit import (
 from .config import LoadedConfig
 from .forge import PostRead, read_post
 from .gateway import (
+    FORWARDED_SIGNALS,
     ForgectlInterrupted,
     ForgectlResult,
     Gateway,
@@ -60,7 +70,7 @@ from .gateway import (
 )
 from .jsonlog import LogWriter
 from .lower import LowerFailure, require_ok, tool_missing_outcome
-from .output import Outcome, error_outcome
+from .output import LOG, Outcome, error_outcome
 from .plan import Plan
 from .precheck import DRY_RUN_REASONS
 from .prepare import Prepared, result_document
@@ -195,16 +205,26 @@ def lower_answer(result: ForgectlResult, plan: Plan, gateway: Gateway) -> Lowere
 
 
 def log_failure(log: LogWriter, attempt_id: str | None, pr: str | None, outcome: Outcome) -> None:
-    """A run's failure in ``log.jsonl``: ``refused`` for exit 20, ``warning`` for exit 12. Codes
-    and reasons only, never text; other exits are logged where they happen."""
+    """A run's failure in ``log.jsonl`` (docs/interface.md, Audit and log): ``refused`` for exit 20,
+    ``vetoed`` for exit 11, ``escalated`` for exit 13 (level ``warn``), ``warning`` for exit 12
+    (``warn``) and for exit 1 (level ``error``). Codes and reasons only, never text. Other exits
+    are logged where they happen (a declined dialog)."""
     error = _error_of(outcome)
     if not error:
         return
-    details = {"code": error.get("code"), "reason": error.get("reason")}
-    if outcome.exit_code == 20:
+    code = error.get("code")
+    details = {"code": code, "reason": error.get("reason")}
+    exit_code = outcome.exit_code
+    if exit_code == 20:
         log.write("refused", pr=pr, attempt_id=attempt_id, details=details)
-    elif outcome.exit_code == 12:
+    elif exit_code == 12:
         log.write("warning", pr=pr, attempt_id=attempt_id, details=details)
+    elif exit_code == 11 and code == "vetoed":
+        log.write("vetoed", pr=pr, attempt_id=attempt_id, details=details)
+    elif exit_code == 13 and code == "escalated":
+        log.write("escalated", pr=pr, attempt_id=attempt_id, details=details)
+    elif exit_code == 1:
+        log.write("warning", level="error", pr=pr, attempt_id=attempt_id, details=details)
 
 
 def _warnings(prepared: Prepared, read: PostRead) -> list[str]:
@@ -247,23 +267,53 @@ def _record(env: PostEnv, writes: Sequence[WriteRecord], outcome: Outcome) -> Ou
     return outcome
 
 
+class _DeferredSignals:
+    """Holds SIGINT, SIGTERM and SIGHUP (main thread only) while the audit pair of a write is open.
+
+    The handler only records the number. Nothing is raised or re-sent afterwards: the run finishes
+    its record and ends with its own answer. A signal that was ignored on entry stays ignored.
+    """
+
+    def __init__(self) -> None:
+        self.received: list[int] = []
+        self._saved: dict[int, Any] = {}
+
+    def _handle(self, signum: int, _frame: FrameType | None) -> None:
+        self.received.append(signum)
+
+    def __enter__(self) -> _DeferredSignals:
+        if threading.current_thread() is threading.main_thread():
+            for sig in FORWARDED_SIGNALS:
+                if signal.getsignal(sig) == signal.SIG_IGN:
+                    continue
+                self._saved[sig] = signal.signal(sig, self._handle)
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        for sig, previous in self._saved.items():
+            signal.signal(sig, signal.SIG_DFL if previous is None else previous)
+
+
 def post_review(prepared: Prepared, env: PostEnv) -> Outcome:
     """Steps 9 to 11 of the review order for a confirmed plan (see the module docstring)."""
-    plan = prepared.plan
     # Read once now, so a failure after the write never starts another forgectl call (a signal
     # there would lose the write's result): ``lower.mismatch_outcome`` reads the cached value.
     env.gateway.lower_version()
     # TODO(#33): the pre-post hooks run here (veto: exit 11, escalation: exit 13), before
     # ``attempted``; a veto or escalation before the first write goes to the log only.
-    try:
-        env.trail.attempted(audit_record(prepared, env))
-    except AuditUnavailableError as exc:
-        outcome = Outcome(12, audit_unavailable_error(exc))
-        log_failure(env.log, env.trail.attempt_id, plan.pr, outcome)
-        return outcome
-    started = format_ts(now_utc())
+    with _DeferredSignals():
+        return _post_with_audit(prepared, env)
+
+
+def _call_and_lower(prepared: Prepared, env: PostEnv) -> tuple[Lowered, Outcome]:
+    """The forgectl write and what it means: forgectl's lowered answer and the run's outcome."""
+    plan = prepared.plan
     interrupted: ForgectlInterrupted | None = None
-    outcome: Outcome
     lowered: Lowered
     try:
         result = env.gateway.call(plan.action, plan.write_args(), stdin=plan.input)
@@ -310,10 +360,36 @@ def post_review(prepared: Prepared, env: PostEnv) -> Outcome:
         # outcome_unknown with forgectl's envelope when it printed one. A rerun answers
         # ``already_posted`` through the dedupe key.
         outcome = _interrupted_outcome(interrupted, lowered)
-    write = WriteRecord.from_lower(0, started, plan.action, None, plan.dedupe_key, lowered.lower)
-    final = _record(env, [write], outcome)
-    if final is outcome:
+    return lowered, outcome
+
+
+def _post_with_audit(prepared: Prepared, env: PostEnv) -> Outcome:
+    plan = prepared.plan
+    try:
+        env.trail.attempted(audit_record(prepared, env))
+    except AuditUnavailableError as exc:
+        outcome = Outcome(12, audit_unavailable_error(exc))
         log_failure(env.log, env.trail.attempt_id, plan.pr, outcome)
+        return outcome
+    started = format_ts(now_utc())
+    try:
+        lowered, outcome = _call_and_lower(prepared, env)
+    except Exception as exc:  # after ``attempted`` nothing is known: the write may have landed
+        LOG.error("unexpected %s after the write was attempted", type(exc).__name__, exc_info=exc)
+        outcome = error_outcome(
+            "outcome_unknown",
+            f"unexpected {type(exc).__name__} after the write was attempted; "
+            "whether it posted is unknown",
+        )
+        lowered = Lowered(None, outcome, LowerResult(exit=12, code="outcome_unknown", reason=None))
+    write = WriteRecord.from_lower(0, started, plan.action, None, plan.dedupe_key, lowered.lower)
+    if outcome.exit_code == 0 and plan.follow_ups:
+        # the main write landed and its follow-up was not performed (TODO(#36)): partial, landed
+        write = replace(write, result="partial")
+    final = _record(env, [write], outcome)
+    if final is not outcome:  # the audit failure replaced the outcome: the original is logged too
+        log_failure(env.log, env.trail.attempt_id, plan.pr, outcome)
+    log_failure(env.log, env.trail.attempt_id, plan.pr, final)
     return final
 
 

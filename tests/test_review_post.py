@@ -223,7 +223,11 @@ def test_a_gitlab_review_reports_the_body_thread_as_not_done_until_it_is_impleme
     assert doc["review_id"] is None and doc["thread_ids"] == ["gl:d:" + "1" * 40]
     # TODO(#36) resolves the body thread; until then the result says it was not
     assert doc["warnings"] == ["body_thread_unresolved"] and doc["body_thread_resolved"] is False
-    assert audit(state_home)[1]["result"] == "done"
+    # the follow-up was not performed: the record says partial, landed (docs/interface.md, Results)
+    outcome = audit(state_home)[1]
+    assert outcome["result"] == "partial"
+    assert outcome["writes"][0]["result"] == "partial"
+    assert outcome["writes"][0]["lower"]["exit"] == 0
 
 
 def test_already_posted_is_success_and_is_recorded_as_such(
@@ -429,6 +433,33 @@ def test_a_veto_of_forgectls_hook_passes_through_as_exit_11(
     assert doc["error"]["code"] == "vetoed" and doc["error"]["lower_error"]["code"] == "vetoed"
     assert audit(state_home)[1]["result"] == "failed"
     assert len(forgectl.writes()) == 1
+    vetoed = [e for e in log(state_home) if e["event"] == "vetoed"]
+    assert [e["level"] for e in vetoed] == ["warn"]
+    assert vetoed[0]["attempt_id"] == audit(state_home)[0]["attempt_id"]
+    assert vetoed[0]["details"]["code"] == "vetoed"
+
+
+def test_an_escalation_of_forgectls_hook_passes_through_as_exit_13_and_is_logged(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path
+) -> None:
+    draft = draft_file(tmp_path, [finding("f1")])
+    forgectl.script(
+        show(),
+        dry(),
+        fail(
+            "review",
+            "escalated",
+            hook="pre-post",
+            hook_stderr="",
+            escalated_hooks=[{"hook": "pre-post", "index": 0}],
+            phase="write",
+        ),
+    )
+    code, doc, _ = cli(*args_for(draft))
+    assert code == 13 and doc["error"]["code"] == "escalated"
+    escalated = [e for e in log(state_home) if e["event"] == "escalated"]
+    assert [e["level"] for e in escalated] == ["warn"]
+    assert escalated[0]["details"]["code"] == "escalated"
 
 
 def test_invalid_position_on_the_real_call_is_exit_12_with_nothing_moved(
@@ -539,6 +570,10 @@ def test_review_approve_is_not_posted_until_the_guard_exists(
     assert code == 1 and doc["error"]["code"] == "internal"
     assert forgectl.writes() == []
     assert audit(state_home) == []
+    internal = [e for e in log(state_home) if e["level"] == "error"]
+    assert [(e["event"], (e["details"] or {}).get("code")) for e in internal] == [
+        ("warning", "internal")
+    ]
 
 
 # --- the audit file ----------------------------------------------------------------------------
@@ -650,6 +685,28 @@ def test_a_failed_outcome_append_after_a_landed_write_is_audit_failed_and_not_a_
     assert (error["landed"], error["retry"]) == (True, "none")
     assert error["details"]["outcome"]["ids"] == ["gh:rc:RC_1", "gh:rc:RC_2"]
     assert len(forgectl.writes()) == 1  # never posted again
+    failed = [
+        e for e in log(state_home) if e["details"] and e["details"].get("code") == "audit_failed"
+    ]
+    assert [(e["event"], e["level"]) for e in failed] == [("warning", "warn")]
+
+
+def test_an_audit_failure_after_a_refusal_logs_the_refusal_and_the_audit_failure(
+    cli: Run,
+    forgectl: FakeForgectl,
+    tmp_path: Path,
+    state_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draft = draft_file(tmp_path, [finding("f1")])
+    forgectl.script(
+        show(), dry(), refuse("review", "stale_head", details={"head_sha": B}, phase="write")
+    )
+    _FailAt(2).install(monkeypatch)
+    code, doc, _ = cli(*args_for(draft))
+    assert code == 12 and doc["error"]["code"] == "audit_failed"
+    codes = [(e["event"], (e["details"] or {}).get("code")) for e in log(state_home)]
+    assert ("refused", "refused") in codes and ("warning", "audit_failed") in codes
 
 
 def test_a_failed_outcome_append_after_a_failed_write_keeps_the_writes_pair(
@@ -897,6 +954,204 @@ def test_the_deadline_of_a_write_is_outcome_unknown_and_never_retried(
     assert (error["landed"], error["retry"]) == (None, "same_command")
     assert len(forgectl.writes()) == 1
     assert audit(state_home)[1]["result"] == "outcome_unknown"
+
+
+def test_attempted_is_on_disk_while_forgectl_runs(
+    forgectl: FakeForgectl, tmp_path: Path, state_home: Path
+) -> None:
+    draft = draft_file(tmp_path, [finding("f1")])
+    forgectl.script(
+        show(),
+        dry(),
+        ok(
+            "review",
+            h.post_doc("review", ids=["gh:rc:RC_1"]),
+            hang={"phase": "after_write_attempt"},
+        ),
+    )
+    n = forgectl.next_call_number() + 3  # show, the pre-check, --version, the write
+    proc = _start_cli(forgectl, tmp_path, state_home, *args_for(draft))
+    forgectl.wait_ready(n)
+    records = audit(state_home)  # read before the signal: the write is in flight
+    os.kill(proc.pid, signal.SIGTERM)  # the exact pid this test started
+    proc.communicate(timeout=60)
+    assert [r["result"] for r in records] == ["attempted"]
+
+
+# --- a signal between the forgectl answer and the end of the audit outcome -----------------------
+
+_SLOW_OUTCOME = """\
+import os
+import sys
+import time
+
+from pr_comment import appendfile
+from pr_comment.cli import main
+
+original = appendfile.AppendFile.append
+
+
+def slow(self, line, *, sync=False):
+    if sync and b"attempted" not in line:  # the outcome record: slow and announced
+        open(os.environ["PRC_TEST_READY"], "w").close()
+        time.sleep(2)
+    original(self, line, sync=sync)
+
+
+appendfile.AppendFile.append = slow
+sys.exit(main(sys.argv[1:]))
+"""
+
+
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT, signal.SIGHUP])
+def test_a_signal_while_the_outcome_is_appended_waits_for_the_record(
+    forgectl: FakeForgectl, tmp_path: Path, state_home: Path, signum: int
+) -> None:
+    import time
+
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    launcher = scripts / "slow_outcome.py"
+    launcher.write_text(_SLOW_OUTCOME, encoding="utf-8")
+    ready = tmp_path / "outcome-append-started"
+    draft = draft_file(tmp_path, [finding("f1")])
+    forgectl.script(show(), dry(), posted())
+    env = forgectl.environ({"XDG_STATE_HOME": str(state_home), "PRC_TEST_READY": str(ready)})
+    env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p)
+    proc = subprocess.Popen(
+        [sys.executable, str(launcher), *args_for(draft)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        cwd=str(tmp_path),
+        start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while not ready.exists() and proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert ready.exists(), "the outcome append never started"
+        os.kill(proc.pid, signum)  # the exact pid this test started
+        stdout, stderr = proc.communicate(timeout=60)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    # the write landed and its answer was known: the record is complete and the run ends with it
+    assert proc.returncode == 0, stderr
+    doc = json.loads(stdout)
+    validate("pr-comment/cli/review.json", doc)
+    assert doc["ids"] == ["gh:rc:RC_1", "gh:rc:RC_2"]
+    records = audit(state_home)
+    validate_audit(records)
+    assert [r["result"] for r in records] == ["attempted", "done"]
+    assert len(forgectl.writes()) == 1
+
+
+# --- an unexpected error after ``attempted`` ----------------------------------------------------
+
+
+def test_an_unexpected_error_of_the_write_call_is_outcome_unknown_with_a_closed_pair(
+    cli: Run,
+    forgectl: FakeForgectl,
+    tmp_path: Path,
+    state_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pr_comment import gateway as gateway_module
+
+    original = gateway_module.ProcessGateway.call
+
+    def call(self: Any, subcommand: str, args: Any = (), *, stdin: bytes | None = None) -> Any:
+        if subcommand == "review" and "--yes" in args:
+            raise RuntimeError("boom")
+        return original(self, subcommand, args, stdin=stdin)
+
+    monkeypatch.setattr(gateway_module.ProcessGateway, "call", call)
+    draft = draft_file(tmp_path, [finding("f1")])
+    forgectl.script(show(), dry())
+    code, doc, _ = cli(*args_for(draft))
+    assert code == 12
+    validate("pr-comment/cli/error.json", doc)
+    error = doc["error"]
+    assert error["code"] == "outcome_unknown"
+    assert (error["landed"], error["retry"]) == (None, "same_command")
+    records = audit(state_home)
+    validate_audit(records)
+    assert [r["result"] for r in records] == ["attempted", "outcome_unknown"]
+    assert records[1]["attempt_id"] == records[0]["attempt_id"]
+
+
+def test_an_unexpected_error_after_the_write_is_outcome_unknown_with_a_closed_pair(
+    cli: Run,
+    forgectl: FakeForgectl,
+    tmp_path: Path,
+    state_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pr_comment import post as post_module
+
+    def broken(*args: Any, **kw: Any) -> Any:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(post_module, "result_document", broken)
+    draft = draft_file(tmp_path, [finding("f1")])
+    forgectl.script(show(), dry(), posted())
+    code, doc, _ = cli(*args_for(draft))
+    assert code == 12
+    validate("pr-comment/cli/error.json", doc)
+    error = doc["error"]
+    assert error["code"] == "outcome_unknown"
+    assert (error["landed"], error["retry"]) == (None, "same_command")
+    assert len(forgectl.writes()) == 1  # never posted again
+    records = audit(state_home)
+    validate_audit(records)
+    assert [r["result"] for r in records] == ["attempted", "outcome_unknown"]
+
+
+def test_a_bug_before_forgectl_ran_is_internal_and_logged_at_error(
+    cli: Run,
+    forgectl: FakeForgectl,
+    tmp_path: Path,
+    state_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pr_comment import gateway as gateway_module
+
+    original = gateway_module.ProcessGateway.call
+
+    def call(self: Any, subcommand: str, args: Any = (), *, stdin: bytes | None = None) -> Any:
+        if subcommand == "review" and "--yes" in args:
+            raise gateway_module.GatewayInternalError("bug")
+        return original(self, subcommand, args, stdin=stdin)
+
+    monkeypatch.setattr(gateway_module.ProcessGateway, "call", call)
+    draft = draft_file(tmp_path, [finding("f1")])
+    forgectl.script(show(), dry())
+    code, doc, _ = cli(*args_for(draft))
+    assert code == 1 and doc["error"]["code"] == "internal"
+    assert [r["result"] for r in audit(state_home)] == ["attempted", "failed"]
+    internal = [e for e in log(state_home) if e["level"] == "error"]
+    assert [(e["event"], (e["details"] or {}).get("code")) for e in internal] == [
+        ("warning", "internal")
+    ]
+
+
+# --- what forgectl's schema allows --------------------------------------------------------------
+
+
+def test_a_landed_answer_with_many_and_long_warnings_is_read_whole(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path
+) -> None:
+    warnings = [f"warn_{i}" for i in range(65)] + ["w" + "a" * 100]
+    draft = draft_file(tmp_path, [finding("f1")])
+    forgectl.script(show(), dry(), posted(warnings=warnings))
+    code, doc, _ = cli(*args_for(draft))
+    assert code == 0, doc
+    validate("pr-comment/cli/review.json", doc)
+    assert doc["ids"] == ["gh:rc:RC_1", "gh:rc:RC_2"] and doc["review_id"] == "gh:r:R_1"
+    assert set(warnings) <= set(doc["warnings"])
+    assert audit(state_home)[1]["result"] == "done"
 
 
 # --- goldens ------------------------------------------------------------------------------------
