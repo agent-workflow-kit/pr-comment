@@ -446,6 +446,39 @@ def read_post(document: Any, *, command: str, pr: str, gateway: Gateway) -> Post
     return read
 
 
+class ResolveRead(_Model):
+    """The fields of a real ``resolve`` result pr-comment uses (forgectl ``cli/resolve.json``)."""
+
+    pr: Pr
+    action: str
+    thread_id: ThreadId
+    resolved: bool | None
+    changed: bool
+    dry_run: bool
+
+
+def read_resolve(document: Any, *, thread: str, pr: str, gateway: Gateway) -> ResolveRead:
+    """The checked result of a ``resolve`` that exited 0 (the GitLab body thread follow-up). A
+    document that is not a real run's answer for ``thread`` on ``pr``, or that does not say the
+    thread is resolved, is ``lower_contract_mismatch`` with the write's own pair (``landed:
+    true``: forgectl said it succeeded)."""
+
+    def mismatch(why: str) -> LowerFailure:
+        return LowerFailure(mismatch_outcome("resolve", why, gateway=gateway, write=(True, "none")))
+
+    try:
+        read = ResolveRead.model_validate(document)
+    except ValidationError as exc:
+        raise mismatch(_why(exc)) from None
+    if read.action != "resolve" or read.dry_run or _canonical(read.pr) != _canonical(pr):
+        raise mismatch("the document is not the real run's result for this PR")
+    if read.thread_id != thread:
+        raise mismatch("the document is for another thread")
+    if read.resolved is not True:
+        raise mismatch("the thread is not resolved")
+    return read
+
+
 def _why(exc: ValidationError) -> str:
     """The field pointers that failed (never a value: it is untrusted text)."""
     seen: list[str] = []

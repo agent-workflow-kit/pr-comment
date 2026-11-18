@@ -245,6 +245,44 @@ def comments_doc(
     return {"pr": pr, "head_sha": head_sha, "threads": list(threads), "complete": True}
 
 
+def comment_doc(cid: str, body: str = "hello", *, review_id: str | None = None) -> dict[str, Any]:
+    """One comment of a ``comments`` thread (``comments.json``)."""
+    return {
+        "id": cid,
+        "author": {"login": "octo", "id": "1", "is_bot": False},
+        "body": body,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "minimized": False,
+        "reply_to": None,
+        "review_id": review_id,
+    }
+
+
+def thread_doc(
+    thread: str,
+    comments: Sequence[Mapping[str, Any]],
+    *,
+    resolvable: bool = True,
+    resolved: bool = False,
+    head_sha: str = HEAD,
+) -> dict[str, Any]:
+    """One thread of a ``comments`` read. A thread without a path is a general one (a review body
+    on GitLab); a resolved thread must be resolvable."""
+    return {
+        "id": thread,
+        "resolvable": resolvable,
+        "resolved": resolved,
+        "outdated": False,
+        "path": None,
+        "line": None,
+        "side": None,
+        "start_line": None,
+        "commit_sha": head_sha,
+        "comments": [dict(c) for c in comments],
+    }
+
+
 def diff_doc(pr: str = PR, *, head_sha: str = HEAD, diff: str = "") -> dict[str, Any]:
     return {
         "pr": pr,
