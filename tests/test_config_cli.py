@@ -100,8 +100,8 @@ def test_valid_config_loads_and_the_handler_runs(
 def test_draft_check_reads_no_config(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     config = write_config(tmp_path, "timeout: -5s\n")
     code, out, _ = run(capsys, "--json", "--config", config, "draft", "check", "x.json")
-    assert code == 1  # the unwritten handler ran: the invalid config was never read
-    assert json.loads(out)["error"]["code"] == "internal"
+    assert code == 2  # the handler ran (x.json is unreadable): the invalid config was never read
+    assert "config_invalid" not in out
 
 
 def test_export_reads_no_config(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
