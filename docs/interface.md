@@ -21,11 +21,14 @@ References: architecture (`../awkit-docs/architecture.md`) sections 5.2, 12.4, 1
 
 - The actor comes from `--actor` (grammar `^(human|auto):[A-Za-z0-9._@-]{1,64}$`); the default is `human:<me.name>` when stdin is a TTY, else `auto:unknown`.
 - `me.name` must match `^[A-Za-z0-9._@-]{1,64}$`; an OS username that does not gives `human:unknown`.
+- The default `me.name` is the username from the password database (`pwd.getpwuid`), never read from `USER`, `LOGNAME` or any other environment variable; a failed lookup gives `human:unknown`.
 - A run is **interactive** when stdin and stderr are TTYs, the actor is not `auto:`, `--yes` is not given and no body or draft is read from stdin (`-`).
 - `--body-file -` or `--draft-file -` with stdin a TTY exits 2 (`usage`).
 - Human-only flags (`--allow-mention`, `--override-escalation=<scope>`) require a `human:` actor; otherwise exit 2. `--allow-mention` also requires an interactive run (exit 2 otherwise); its names show in the dialog summary and the audit record (`inputs.allowed_mentions`, `override: ["allow_mention"]`). `--override-escalation=<scope>` needs only the `human:` actor (an interactive run, or `--actor human:<user>`) and works with `--yes`, which is how a caller with its own dialog passes it.
 - A human who pipes a draft (`--draft-file -`) gets the default actor `auto:unknown` (stdin is not a TTY) and the automatic attribution; such a pipeline passes `--actor human:<me>` and `--yes`, or the human writes the draft to a file and runs `review --draft-file <path>`.
 - As in forgectl, human-only rules are advisory against a same-user process that claims `--actor human:<user>`; the audit record shows how the actor was obtained (`actor_source`, `stdin_tty`).
+- `actor_source` is `flag` when `--actor` is given (even when it equals the default), `tty` when `--actor` is absent and stdin is a TTY (actor `human:<me.name>`, or `human:unknown`), and `default` when `--actor` is absent and stdin is not a TTY (`auto:unknown`).
+- These usage rules run before other flag-combination usage errors, in this order: `-` with a TTY stdin, then `--allow-mention`, then `--override-escalation`. `draft check -` is not refused on a TTY stdin (it has no dialog) but is never interactive.
 
 ### Posting plan
 
@@ -140,7 +143,7 @@ A finding that cannot be posted inline moves to the review body. Its entry line 
 
 ### Suggestions
 
-- A suggestion line is raw replacement code: no fence and no line terminator or other forgectl separator (VT, FF, FS, GS, RS, NEL, LS, PS); a draft with one is invalid (`invalid_draft`). pr-comment writes the fence.
+- A suggestion line is raw replacement code: no line terminator or other forgectl separator (VT, FF, FS, GS, RS, NEL, LS, PS); a draft with one is invalid (`invalid_draft`). A fence run in a line degrades the suggestion (below). pr-comment writes the fence.
 - An applicable suggestion uses exactly three backticks: GitHub ```` ```suggestion ````, GitLab ```` ```suggestion:-N+0 ```` with `N = line - start_line` (0 without `start_line`). `lines: []` is allowed and suggests deleting the range.
 - **Degraded suggestions.** A suggestion is rendered as a ```` ```text ```` block (fence length as below) when: any line contains a character forgectl's Sanitizing would mark (Cc except tab, Cf, Cs, Co, Cn, Zl, Zp and the listed invisible code points) (`invisible_chars`); any line contains a run of three or more backticks or tildes (`fence`); or any line starts with `/` (`slash_line`; forgectl's neutralizing would add a space). The note line before it is `_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._`, or for a moved finding `_Suggestion shown as code: this finding could not be posted inline._`. Degraded suggestions are reported in `suggestions_degraded` as `[{id, reason}]`. A moved finding's suggestion is always shown as code with the moved note; it is not listed in `suggestions_degraded` (the finding is in `moved`).
 - **Order and markers.** A degraded suggestion reports the first reason that applies, in the order `invisible_chars`, `fence`, `slash_line`. Every degraded or moved suggestion line shows markable characters as `<U+XXXX>` markers, whatever its reason. The markers are inserted after Text pipeline step 3, so a literal `<U+202E>` typed in a suggestion line becomes `＜U+202E>` and stays distinguishable from a marker; the lines of an applicable suggestion are untouched. Text pipeline step 6 still gives a `/` line in a degraded block its leading space.
@@ -295,7 +298,7 @@ With `--from`, `event`, `body`, `findings`, `unanchored` and `meta` are copied f
 
 `pr-comment export [--since <time>] [--log]`
 
-Prints audit records (or, with `--log`, log records) as JSONL, oldest first; with `--json`, one JSON array ([schemas/cli/export.json](../schemas/cli/export.json)). `--since` takes RFC 3339 or a duration (`7d`). A missing file prints nothing (or `[]`); a malformed line is warned on stderr and skipped.
+Reads no config, so a broken config never blocks reading the audit trail. Prints audit records (or, with `--log`, log records) as JSONL, oldest first; with `--json`, one JSON array ([schemas/cli/export.json](../schemas/cli/export.json)). `--since` takes RFC 3339 or a duration (`7d`). A missing file prints nothing (or `[]`); a malformed line is warned on stderr and skipped.
 
 ## Global flags
 
@@ -484,7 +487,7 @@ Codes 0–21 follow design guide section 4.2. pr-comment defines no codes of 22 
 - `hook` and `hook_stderr` (untrusted, at most 4096 bytes) name only pr-comment's own vetoing or escalating hook; a forgectl hook's veto has them in `lower_error`. With several escalations, `hook_stderr` is the first's. The cut to 4096 bytes is silent: no marker is added.
 - `escalated_by` (`pr-comment` or `forgectl`) and `escalated_hooks` (`[{hook, index}]`, from pr-comment's hooks or copied from forgectl's envelope) are set on `escalated`, null otherwise; `escalated_by` is the scope a caller passes to `--override-escalation=<scope>`.
 - Own and passed-through details: an own `stale_head` always has `details.head_sha`; a passed-through one has forgectl's details.
-- `details` by code: `stale_head` → `head_sha`; `stale_base` → `base_ref`; `invalid_draft` → `errors: [{pointer, message}]` (at most 100 entries, then a final `{pointer: "", message: "further errors omitted"}`); `invalid_text` → `pointer`, `kind`; `unsupported_draft_version` → `supported`; `draft_pr_mismatch` → `draft_pr`, `pr`; `tool_missing` → `install`; `lower_contract_mismatch` → `command` (the forgectl subcommand), `lower_version` (string or null); `config_invalid` → `key`; `invalid_position` → `invalid` (forgectl's items); `host_rejected` → `leftover_drafts`; `body_too_large` → forgectl's details plus `role`; `not_found` → `what` (pr, to or thread), `id`; `plan_changed` → `plan_sha256`; `audit_failed` → `outcome` (the result document).
+- `details` by code: `stale_head` → `head_sha`; `stale_base` → `base_ref`; `invalid_draft` → `errors: [{pointer, message}]` (at most 100 entries, then a final `{pointer: "", message: "further errors omitted"}`); `invalid_text` → `pointer`, `kind`; `unsupported_draft_version` → `supported`; `draft_pr_mismatch` → `draft_pr`, `pr`; `tool_missing` → `install`; `lower_contract_mismatch` → `command` (the forgectl subcommand), `lower_version` (string or null); `config_invalid` → `key` (the dotted key path, the environment variable name, or the file path when the problem has no key: an unreadable file, a non-mapping document, a bad `config.d`); `invalid_position` → `invalid` (forgectl's items); `host_rejected` → `leftover_drafts`; `body_too_large` → forgectl's details plus `role`; `not_found` → `what` (pr, to or thread), `id`; `plan_changed` → `plan_sha256`; `audit_failed` → `outcome` (the result document).
 
 ## Hooks
 
@@ -507,15 +510,16 @@ Configured as `hooks.<name>`, a list of `{cmd, timeout, async, with_text}` (desi
 
 `~/.config/pr-comment/config.yaml` (respecting `XDG_CONFIG_HOME`), then `config.d/*.yaml` in lexical order. Schema: [schemas/config.json](../schemas/config.json); example: [config.example.yaml](../config.example.yaml). Invalid config exits 2 `config_invalid` naming the key.
 
-- Drop-ins: maps merge, hook lists append, other lists replace (as forgectl). `repos.<id>` overrides merge over the global values; unset keys inherit. `repos.<id>` keys are matched case-insensitively against the canonical repo id from `show`; a key that is not a valid repo id is `config_invalid`. A `config_warning` log line is written for each file that sets `allow_auto_approve` or any `mentions.*` key, globally or under `repos.<id>`, naming the file and the key paths.
+- Drop-ins: maps merge, hook lists append, other lists replace (as forgectl). `repos.<id>` overrides merge over the global values; unset keys inherit. `repos.<id>` keys are matched case-insensitively (ASCII letters only) against the canonical repo id from `show`, and spellings that differ only by case merge across files; two such spellings in one file, or a key that is not a valid repo id, are `config_invalid`. A `config_warning` log line is written for each file that sets `allow_auto_approve` or any `mentions.*` key, globally or under `repos.<id>`, naming the file and the key paths.
 - Precedence: flags, then `repos.<id>`, then environment (scalar keys only, [Environment variables](#environment-variables)), then config, then defaults.
+- Files. Config comes only from these files and the environment: never from the working directory or a repo checkout. Every file is untrusted input, because config can name commands that run. Each is read without blocking, must be a regular file (symlinks are followed and the target is judged), at most 256 KiB, owned by the effective user or root and not writable by everyone (a file writable by its group is accepted, since a user-private group with umask 002 is the norm; a run as root or under `sudo` that reads another user's file is refused, with no relaxation; the directories above the file are not checked); `config.d` must be a directory with the same ownership and mode rule, holding at most 256 `*.yaml` files (names starting with `.` are skipped). The text must be UTF-8 and is read as YAML 1.2 core scalars (`yes`, `on` and `1:30` are strings): anchors, aliases, merge keys, duplicate or non-string keys, tags beyond the core types, NUL, lone surrogates, more than one document, more than 10000 nodes or nesting deeper than 32 levels are refused. All of these are `config_invalid`; the message names a key or the file and never repeats file content.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `forgectl_bin` | `forgectl` | Path or name of forgectl (binding A); see [forgectl edge](#forgectl-edge). |
 | `forgectl_config` | unset | Passed to forgectl as `--config`. |
 | `timeout` | `120s` | Budget per forgectl call, passed as `--timeout`. |
-| `me.name` | OS username | Used for the default actor and `{user}`. |
+| `me.name` | OS username (password database) | Used for the default actor and `{user}`. |
 | `footer.human` | see [Footers and marker](#footers-and-marker) | String or `false`. |
 | `footer.auto` | see Footers and marker | A non-empty string, never `false`. |
 | `mentions.policy` | `neutralize` | `neutralize` or `allow`. |
@@ -563,7 +567,9 @@ Under `~/.local/state/pr-comment/` (respecting `XDG_STATE_HOME`).
 | `~/.config/pr-comment/config.yaml`, `config.d/*.yaml` | Config. |
 | `~/.local/state/pr-comment/audit.jsonl` | Audit records. |
 | `~/.local/state/pr-comment/log.jsonl` | Log records. |
-| `~/.local/state/pr-comment/tmp/` | Mode 0700, opened without following symlinks and checked to be a directory owned by the user with mode 0700 on every run (else exit 12 `state_unsafe`). Hook working directories only: `prc-hook-<32 random hex>`, mode 0700. A run's own hook directory is removed afterwards by a file-descriptor walk that never follows symlinks and stays inside it (`unlinkat` relative to directory descriptors). At the start of a run, `prc-hook-` directories older than one day directly in the opened directory are removed with `rmdir` only when empty; nothing else is removed. |
+| `~/.local/state/pr-comment/` and `tmp/` | Both are opened without following symlinks and checked on every run to be directories owned by the user with mode exactly 0700 (else exit 12 `state_unsafe`); a missing one is created with mode 0700 (parents one by one, each made exactly 0700; the process umask is never changed, and a umask that leaves a new directory unopenable is `state_unsafe`). Anything that needs the state directory, such as the audit and log files, obtains it through the checked open (`open_state_dirs`) and never makes the directory itself. `tmp/` holds hook working directories only: `prc-hook-<32 random hex>`, mode 0700. A run's own hook directory is removed afterwards by a file-descriptor walk that never follows symlinks, stays inside it and never crosses into another filesystem (`unlinkat` relative to directory descriptors); a directory of the user's own lacking owner rwx is made 0700 first (an unreadable one needs Linux `O_PATH`, else it is left and reported). The walk goes at most 64 levels below the hook directory. Removal is not atomic: a refused tree (too deep, another filesystem, a failure) is left in place, partially emptied, and a failure to remove is reported as `state_unsafe` for the caller to log as a warning. At the start of a run, `prc-hook-` directories older than one day directly in the opened directory are removed with `rmdir` only when empty; nothing else is removed. |
+
+`state_unsafe` `error.details` is `{path: string, errno?: string}`: `path` is the absolute path of the directory or entry that failed the check or the removal, and `errno` is the symbolic errno name (for example `EACCES`) when an operating-system error caused it.
 
 There is no database and no migration. Upgrades affect only the [draft version](#draft-versioning) and the schemas.
 

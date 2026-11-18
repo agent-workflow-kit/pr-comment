@@ -94,6 +94,7 @@ Each becomes a `live` test in the plan.
 | `cli.py` | argparse, global flags, actor resolution, interactive detection, dispatch (`HANDLERS`) |
 | `grammars.py` | the value grammars of every forwarded flag, config value and hook-supplied decision id, shared by `cli.py` and, once they land, `config.py` and `hooks.py` |
 | `config.py` | Pydantic config, drop-ins, environment, per-repo merge, footer placeholder validation |
+| `yamlstrict.py` | the strict YAML reader `config.py` uses (core-schema scalars, no anchors, aliases, merge keys, duplicate or non-string keys; node and depth caps) |
 | `draft.py` | draft loading (no-follow, caps), schema, version and consistency checks, `draft check`, `draft new` |
 | `diffmap.py` | unified-diff parser and hunk mapping for re-anchoring |
 | `reanchor.py` | pure re-anchoring over parsed forgectl results: compare handling (`from_sha`, `to_sha`, shape checks), left-side check, moved list and `reanchored_draft` |
@@ -101,9 +102,11 @@ Each becomes a `live` test in the plan.
 | `plan.py` | the posting plan shown by the dialog and `--dry-run`, and its `plan_sha256` |
 | `forge.py` | the forgectl edge: argv in `=` form, stdin input, the pre-check, result and envelope parsing by the fields pr-comment uses |
 | `gateway.py` | the only subprocess boundary |
+| `files.py` | state and temporary directory checks, no-follow and exclusive creation, hook directory removal, sweeping |
 | `hooks.py` | `pre-post` and `post-post` |
 | `audit.py` | audit and log records, `export` |
-| `confirm.py` | the TTY dialog, display sanitizing and the summary |
+| `display.py` | display sanitizing with forgectl's rules (`sanitize_text`, `sanitize_line`, `sanitize_bytes`) and the shared predicate `is_marked` / `count_marked` |
+| `confirm.py` | the TTY dialog and the summary (shows untrusted text through `display.py`) |
 
 ## Data model
 
