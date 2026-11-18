@@ -590,6 +590,37 @@ def test_an_unencodable_look_alike_is_shown_as_a_marker() -> None:
     assert "\\u" not in text  # not a backslash escape
 
 
+def test_ascii_dialog_wraps_after_marker_substitution() -> None:
+    width = 60
+    room = width - len(confirm.GUTTER) - 1
+    body = "一" * 100 + "x" * (room - 3) + "== summary ==\n" + "Ａ" * 30
+    plan = dataclasses.replace(
+        review_plan([finding("f1")]), bodies=(PlanBody("body", body),), inline_comments=()
+    )
+    text = confirm.dialog_text(prepared_of(plan), width, "ascii")
+    text.encode("ascii")
+    lines = text.split("\n")
+    start = lines.index("== plan ==")
+    end = lines.index("== summary ==")
+    for line in lines[start + 2 : end]:
+        if line.startswith("---"):
+            continue
+        assert line.startswith(confirm.GUTTER), line
+        assert len(line) <= width, line
+    assert _flush_left(text).count("== summary ==") == 1
+
+
+@pytest.mark.parametrize("width", [1, 5, 24])
+def test_narrow_widths_still_wrap_with_progress(width: int) -> None:
+    source = "abc def ghij klmno " * 6
+    lines = confirm._gutter(source, width)
+    assert lines
+    assert all(line.startswith(confirm.GUTTER) for line in lines)
+    assert "".join(line[len(confirm.GUTTER) :] for line in lines) == source
+    if width >= len(confirm.GUTTER) + 1:
+        assert all(len(line) <= width for line in lines)
+
+
 def test_the_dialog_is_unchanged_on_a_utf8_stream() -> None:
     plan = review_plan([finding("f1", body="a <b> c")])
     assert confirm.dialog_text(prepared_of(plan), 80, "utf-8") == confirm.dialog_text(

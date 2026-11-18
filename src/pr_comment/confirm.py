@@ -36,7 +36,7 @@ from .prepare import Prepared
 
 GUTTER = "  | "
 DEFAULT_WIDTH = 80
-MIN_TEXT_WIDTH = 20
+MIN_ROOM = 1  # one character per line is the least that still makes progress
 PROMPT = "Post? [y/N] "
 MAX_ANSWER = 256
 ALREADY_POSTED = (
@@ -87,12 +87,14 @@ def _wrap(line: str, room: int) -> list[str]:
     return parts
 
 
-def _gutter(text: str, width: int) -> list[str]:
+def _gutter(text: str, width: int, encoding: str = "utf-8") -> list[str]:
     """Untrusted multi-line text as display lines, every one (and every wrapped part of one)
     behind the gutter. One column stays free so a full line never relies on the terminal's own
-    wrap."""
-    room = max(MIN_TEXT_WIDTH, width - len(GUTTER) - 1)
-    return [GUTTER + part for line in sanitize_text(text).split("\n") for part in _wrap(line, room)]
+    wrap. Characters the encoding cannot carry are replaced by their marker before wrapping, so
+    the wrapped lines are the lines that are shown."""
+    room = max(MIN_ROOM, width - len(GUTTER) - 1)
+    shown = encodable(sanitize_text(text), encoding)
+    return [GUTTER + part for line in shown.split("\n") for part in _wrap(line, room)]
 
 
 def _headline(plan: Plan) -> str:
@@ -108,7 +110,7 @@ def _follow_up(item: FollowUp) -> str:
     return f"{item.action} ({_line(thread)})"
 
 
-def plan_lines(plan: Plan, width: int = DEFAULT_WIDTH) -> list[str]:
+def plan_lines(plan: Plan, width: int = DEFAULT_WIDTH, encoding: str = "utf-8") -> list[str]:
     """The full plan: every body as forgectl will post it (with its dedupe line), then where each
     inline comment goes. Untrusted text is behind the gutter."""
     lines = [f"plan_sha256 {_line(plan.plan_sha256)}"]
@@ -120,7 +122,7 @@ def plan_lines(plan: Plan, width: int = DEFAULT_WIDTH) -> list[str]:
             start = f"{spot.start_line}-" if spot.start_line is not None else ""
             where = f" at {_line(spot.path)}:{start}{spot.line} ({_line(spot.side)})"
         lines.append(f"--- {_line(body.role)}{where}, {body.bytes} bytes")
-        lines.extend(_gutter(body.text, width))
+        lines.extend(_gutter(body.text, width, encoding))
     return lines
 
 
@@ -209,7 +211,7 @@ def encodable(text: str, encoding: str) -> str:
 def dialog_text(prepared: Prepared, width: int = DEFAULT_WIDTH, encoding: str = "utf-8") -> str:
     """The whole dialog before the prompt: the plan, then the summary just above the prompt."""
     out = ["== plan =="]
-    out += plan_lines(prepared.plan, width)
+    out += plan_lines(prepared.plan, width, encoding)
     out.append("== summary ==")
     out += summary_lines(prepared)
     return encodable("\n".join(out) + "\n", encoding)
