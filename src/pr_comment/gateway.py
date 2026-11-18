@@ -446,8 +446,10 @@ def _sigchld_default() -> Iterator[None]:
 class _Child:
     """One started forgectl and its process group."""
 
-    def __init__(self, proc: subprocess.Popen[bytes]) -> None:
+    def __init__(self, proc: subprocess.Popen[bytes], *, own_group: bool = False) -> None:
         self.proc = proc
+        # A hook (``hooks.py``): SIGTERM goes to the whole group, not the leader only.
+        self.own_group = own_group
         self.pid = proc.pid
         self.start = _proc_start(proc.pid)
         self.reaped = False
@@ -513,7 +515,10 @@ class _Child:
         after the grace period. Only while the leader is unreaped."""
         if self.exited():
             return
-        self.signal_leader(signal.SIGTERM)
+        if self.own_group:
+            self.signal_group(signal.SIGTERM)
+        else:
+            self.signal_leader(signal.SIGTERM)
         if self.wait_exit(term_grace):
             return
         self.signal_group(signal.SIGKILL)
@@ -536,8 +541,13 @@ def run_process(
     term_grace: float = TERM_GRACE_SECONDS,
     interrupt_grace: float = INTERRUPT_GRACE_SECONDS,
     drain_grace: float = DRAIN_GRACE_SECONDS,
+    cwd: str = "/",
+    own_group: bool = False,
 ) -> ForgectlResult:
     """Run ``argv`` (no shell) to its end and return what it left.
+
+    ``own_group`` is for a hook: a timeout sends SIGTERM to the whole group (not the leader only),
+    and the group is SIGKILLed when the leader has ended, so nothing the hook started outlives it.
 
     Raises ``ToolMissing`` when the program cannot be found or executed, ``GatewayInternalError``
     for any other failure to start it or an ignored SIGCHLD off the main thread, and
@@ -553,7 +563,7 @@ def run_process(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=dict(env),
-                cwd="/",
+                cwd=cwd,
                 shell=False,
                 close_fds=True,
                 start_new_session=True,
@@ -564,7 +574,7 @@ def run_process(
             raise GatewayInternalError(
                 f"forgectl could not be started (errno {exc.errno})"
             ) from None
-        child = _Child(proc)
+        child = _Child(proc, own_group=own_group)
         assert proc.stdout is not None and proc.stderr is not None
         out = _Reader(proc.stdout.fileno(), stdout_limit, stop)
         err = _Reader(proc.stderr.fileno(), stderr_limit, stop)
@@ -577,6 +587,8 @@ def run_process(
                 writer = _Writer(proc.stdin, stdin)
                 writer.start()
             timed_out = _wait(child, forwarder, deadline, term_grace, interrupt_grace)
+            if own_group:  # the leader is unreaped here: its group id is still ours
+                child.signal_group(signal.SIGKILL)
             leftover = _drain(child, (out, err), stop, drain_grace)
         finally:
             # Whatever happened (even an unexpected error), nothing of ours keeps running.
