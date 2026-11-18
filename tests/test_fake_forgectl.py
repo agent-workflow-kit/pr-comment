@@ -402,7 +402,9 @@ def test_each_error_is_printed_as_forgectls_envelope_with_its_exit_code(
         (argv("files"), fail("files", "rate_limited", "slow", retry_after=30), 12, b""),
         (
             argv("approve", "--yes", *PINS),
-            refuse("approve", "stale_head", "moved", details={"head_sha": OTHER_HEAD}),
+            refuse(
+                "approve", "stale_head", "moved", details={"head_sha": OTHER_HEAD}, phase="write"
+            ),
             20,
             b"",
         ),
@@ -686,7 +688,7 @@ def test_an_error_that_happens_after_confirmation_is_exit_thirteen_without_yes(
         (
             REVIEW_CALL,
             REVIEW_STDIN,
-            refuse("review", "stale_head", details={"head_sha": OTHER_HEAD}),
+            refuse("review", "stale_head", details={"head_sha": OTHER_HEAD}, phase="read"),
         ),
         (
             REVIEW_CALL,
@@ -699,7 +701,11 @@ def test_an_error_that_happens_after_confirmation_is_exit_thirteen_without_yes(
             REVIEW_STDIN,
             fail("review", "invalid_position", details={"invalid": [BAD_POSITION]}),
         ),
-        (GITLAB_REVIEW, REVIEW_STDIN, refuse("review", "drafts_present", details={"count": 2})),
+        (
+            GITLAB_REVIEW,
+            REVIEW_STDIN,
+            refuse("review", "drafts_present", details={"count": 2}, phase="read"),
+        ),
         (
             REVIEW_CALL,
             REVIEW_STDIN,
@@ -885,7 +891,7 @@ def test_an_error_a_command_cannot_end_in_is_a_fake_error(
 
 def test_the_errors_a_command_can_end_in_are_accepted(forgectl: FakeForgectl) -> None:
     forgectl.script(
-        refuse("review", "drafts_present", details={"count": 1}),
+        refuse("review", "drafts_present", details={"count": 1}, phase="write"),
         refuse("review", "pending_review_exists"),
         fail("approve", "outcome_partial", details=LANDED),
         fail("review", "invalid_position", details={"invalid": [BAD_POSITION]}),
@@ -954,7 +960,12 @@ def _bad_resolve(**changes: Any) -> dict[str, Any]:
         ("show", argv("show"), b"", show_doc(number=8)),
         ("show", argv("show"), b"", show_doc(repo="github.com/acme/other")),
         ("files", argv("files"), b"", {**files_doc(), "changed_files": 2}),
-        ("files", argv("files"), b"", {**files_doc(), "files_complete": False}),
+        (
+            "files",
+            argv("files"),
+            b"",
+            {**files_doc(), "files_complete": True, "changed_files": None},
+        ),
     ],
     ids=[
         "comment-two-ids",
@@ -971,7 +982,7 @@ def _bad_resolve(**changes: Any) -> dict[str, Any]:
         "show-number",
         "show-repo",
         "files-count",
-        "files-complete",
+        "files-complete-unknown-count",
     ],
 )
 def test_a_result_that_breaks_what_the_command_reports_is_a_fake_error(
@@ -1321,3 +1332,44 @@ def test_the_launcher_needs_the_scenario_directory_variable() -> None:
 
 def test_base_sha_is_not_a_head() -> None:
     assert BASE_SHA != HEAD != OTHER_HEAD
+
+
+def test_a_github_files_list_may_say_incomplete_when_it_is_as_long_as_changed_files(
+    forgectl: FakeForgectl,
+) -> None:
+    doc = files_doc()
+    assert doc["changed_files"] == len(doc["files"])
+    forgectl.script(ok("files", {**doc, "files_complete": False}))
+    assert forgectl.run(argv("files")).returncode == 0
+
+
+def test_a_dry_run_refusal_reports_the_scripted_head_over_the_pinned_one(
+    forgectl: FakeForgectl,
+) -> None:
+    forgectl.script(
+        refuse("approve", "not_open", details={"state": "closed"}, fields={"head_sha": OTHER_HEAD})
+    )
+    proc = forgectl.run(argv("approve", "--dry-run", *PINS))
+    assert out(proc)["head_sha"] == OTHER_HEAD
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        refuse("review", "drafts_present", details={"count": 1}),
+        refuse("review", "stale_head", details={"head_sha": OTHER_HEAD}),
+    ],
+)
+def test_a_write_script_for_a_both_sides_refusal_needs_an_explicit_phase(
+    forgectl: FakeForgectl, step: dict[str, Any]
+) -> None:
+    forgectl.script(step)
+    proc = forgectl.run([*GITLAB_REVIEW, "--yes"], stdin=REVIEW_STDIN)
+    assert proc.returncode == ff.FAKE_ERROR_EXIT and b"explicit phase" in proc.stderr
+    forgectl.allow_fake_errors = True
+
+
+def test_a_both_sides_refusal_with_a_phase_works(forgectl: FakeForgectl) -> None:
+    forgectl.script(refuse("review", "drafts_present", details={"count": 1}, phase="write"))
+    proc = forgectl.run([*GITLAB_REVIEW, "--yes"], stdin=REVIEW_STDIN)
+    assert proc.returncode == 20, proc.stderr

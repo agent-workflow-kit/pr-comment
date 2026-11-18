@@ -314,6 +314,9 @@ _WRITE_ONLY_REASONS = frozenset({"pending_review_exists"})  # the 422 of the rev
 # the text landed).
 _EITHER_READ_FIRST = frozenset({"stale_head", "drafts_present", "wrong_host_response", "internal"})
 _BOTH = frozenset({"read", "write"})
+# these two happen on both sides of confirmation (review.py's second drafts_present check, the 409
+# stale_head of the write), so a write script must say which
+_PHASE_EXPLICIT = frozenset({"stale_head", "drafts_present"})
 
 
 def error_phases(command: str, code: str, reason: str | None) -> frozenset[str]:
@@ -1259,14 +1262,17 @@ _AFTER_PR_READ = frozenset(
 
 
 def _head_read(ctx: Context, err: Fail) -> str | None:
-    """The head a refusal after the PR read knew: ``stale_head`` names it in ``details``; the
-    others follow the stale_head check (``not_open`` precedes it, and a test that needs another
-    head says so in ``fields``), so it is the pinned one."""
+    """The head a refusal after the PR read knew (the one forgectl read, not the pinned one):
+    ``stale_head`` names it in ``details``; the others take a scripted ``head_sha`` from
+    ``fields`` or ``details``, and the pinned ``--expected-head`` only as the fallback."""
     if err.reason not in _AFTER_PR_READ:
         return None
+    for source in (err.fields, err.details):
+        head = (source or {}).get("head_sha")
+        if isinstance(head, str):
+            return head
     if err.reason == "stale_head":
-        head = (err.details or {}).get("head_sha")
-        return head if isinstance(head, str) else None
+        return None
     return getattr(ctx.args, "expected_head", None)
 
 
@@ -1384,6 +1390,17 @@ def _check_phase(ctx: Context, err: Fail, *, scripted: bool) -> None:
     phases = error_phases(ctx.command, err.code, err.reason)
     if scripted and err.phase is not None and err.phase not in phases:
         raise FakeError(f"{err.reason or err.code} cannot happen in phase {err.phase!r}")
+    if (
+        scripted
+        and err.phase is None
+        and not ctx.dry_run
+        and len(phases) > 1
+        and (err.reason if err.code == "refused" else err.code) in _PHASE_EXPLICIT
+    ):
+        raise FakeError(
+            f"{err.reason or err.code} happens both before and after confirmation (a second "
+            "drafts_present check, the 409 of the write): script it with an explicit phase"
+        )
     if ctx.dry_run and "read" not in phases:
         raise FakeError(f"{err.code} cannot happen in a dry run (no hook runs, nothing is written)")
     if scripted and err.phase == "write" and ctx.dry_run:
@@ -1520,8 +1537,10 @@ def _check_files(ctx: Context, doc: dict[str, Any]) -> None:
     listed, changed = len(doc["files"]), doc["changed_files"]
     if ctx.backend == "github":
         # github_diff.py: complete = ended and the list's length equals changed_files
-        if doc["files_complete"] is not (changed is not None and listed == changed):
-            raise FakeError("files: files_complete is true exactly when the list is changed_files")
+        # files_complete: raw.ended and changed_files is not None and len(files) == changed_files;
+        # `ended` is a paging detail, so false is always possible
+        if doc["files_complete"] and (changed is None or listed != changed):
+            raise FakeError("files: files_complete is true only when the list is changed_files")
     elif doc["files_complete"] and changed is not None and changed != listed:
         raise FakeError("files: a complete GitLab list is changed_files long, or the count unknown")
 
