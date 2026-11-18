@@ -1,0 +1,11 @@
+diff --git a/f.txt b/f.txt
+index edbfa3f..6fcb288 100644
+--- a/f.txt
++++ b/f.txt
+@@ -19,2 +19,3 @@ line18
+ line19
+-line20
+\ No newline at end of file
++line20
++end1
+\ No newline at end of file

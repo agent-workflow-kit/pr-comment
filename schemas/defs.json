@@ -111,7 +111,8 @@
       "enum": [
         "invisible_chars",
         "fence",
-        "slash_line"
+        "slash_line",
+        "dedupe_text"
       ]
     },
     "text_kind": {

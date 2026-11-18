@@ -1,0 +1,7 @@
+diff --git a/f.txt b/f.txt
+index fe8fb13..3b513f9 100644
+--- a/f.txt
++++ b/f.txt
+@@ -1 +1 @@
+-line01
++REWRITE01
