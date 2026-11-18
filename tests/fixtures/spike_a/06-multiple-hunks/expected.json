@@ -1,0 +1,84 @@
+[
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 1
+  },
+  "expected": {
+   "path": "f.txt",
+   "line": 1,
+   "side": "right"
+  }
+ },
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 5
+  },
+  "expected": {
+   "path": "f.txt",
+   "line": 6,
+   "side": "right"
+  }
+ },
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 8
+  },
+  "expected": {
+   "unmapped": "deleted"
+  }
+ },
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 10
+  },
+  "expected": {
+   "path": "f.txt",
+   "line": 10,
+   "side": "right"
+  }
+ },
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 15
+  },
+  "expected": {
+   "path": "f.txt",
+   "line": 15,
+   "side": "right"
+  }
+ },
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 16
+  },
+  "expected": {
+   "path": "f.txt",
+   "line": 19,
+   "side": "right"
+  }
+ },
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 20
+  },
+  "expected": {
+   "path": "f.txt",
+   "line": 23,
+   "side": "right"
+  }
+ }
+]
