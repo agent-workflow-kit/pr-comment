@@ -240,7 +240,9 @@ def landed_retry(
     """The ``(landed, retry)`` pair of an error code; ``(None, None)`` for a code outside exit 12.
 
     - ``backend`` (``show``'s) is required for ``outcome_partial``.
-    - ``from_forgectl`` marks ``audit_failed`` as forgectl's (its write landed).
+    - ``from_forgectl`` marks ``audit_failed`` as forgectl's. Without ``write`` its write is
+      taken to have landed; with ``write`` the pair is the one the caller read from forgectl's
+      own outcome (a failed write did not land, an unknown one is unknown).
     - ``write`` gives the write's own ``(landed, retry)``: required for own ``audit_failed``
       (it always follows a write), optional for ``lower_contract_mismatch`` (without it the
       failure came before any write).
@@ -273,9 +275,7 @@ def landed_retry(
         raise ValueError(f"outcome_partial needs backend github or gitlab, got {backend!r}")
     if code == "audit_failed":
         if from_forgectl:
-            if write is not None:
-                raise ValueError("audit_failed takes from_forgectl or write, not both")
-            return _LOWER_AUDIT_FAILED
+            return _LOWER_AUDIT_FAILED if write is None else _check_write(write)
         if write is None:
             raise ValueError("own audit_failed always follows a write: write is required")
         return _check_write(write)
