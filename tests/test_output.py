@@ -188,10 +188,10 @@ def _run(capsys: pytest.CaptureFixture[str], argv: list[str]) -> tuple[int, str,
 
 
 def test_main_honors_quiet_and_verbose_on_a_failure(capsys: pytest.CaptureFixture[str]) -> None:
-    base = ["resolve", PR, "--thread", "gh:rt:1"]
+    base = ["export"]
     code, out, err = _run(capsys, base)
     assert (code, out) == (1, "")
-    assert err == "pr-comment: resolve is not implemented yet\n"
+    assert err == "pr-comment: export is not implemented yet\n"
     assert _run(capsys, [*base, "--quiet"])[2] == err
     verbose = _run(capsys, [*base, "--verbose"])[2]
     assert verbose.startswith(err)

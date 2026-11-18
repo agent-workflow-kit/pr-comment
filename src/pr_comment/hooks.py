@@ -46,7 +46,7 @@ from .files import StateDirs, StateUnsafeError, create_file_exclusive, create_ho
 from .gateway import ForgectlInterrupted, GatewayInternalError, ToolMissing, run_process
 from .jsonlog import LogWriter
 from .output import LOG
-from .plan import Plan
+from .plan import Plan, empty_counts
 
 PRE: Final = "pre-post"
 POST: Final = "post-post"
@@ -117,9 +117,8 @@ def payload_for(
 ) -> dict[str, Any]:
     """The JSON document a hook gets on stdin (``schemas/hooks/<hook>.json``) for a posting plan.
 
-    ``resolve`` and ``unresolve`` (TODO(#35)) build their own: their thread fields are not part
-    of a ``Plan``. ``event``, ``anchor_head``, ``to`` and the thread fields are null where the
-    interface says so.
+    ``resolve`` and ``unresolve`` have no plan: ``payload_for_thread`` builds theirs. ``event``,
+    ``anchor_head``, ``to`` and the thread fields are null where the interface says so.
     """
     bodies: list[dict[str, Any]] = []
     for body in plan.bodies:
@@ -156,6 +155,68 @@ def payload_for(
         "thread_author_is_self": None,
         "thread_path": None,
         "thread_line": None,
+    }
+    if result is not None:
+        payload["result"] = dict(result)
+    return payload
+
+
+@dataclass(frozen=True)
+class ThreadTarget:
+    """The thread a ``resolve`` or ``unresolve`` write is about, as the hooks see it. The author,
+    path and line are unknown (None) for a thread absent from an incomplete ``comments`` listing."""
+
+    thread_id: str
+    author_is_self: bool | None = None
+    path: str | None = None
+    line: int | None = None
+
+
+def payload_for_thread(
+    *,
+    action: str,
+    pr: str,
+    repo: str,
+    actor: str,
+    head_sha: str,
+    target: ThreadTarget,
+    hook: str,
+    attempt_id: str,
+    write_index: int,
+    decision_ids: Sequence[str],
+    override_escalation: Sequence[str],
+    result: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The hook payload of one ``resolve`` or ``unresolve`` write (docs/interface.md, Hooks,
+    Nullability): no plan, bodies or dedupe key, ``base_ref`` null, ``head_sha`` the ``comments``
+    read's, counts all zero."""
+    if action not in ("resolve", "unresolve"):
+        raise ValueError("not a thread action")
+    payload: dict[str, Any] = {
+        "tool": "pr-comment",
+        "hook": hook,
+        "object_type": "pr",
+        "object_id": pr,
+        "repo": repo,
+        "action": action,
+        "actor": actor,
+        "decision_ids": list(decision_ids),
+        "attempt_id": attempt_id,
+        "write_index": write_index,
+        "plan_sha256": None,
+        "override_escalation": list(dict.fromkeys(override_escalation)),
+        "head_sha": head_sha,
+        "anchor_head": None,
+        "base_ref": None,
+        "event": None,
+        "dedupe_key": None,
+        "counts": empty_counts(),
+        "bodies": [],
+        "to": None,
+        "thread_id": target.thread_id,
+        "thread_author_is_self": target.author_is_self,
+        "thread_path": target.path,
+        "thread_line": target.line,
     }
     if result is not None:
         payload["result"] = dict(result)

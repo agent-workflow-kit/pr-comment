@@ -91,8 +91,9 @@ def test_valid_config_loads_and_the_handler_runs(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     config = write_config(tmp_path, "timeout: 5s\n")
-    code, out, _ = run(capsys, "--json", "--config", config, "resolve", PR, "--thread", "gh:rt:1")
-    # No handler is written yet: the dispatch reaches it and reports `internal`.
+    code, out, _ = run(capsys, "--json", "--config", config, "draft", "new", PR)
+    # No handler is written yet (and this one would never reach forgectl): the dispatch reaches it
+    # and reports `internal`.
     assert code == 1
     assert json.loads(out)["error"]["code"] == "internal"
 

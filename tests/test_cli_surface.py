@@ -295,6 +295,7 @@ MINIMAL: dict[str, list[str]] = {
 }
 POSTING = {"review", "comment", "reply", "approve"}
 NON_POSTING = sorted(set(MINIMAL) - POSTING)
+UNIMPLEMENTED = [c for c in NON_POSTING if c not in ("resolve", "unresolve")]
 SHA = "a" * 64
 
 GLOBAL_ARGV = [
@@ -798,7 +799,7 @@ def test_expect_plan_allowed_on_posting_commands(
     assert doc["error"]["code"] in ("usage", "invalid_draft")
 
 
-@pytest.mark.parametrize("command", NON_POSTING)
+@pytest.mark.parametrize("command", UNIMPLEMENTED)
 def test_unimplemented_handlers_return_internal_envelope(
     capsys: pytest.CaptureFixture[str],
     golden_json: Callable[[str, Any], None],

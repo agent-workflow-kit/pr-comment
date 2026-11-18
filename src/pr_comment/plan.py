@@ -279,6 +279,11 @@ def _empty_counts() -> dict[str, Any]:
     }
 
 
+def empty_counts() -> dict[str, Any]:
+    """All-zero counts: the ``counts`` of a hook payload for ``resolve`` and ``unresolve``."""
+    return _empty_counts()
+
+
 def _with_text_counts(counts: dict[str, Any], text: TextCounts, mentions: int) -> dict[str, Any]:
     counts.update(
         links=text.links,

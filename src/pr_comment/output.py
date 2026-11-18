@@ -33,6 +33,9 @@ class Outcome:
     exit_code: int
     document: dict[str, Any] | None = None
     human: tuple[str, ...] = ()
+    # Lines that say why a result document (no top-level ``error``) has a non-zero exit: shown
+    # even with ``--quiet``, like an error's one-line message (``resolve`` and ``unresolve``).
+    human_errors: tuple[str, ...] = ()
 
 
 def error_outcome(code: str, message: str, **fields: Any) -> Outcome:
@@ -92,8 +95,10 @@ def check_outcome(result: object) -> Outcome:
         raise TypeError("handler exit code is not a defined exit code")
     if result.document is not None and not isinstance(result.document, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
         raise TypeError("handler document is not a dict")
-    if not isinstance(result.human, tuple) or not all(  # pyright: ignore[reportUnnecessaryIsInstance]
-        isinstance(line, str) for line in result.human
+    if (
+        not isinstance(result.human, tuple)  # pyright: ignore[reportUnnecessaryIsInstance]
+        or not isinstance(result.human_errors, tuple)  # pyright: ignore[reportUnnecessaryIsInstance]
+        or not all(isinstance(line, str) for line in (*result.human, *result.human_errors))  # pyright: ignore[reportUnnecessaryIsInstance]
     ):
         raise TypeError("handler human lines are not a tuple of strings")
     _check_error_document(result)
@@ -141,6 +146,8 @@ def render(
     error = _error_of(outcome.document)
     if outcome.exit_code != 0 and error is not None:
         lines.extend(_human_error(error, verbose=verbose and not quiet))
+    if outcome.exit_code != 0:
+        lines.extend(sanitize(line) for line in outcome.human_errors)
     if not quiet:
         lines.extend(sanitize(line) for line in outcome.human)
     return stdout, "".join(f"{line}\n" for line in lines)

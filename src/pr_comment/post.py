@@ -91,6 +91,7 @@ from .hooks import (
     HookResult,
     HookRunner,
     HookSet,
+    PreVerdict,
     first_line,
     payload_for,
     run_post,
@@ -384,6 +385,58 @@ def _write_result(lowered: Lowered, warnings: Sequence[str]) -> dict[str, Any]:
     }
 
 
+def pre_outcome(
+    verdict: PreVerdict,
+    found: tuple[str, ...],
+    *,
+    override_escalation: Sequence[str],
+    log: LogWriter,
+    pr: str,
+    attempt_id: str,
+) -> Outcome | None:
+    """What the ``pre-post`` hooks decided for one write: None to go on, else the veto (exit 11)
+    or the escalation (exit 13) as the outcome. ``found`` is the ids earlier hooks printed. An
+    escalation is allowed by ``--override-escalation=pr-comment`` (logged)."""
+    if verdict.vetoed is not None:
+        vetoed = verdict.vetoed
+        message = f"pre-post hook {vetoed.index} vetoed the write ({_why(vetoed)})"
+        detail = first_line(vetoed.stderr)
+        if detail:
+            message += f": {detail}"
+        return error_outcome(
+            "vetoed", message, hook=PRE, hook_stderr=vetoed.stderr, decision_ids=found
+        )
+    if not verdict.escalated:
+        return None
+    first = verdict.escalated[0]
+    hooks = [{"hook": PRE, "index": item.index} for item in verdict.escalated]
+    if "pr-comment" in override_escalation:
+        log.write(
+            "escalated",
+            level="info",
+            pr=pr,
+            attempt_id=attempt_id,
+            details={"overridden": True, "hooks": hooks},
+        )
+        return None
+    message = (
+        f"pre-post hook {first.index} escalated: a human must decide; "
+        "rerun with --override-escalation=pr-comment to allow"
+    )
+    detail = first_line(first.stderr)
+    if detail:
+        message += f": {detail}"
+    return error_outcome(
+        "escalated",
+        message,
+        hook=PRE,
+        hook_stderr=first.stderr,
+        escalated_by="pr-comment",
+        escalated_hooks=hooks,
+        decision_ids=found,
+    )
+
+
 class _WriteHooks:
     """The hooks of the run's one forgectl write (index 0). The ids they print are kept apart from
     the plan's: ``plan.decision_ids`` (the caller's) is never touched."""
@@ -436,44 +489,13 @@ class _WriteHooks:
             self.ids,
             lambda entry, ids: self._payload(PRE, entry.with_text, ids, None),
         )
-        found = tuple(self.ids.from_hooks)
-        if verdict.vetoed is not None:
-            vetoed = verdict.vetoed
-            message = f"pre-post hook {vetoed.index} vetoed the write ({_why(vetoed)})"
-            detail = first_line(vetoed.stderr)
-            if detail:
-                message += f": {detail}"
-            return error_outcome(
-                "vetoed", message, hook=PRE, hook_stderr=vetoed.stderr, decision_ids=found
-            )
-        if not verdict.escalated:
-            return None
-        first = verdict.escalated[0]
-        hooks = [{"hook": PRE, "index": item.index} for item in verdict.escalated]
-        if "pr-comment" in self._prepared.request.override_escalation:
-            self._env.log.write(
-                "escalated",
-                level="info",
-                pr=self._prepared.plan.pr,
-                attempt_id=self._env.trail.attempt_id,
-                details={"overridden": True, "hooks": hooks},
-            )
-            return None
-        message = (
-            f"pre-post hook {first.index} escalated: a human must decide; "
-            "rerun with --override-escalation=pr-comment to allow"
-        )
-        detail = first_line(first.stderr)
-        if detail:
-            message += f": {detail}"
-        return error_outcome(
-            "escalated",
-            message,
-            hook=PRE,
-            hook_stderr=first.stderr,
-            escalated_by="pr-comment",
-            escalated_hooks=hooks,
-            decision_ids=found,
+        return pre_outcome(
+            verdict,
+            tuple(self.ids.from_hooks),
+            override_escalation=self._prepared.request.override_escalation,
+            log=self._env.log,
+            pr=self._prepared.plan.pr,
+            attempt_id=self._env.trail.attempt_id,
         )
 
     def post(
