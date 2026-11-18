@@ -54,6 +54,15 @@ FLAGS: list[tuple[list[str], str, str, list[str]]] = [
     (["approve", PR], "--expected-head", SHA, ["abc"]),
     (["approve", PR], "--expected-base", "main", ["a..b", "a@{b", "-x", "refs/heads/m", ""]),
     (["approve", PR], "--dedupe-key", "k", ["a b"]),
+    (
+        ["review", PR, "--draft-file", "d"],
+        "--allow-mention",
+        "org/team",
+        ["", "@john", "a/", "/a", "a//b", "a b", "é", "a​b", "＠x", "a\nb"],
+    ),
+    (["comment", PR, "--body-file", "b"], "--allow-mention", "John.Doe", ["@x", "a,b"]),
+    (["reply", PR, "--body-file", "b"], "--allow-mention", "a-b_c", ["a/", "a&#64;"]),
+    (["approve", PR], "--allow-mention", "g/sub/proj", ["@all", "a/b/"]),
     (["resolve", PR], "--thread", THREAD, ["gh:ic:abc", "gl:d:" + "a" * 39, "x", "-x"]),
     (["unresolve", PR], "--thread", "gl:d:" + SHA, ["gh:rt:" + "a" * 101, "gl:n:1"]),
 ]

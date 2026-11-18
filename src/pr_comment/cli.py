@@ -313,9 +313,16 @@ def _add_common_posting_flags(parser: argparse.ArgumentParser, *, base: bool = F
     parser.add_argument(
         "--dedupe-key", action=_StoreOnce, metavar="KEY", type=_checked(grammars.check_dedupe_key)
     )
-    # TODO(#16): validate and apply the mention allowlist; TODO(#5): require a human actor and
-    # an interactive run for --allow-mention.
-    parser.add_argument("--allow-mention", action=AppendAction, default=[], metavar="NAME")
+    # The value grammar is checked here; the names are applied by the renderer (mentions.py),
+    # which the review, comment, reply and approve orders build from the config and these values.
+    # TODO(#5): require a human actor and an interactive run for --allow-mention.
+    parser.add_argument(
+        "--allow-mention",
+        action=AppendAction,
+        default=[],
+        metavar="NAME",
+        type=_checked(grammars.check_mention_name),
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
