@@ -187,11 +187,14 @@ def _run(capsys: pytest.CaptureFixture[str], argv: list[str]) -> tuple[int, str,
     return code, captured.out, captured.err
 
 
-def test_main_honors_quiet_and_verbose_on_a_failure(capsys: pytest.CaptureFixture[str]) -> None:
-    base = ["resolve", PR, "--thread", "gh:rt:1"]
+def test_main_honors_quiet_and_verbose_on_a_failure(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(cli.HANDLERS, "export", cli._not_implemented)
+    base = ["export"]
     code, out, err = _run(capsys, base)
     assert (code, out) == (1, "")
-    assert err == "pr-comment: resolve is not implemented yet\n"
+    assert err == "pr-comment: export is not implemented yet\n"
     assert _run(capsys, [*base, "--quiet"])[2] == err
     verbose = _run(capsys, [*base, "--verbose"])[2]
     assert verbose.startswith(err)
@@ -206,8 +209,9 @@ def test_a_usage_error_honors_quiet_and_verbose(capsys: pytest.CaptureFixture[st
 
 
 def test_the_full_envelope_reaches_json_stdout_for_the_unimplemented_stub(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setitem(cli.HANDLERS, "resolve", cli._not_implemented)
     code, out, _ = _run(
         capsys, ["resolve", "https://example.test/o/r/pull/1", "--thread", "gh:rt:1", "--json"]
     )

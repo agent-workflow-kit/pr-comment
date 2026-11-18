@@ -88,11 +88,12 @@ def test_human_message_is_one_sanitized_line(
 
 
 def test_valid_config_loads_and_the_handler_runs(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = write_config(tmp_path, "timeout: 5s\n")
-    code, out, _ = run(capsys, "--json", "--config", config, "resolve", PR, "--thread", "gh:rt:1")
-    # No handler is written yet: the dispatch reaches it and reports `internal`.
+    # The stub handler never reaches forgectl: the dispatch reaches it and reports `internal`.
+    monkeypatch.setitem(cli.HANDLERS, "draft new", cli._not_implemented)
+    code, out, _ = run(capsys, "--json", "--config", config, "draft", "new", PR)
     assert code == 1
     assert json.loads(out)["error"]["code"] == "internal"
 

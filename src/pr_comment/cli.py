@@ -42,6 +42,8 @@ from .prepare import (
     dry_run_outcome,
     prepare,
 )
+from .threads import ThreadRequest, confirm_threads, prepare_threads, write_threads
+from .threads import finish as finish_threads
 
 DESCRIPTION = "Posts reviews, replies and comments to PRs, safely and with attribution."
 
@@ -542,9 +544,23 @@ def _stdin_fd() -> int:
 
 def _confirmed(args: argparse.Namespace, prepared: Prepared, session: _Session) -> Outcome | None:
     """Step 8, Confirm (docs/interface.md, Confirmation): None when the run may write, else the
-    refusal. ``--yes`` skips the dialog. A run that is not interactive and has no ``--yes`` ends
-    at exit 13 before any write, recording nothing. An interactive run shows the dialog on stderr
-    and reads one answer from the terminal; anything but ``y`` or ``yes`` declines (exit 13,
+    refusal (see ``_gate``)."""
+    return _gate(
+        args,
+        session,
+        prepared.plan.pr,
+        lambda: confirm(
+            prepared, stdin_fd=_stdin_fd(), write=lambda text: _write(sys.stderr, text)
+        ),
+    )
+
+
+def _gate(
+    args: argparse.Namespace, session: _Session, pr: str, ask: Callable[[], bool]
+) -> Outcome | None:
+    """``--yes`` skips the dialog. A run that is not interactive and has no ``--yes`` ends at
+    exit 13 before any write, recording nothing. An interactive run shows the dialog (``ask``, on
+    stderr, one answer from the terminal); anything but ``y`` or ``yes`` declines (exit 13,
     message ``declined``, logged as ``declined``; no audit record is written)."""
     if args.yes:
         return None
@@ -553,10 +569,27 @@ def _confirmed(args: argparse.Namespace, prepared: Prepared, session: _Session) 
             "confirmation_required",
             "confirmation required: run on a terminal to answer, or pass --yes",
         )
-    if confirm(prepared, stdin_fd=_stdin_fd(), write=lambda text: _write(sys.stderr, text)):
+    if ask():
         return None
-    session.log.write("declined", pr=prepared.plan.pr, attempt_id=session.attempt_id)
+    session.log.write("declined", pr=pr, attempt_id=session.attempt_id)
     return error_outcome("confirmation_required", "declined")
+
+
+def _post_env(args: argparse.Namespace, gateway: Gateway, session: _Session) -> PostEnv:
+    assert session.trail is not None  # opened in step 1, before the first read
+    return PostEnv(
+        gateway=gateway,
+        trail=session.trail,
+        log=session.log,
+        run=args.run,
+        config=args.loaded_config,
+        hooks=HookSet(
+            pre=args.loaded_config.hooks_for("pre-post", args.hook),
+            post=args.loaded_config.hooks_for("post-post", args.hook),
+            deny=tuple(args.loaded_config.config.hook_env_deny),
+        ),
+        dirs=session.dirs,
+    )
 
 
 def _confirm_and_post(
@@ -576,20 +609,7 @@ def _confirm_and_post(
     refused = _confirmed(args, prepared, session)
     if refused is not None:
         return refused
-    assert session.trail is not None  # opened in step 1, before the first read
-    env = PostEnv(
-        gateway=gateway,
-        trail=session.trail,
-        log=session.log,
-        run=args.run,
-        config=args.loaded_config,
-        hooks=HookSet(
-            pre=args.loaded_config.hooks_for("pre-post", args.hook),
-            post=args.loaded_config.hooks_for("post-post", args.hook),
-            deny=tuple(args.loaded_config.config.hook_env_deny),
-        ),
-        dirs=session.dirs,
-    )
+    env = _post_env(args, gateway, session)
     return post_review(prepared, env)
 
 
@@ -633,8 +653,69 @@ def _run_posting(args: argparse.Namespace, session: _Session) -> Outcome:
     return _confirm_and_post(args, prepared, gateway, session)
 
 
+def _threads(args: argparse.Namespace) -> Outcome:
+    """``resolve`` and ``unresolve``: usage, reads, ``--dry-run``, the dialog, then one write per
+    thread (docs/interface.md, Resolve order; ``threads.py``)."""
+    session = _Session(args)
+    try:
+        return _run_threads(args, session)
+    finally:
+        session.close()
+
+
+def _run_threads(args: argparse.Namespace, session: _Session) -> Outcome:
+    loaded = args.loaded_config
+    gateway = ProcessGateway.from_config(loaded)
+    env = Env(
+        gateway=gateway,
+        config=loaded,
+        me_name=_me_name(loaded),
+        tool_version=_version(),
+        before_reads=session.open,
+    )
+    request = ThreadRequest(
+        command=args.command,
+        pr=args.pr,
+        actor=args.run.actor,
+        threads=tuple(args.thread),
+        decision_ids=tuple(args.decision_id),
+        override_escalation=tuple(args.override_escalation),
+    )
+
+    def warn(reason: str) -> None:
+        LOG.warning("%s: authors are shown as unknown", reason)
+        session.log.write(
+            "warning", pr=args.pr, attempt_id=session.attempt_id, details={"reason": reason}
+        )
+
+    try:
+        run = prepare_threads(request, env, warn)
+    except (RunFailure, LowerFailure) as failure:
+        log_failure(session.log, session.attempt_id, None, failure.outcome)
+        return failure.outcome
+    except ToolMissing as exc:
+        return tool_missing_outcome(exc)
+    for item in run.items:
+        if item.failure is not None:
+            log_failure(session.log, session.attempt_id, run.show.pr, item.failure)
+    if args.dry_run:
+        return finish_threads(run, dry_run=True)
+    if not run.to_change():  # no dialog, no hooks, no audit record
+        return finish_threads(run, dry_run=False)
+    refused = _gate(
+        args,
+        session,
+        run.show.pr,
+        lambda: confirm_threads(
+            run, stdin_fd=_stdin_fd(), write=lambda text: _write(sys.stderr, text)
+        ),
+    )
+    if refused is not None:
+        return refused
+    return write_threads(run, _post_env(args, gateway, session))
+
+
 # One handler per command path. Later issues replace the entries with real handlers.
-# TODO(#35): resolve and unresolve.
 def _draft_check(args: argparse.Namespace) -> Outcome:
     # TODO(#5): `-` with a TTY stdin exits 2 usage (the TTY rule is not in this base).
     return run_check(args.path)
@@ -651,10 +732,10 @@ def _draft_new(args: argparse.Namespace) -> Outcome:
 
 HANDLERS: dict[str, Handler] = {
     **dict.fromkeys(("review", "comment", "reply", "approve"), _posting),
-    **dict.fromkeys(("resolve", "unresolve"), _not_implemented),
     "draft check": _draft_check,
     "export": handle_export,
     "draft new": _draft_new,
+    **dict.fromkeys(("resolve", "unresolve"), _threads),
 }
 
 _VALUE_FLAGS = frozenset(flag for spec in _GLOBAL_FLAGS if spec.takes_value for flag in spec.flags)

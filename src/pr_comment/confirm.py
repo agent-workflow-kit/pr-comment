@@ -295,8 +295,20 @@ def confirm(prepared: Prepared, *, stdin_fd: int, write: Callable[[str], None]) 
 
     ``write`` prints to stderr. Raises ``Interrupted`` on SIGINT, SIGTERM or SIGHUP.
     """
+    return confirm_with(
+        lambda width, encoding: dialog_text(prepared, width, encoding),
+        stdin_fd=stdin_fd,
+        write=write,
+    )
+
+
+def confirm_with(
+    render: Callable[[int, str], str], *, stdin_fd: int, write: Callable[[str], None]
+) -> bool:
+    """``confirm`` for any dialog: ``render(width, encoding)`` is the text above the prompt (the
+    resolve and unresolve dialog, ``threads.py``). The same strict answer rules apply."""
     width, encoding = _terminal_size()
-    text = dialog_text(prepared, width, encoding)
+    text = render(width, encoding)
     try:
         with _interruptible():
             write(text)
