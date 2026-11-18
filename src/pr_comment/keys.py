@@ -7,9 +7,14 @@ array is its own length prefix: no choice of field values can move a boundary, a
 is the second element of every array, so the actions are domain separated.
 
 Decisions: ``body`` is Text pipeline step 1's output (line separators become LF) and is otherwise
-taken as given: no Unicode normalization, no whitespace trimming. A lone surrogate cannot be
-encoded; every function raises ``ValueError`` for it (the message never holds the value). Callers
-refuse such text earlier (``textpipe.text_problem``), so this is a backstop.
+taken as given: no Unicode normalization, no whitespace trimming. A key body and every plan body
+``text`` must be free of a control character other than tab and LF and of a lone surrogate
+(``textpipe.has_forbidden_character``, the check of step 1's ``invalid_text``); the suggestion-fence
+check is not applied, because final texts hold legitimate suggestion fences. Plan text is checked as
+given, with no line normalization (it is already final). ``ValueError`` is raised without echoing
+the value. Callers refuse such text earlier, so this is a backstop. ``path`` is not checked beyond
+encodability: a file name may hold any character but NUL. ``pr_id`` follows the ``pr_id`` pattern of
+schemas/defs.json and the plan's ``pr`` its ``pr`` pattern (forgectl's canonical ``host/path#N``).
 
 ``plan_sha256`` hashes exactly the fields the spec lists. It takes mappings and copies out only the
 known fields, so a plan output's extras (``bytes``, ``commands``) and key order never matter. The
@@ -43,6 +48,12 @@ from pr_comment.grammars import (
 _DRAFT_ID_RE: Final = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 _FINDING_ID_RE: Final = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _THREAD_RE: Final = re.compile(r"gh:rt:[A-Za-z0-9_=-]{1,100}|gl:d:[0-9a-f]{40}")
+_PR_ID_RE: Final = re.compile(r"[A-Za-z0-9:/_=-]{1,128}")
+_PLAN_PR_RE: Final = re.compile(
+    r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?::[0-9]{1,5})?"
+    r"(?:/(?!\.\.?(?:/|#))[A-Za-z0-9._-]+)+#[1-9][0-9]{0,9}"
+)
+_MAX_LINE: Final = 2**31 - 1
 _ACTIONS: Final = ("review", "approve", "comment", "reply")
 _EVENTS: Final = ("comment", "request_changes", "approve")
 _SIDES: Final = ("right", "left")
@@ -68,13 +79,19 @@ def _checked(check: Any, value: object, what: str) -> str:
 
 def _pr_id(value: object) -> str:
     text = _str(value, "pr_id")
-    if not text:
-        raise ValueError("pr_id must not be empty")
+    if not _PR_ID_RE.fullmatch(text):
+        raise ValueError("pr_id does not match its grammar")
+    return text
+
+
+def _clean_text(text: str, what: str) -> str:
+    if textpipe.has_forbidden_character(text):
+        raise ValueError(f"{what} holds a control character")
     return text
 
 
 def _body(value: object) -> str:
-    return textpipe.normalize_lines(_str(value, "body"))
+    return _clean_text(textpipe.normalize_lines(_str(value, "body")), "body")
 
 
 def _content_key(action: str, array: list[str]) -> str:
@@ -131,6 +148,8 @@ def _line(value: object, what: str, *, nullable: bool) -> int | None:
         return None
     if type(value) is not int or value < 1:
         raise ValueError(f"{what} must be an integer of at least 1")
+    if value > _MAX_LINE:
+        raise ValueError(f"{what} is too large")
     return value
 
 
@@ -150,6 +169,24 @@ def _field(item: Mapping[str, Any], name: str, what: str) -> Any:
     if name not in item:
         raise ValueError(f"{what} is missing {name}")
     return item[name]
+
+
+def _plan_pr(value: object) -> str:
+    text = _checked(check_pr, value, "pr")
+    if not _PLAN_PR_RE.fullmatch(text):
+        raise ValueError("pr must be the canonical host/path#N form")
+    return text
+
+
+def _check_action_event_to(action: str, event: str | None, to: str | None) -> None:
+    if (to is not None) != (action == "reply"):
+        raise ValueError("to is required for reply and null for every other action")
+    if action in ("comment", "reply") and event is not None:
+        raise ValueError("event must be null for comment and reply")
+    if action == "approve" and event != "approve":
+        raise ValueError("event must be approve for approve")
+    if action == "review" and event is None:
+        raise ValueError("event is required for review")
 
 
 def plan_sha256(
@@ -172,6 +209,7 @@ def plan_sha256(
         raise ValueError("action must be review, approve, comment or reply")
     if event is not None and event not in _EVENTS:
         raise ValueError("event must be null, comment, request_changes or approve")
+    _check_action_event_to(action, event, to)
     ids = _sequence(decision_ids, "decision_ids")
     if len(ids) > MAX_DECISION_IDS:
         raise ValueError("too many decision ids")
@@ -182,7 +220,7 @@ def plan_sha256(
         body_items.append(
             {
                 "role": _str(_field(item, "role", "a bodies entry"), "role"),
-                "text": _str(_field(item, "text", "a bodies entry"), "text"),
+                "text": _clean_text(_str(_field(item, "text", "a bodies entry"), "text"), "text"),
             }
         )
     roles = [b["role"] for b in body_items]
@@ -191,6 +229,7 @@ def plan_sha256(
     for role in roles[1:]:
         if not role.startswith("inline:") or not _FINDING_ID_RE.fullmatch(role[7:]):
             raise ValueError("a bodies role must be body or inline:<finding id>")
+    inline_roles: list[str] = []
 
     inline_items: list[dict[str, Any]] = []
     for raw in _sequence(inline_comments, "inline_comments"):
@@ -200,24 +239,32 @@ def plan_sha256(
         if not _FINDING_ID_RE.fullmatch(finding_id):
             raise ValueError("finding_id does not match its grammar")
         role = _str(_field(item, "role", what), "role")
-        if role != f"inline:{finding_id}" or role not in roles:
-            raise ValueError("an inline comment's role must name its finding and a bodies entry")
+        if role != f"inline:{finding_id}":
+            raise ValueError("an inline comment's role must name its finding")
+        inline_roles.append(role)
         path = _str(_field(item, "path", what), "path")
         if not path:
             raise ValueError("path must not be empty")
         side = _field(item, "side", what)
         if side not in _SIDES:
             raise ValueError("side must be right or left")
+        line = _line(_field(item, "line", what), "line", nullable=False)
+        start_line = _line(_field(item, "start_line", what), "start_line", nullable=True)
+        if start_line is not None and line is not None and start_line >= line:
+            raise ValueError("start_line must be less than line")
         inline_items.append(
             {
                 "finding_id": finding_id,
                 "path": path,
-                "line": _line(_field(item, "line", what), "line", nullable=False),
-                "start_line": _line(_field(item, "start_line", what), "start_line", nullable=True),
+                "line": line,
+                "start_line": start_line,
                 "side": side,
                 "role": role,
             }
         )
+
+    if roles[1:] != inline_roles:
+        raise ValueError("bodies after the first must match inline_comments in role and order")
 
     follow_items: list[dict[str, str | None]] = []
     for raw in _sequence(follow_ups, "follow_ups"):
@@ -230,7 +277,7 @@ def plan_sha256(
         follow_items.append({"action": "resolve", "thread_id": thread})
 
     plan = {
-        "pr": _checked(check_pr, pr, "pr"),
+        "pr": _plan_pr(pr),
         "action": action,
         "event": event,
         "head_sha": _checked(check_sha, head_sha, "head_sha"),

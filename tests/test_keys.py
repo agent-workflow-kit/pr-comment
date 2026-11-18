@@ -104,21 +104,21 @@ def test_review_key_ignores_everything_but_the_draft_id() -> None:
 
 
 def test_approve_without_body_is_the_empty_body() -> None:
-    assert keys.approve_key("p#1", HEAD, BASE, None) == keys.approve_key("p#1", HEAD, BASE, "")
+    assert keys.approve_key("p_1", HEAD, BASE, None) == keys.approve_key("p_1", HEAD, BASE, "")
 
 
 def test_approve_key_follows_each_input() -> None:
-    base = keys.approve_key("p#1", HEAD, BASE, "x")
-    assert keys.approve_key("p#2", HEAD, BASE, "x") != base
-    assert keys.approve_key("p#1", HEAD2, BASE, "x") != base
-    assert keys.approve_key("p#1", HEAD, "dev", "x") != base
-    assert keys.approve_key("p#1", HEAD, BASE, "y") != base
+    base = keys.approve_key("p_1", HEAD, BASE, "x")
+    assert keys.approve_key("p_2", HEAD, BASE, "x") != base
+    assert keys.approve_key("p_1", HEAD2, BASE, "x") != base
+    assert keys.approve_key("p_1", HEAD, "dev", "x") != base
+    assert keys.approve_key("p_1", HEAD, BASE, "y") != base
 
 
 def test_actions_are_domain_separated() -> None:
-    comment = keys.comment_key("p#1", "x")
-    approve = keys.approve_key("p#1", HEAD, BASE, "x")
-    reply = keys.reply_key("p#1", TO, "x")
+    comment = keys.comment_key("p_1", "x")
+    approve = keys.approve_key("p_1", HEAD, BASE, "x")
+    reply = keys.reply_key("p_1", TO, "x")
     assert len({comment, approve, reply}) == 3
     assert {k.split(":")[1] for k in (comment, approve, reply)} == {"comment", "approve", "reply"}
     # Same hash input shape for different actions still gives different digests.
@@ -126,43 +126,72 @@ def test_actions_are_domain_separated() -> None:
 
 
 def test_field_boundaries_are_unambiguous() -> None:
-    assert keys.reply_key("p#1", "gh:rc:ab", "c") != keys.reply_key("p#1", "gh:rc:a", "bc")
-    assert keys.comment_key("p#1", 'a","b') != keys.comment_key('p#1","a', "b")
-    assert keys.approve_key("p#1", HEAD, "ab", "c") != keys.approve_key("p#1", HEAD, "a", "bc")
+    assert keys.reply_key("p_1", "gh:rc:ab", "c") != keys.reply_key("p_1", "gh:rc:a", "bc")
+    assert keys.comment_key("p_1", 'a","b') != keys.comment_key("p_1", 'a",b')
+    assert keys.comment_key("ab", "c") != keys.comment_key("a", "bc")
+    assert keys.approve_key("p_1", HEAD, "ab", "c") != keys.approve_key("p_1", HEAD, "a", "bc")
 
 
 def test_body_line_separators_are_normalized_by_step_1() -> None:
-    lf = keys.comment_key("p#1", "a\nb\nc")
+    lf = keys.comment_key("p_1", "a\nb\nc")
     for sep in ("\r\n", "\r", "\x0b", "\x0c", "\x1c", "\x85", " ", " "):
-        assert keys.comment_key("p#1", f"a{sep}b{sep}c") == lf
+        assert keys.comment_key("p_1", f"a{sep}b{sep}c") == lf
 
 
 def test_body_is_otherwise_taken_as_given() -> None:
-    base = keys.comment_key("p#1", "café")
-    assert keys.comment_key("p#1", "café") != base  # no Unicode normalization
-    assert keys.comment_key("p#1", "café ") != base  # whitespace counts
-    assert keys.comment_key("p#1", "café\n") != base
-    assert keys.comment_key("p#1", "") != keys.comment_key("p#1", " ")
+    base = keys.comment_key("p_1", "café")
+    assert keys.comment_key("p_1", "café") != base  # no Unicode normalization
+    assert keys.comment_key("p_1", "café ") != base  # whitespace counts
+    assert keys.comment_key("p_1", "café\n") != base
+    assert keys.comment_key("p_1", "") != keys.comment_key("p_1", " ")
 
 
 def test_body_hostile_inputs() -> None:
-    for body in ("\x00", "a\x00b", "\U0001f600" * 5, "x" * 2_000_000, '"\\\\"', "\u0000" * 10):
-        key = keys.comment_key("p#1", body)
+    for body in ("a\tb\n", "\U0001f600" * 5, "x" * 2_000_000, '"\\\\"', "\u202e"):
+        key = keys.comment_key("p_1", body)
         check_dedupe_key(key)
-    assert keys.comment_key("p#1", "a\x00b") != keys.comment_key("p#1", "ab")
+
+
+@pytest.mark.parametrize("body", ["\x00", "a\x00b", "\x1b[0m", "\x7f", "a\x9fb", "\u0000" * 10])
+def test_key_body_with_a_control_character_is_refused_without_echo(body: str) -> None:
+    for call in (
+        lambda: keys.comment_key("p_1", body),
+        lambda: keys.reply_key("p_1", TO, body),
+        lambda: keys.approve_key("p_1", HEAD, BASE, body),
+    ):
+        with pytest.raises(ValueError) as err:
+            call()
+        assert "\x00" not in str(err.value)
+
+
+@pytest.mark.parametrize(
+    "pr_id", ["", " ", "a b", "a\x00b", "a\nb", "caf\u00e9", "a" * 129, "p#1", "a.b", "a\n"]
+)
+def test_pr_id_outside_its_grammar_is_refused(pr_id: str) -> None:
+    with pytest.raises(ValueError):
+        keys.comment_key(pr_id, "x")
+    with pytest.raises(ValueError):
+        keys.reply_key(pr_id, TO, "x")
+    with pytest.raises(ValueError):
+        keys.approve_key(pr_id, HEAD, BASE, None)
+
+
+def test_pr_id_grammar_boundaries() -> None:
+    for pr_id in ("a", "a" * 128, "PR_kwDOA", "gl:x/y=z-1"):
+        keys.comment_key(pr_id, "x")
 
 
 @pytest.mark.parametrize("body", ["\ud800", "a\udfffb", "\ud83d"])
 def test_lone_surrogate_is_refused_without_echo(body: str) -> None:
     with pytest.raises(ValueError) as err:
-        keys.comment_key("p#1", body)
+        keys.comment_key("p_1", body)
     assert "\ud800" not in str(err.value)
 
 
 @pytest.mark.parametrize("bad", [None, 1, b"x", ["x"], True])
 def test_non_string_inputs_are_refused(bad: Any) -> None:
     with pytest.raises(ValueError):
-        keys.comment_key("p#1", bad)
+        keys.comment_key("p_1", bad)
     with pytest.raises(ValueError):
         keys.comment_key(bad, "x")
     with pytest.raises(ValueError):
@@ -171,9 +200,9 @@ def test_non_string_inputs_are_refused(bad: Any) -> None:
 
 def test_approve_none_body_only_for_approve() -> None:
     with pytest.raises(ValueError):
-        keys.comment_key("p#1", None)  # type: ignore[arg-type]
+        keys.comment_key("p_1", None)  # type: ignore[arg-type]
     with pytest.raises(ValueError):
-        keys.reply_key("p#1", TO, None)  # type: ignore[arg-type]
+        keys.reply_key("p_1", TO, None)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("draft_id", ["", "short", DRAFT_ID.lower(), DRAFT_ID + "0", "I" * 26])
@@ -189,14 +218,14 @@ def test_bad_head_is_refused(head: str) -> None:
     with pytest.raises(ValueError):
         keys.review_approve_key(DRAFT_ID, head)
     with pytest.raises(ValueError):
-        keys.approve_key("p#1", head, BASE, None)
+        keys.approve_key("p_1", head, BASE, None)
 
 
 def test_bad_base_to_and_pr_are_refused() -> None:
     with pytest.raises(ValueError):
-        keys.approve_key("p#1", HEAD, "-x", None)
+        keys.approve_key("p_1", HEAD, "-x", None)
     with pytest.raises(ValueError):
-        keys.reply_key("p#1", "nope", "x")
+        keys.reply_key("p_1", "nope", "x")
     with pytest.raises(ValueError):
         keys.comment_key("", "x")
 
@@ -205,22 +234,22 @@ def test_every_key_satisfies_the_dedupe_key_grammar() -> None:
     rng = random.Random(21)
     for _ in range(200):
         body = "".join(
-            chr(rng.choice([rng.randrange(32, 0xD800), rng.randrange(0xE000, 0x110000)]))
+            chr(rng.choice([rng.randrange(0xA0, 0xD800), rng.randrange(0xE000, 0x110000)]))
             for _ in range(rng.randrange(0, 40))
         )
         for key in (
-            keys.comment_key("p#1", body),
-            keys.reply_key("p#1", TO, body),
-            keys.approve_key("p#1", HEAD, BASE, body),
+            keys.comment_key("p_1", body),
+            keys.reply_key("p_1", TO, body),
+            keys.approve_key("p_1", HEAD, BASE, body),
         ):
             assert check_dedupe_key(key) == key
-    assert len(keys.comment_key("p#1", "x")) == len("prc:comment:") + 20
+    assert len(keys.comment_key("p_1", "x")) == len("prc:comment:") + 20
     check_dedupe_key(keys.review_key(DRAFT_ID))
     check_dedupe_key(keys.review_approve_key(DRAFT_ID, HEAD))
 
 
 def test_keys_are_deterministic_across_calls() -> None:
-    assert [keys.comment_key("p#1", "x") for _ in range(3)] == [keys.comment_key("p#1", "x")] * 3
+    assert [keys.comment_key("p_1", "x") for _ in range(3)] == [keys.comment_key("p_1", "x")] * 3
 
 
 # ---- plan hash ----
@@ -265,11 +294,9 @@ GOLDEN_PLAN = "2a941508b67611f60b55ffb701fa488acbecd7edae7fbe607bfef51b347f112e"
         {"pr": "example.test/team/proj#8"},
         {"action": "approve", "event": "approve"},
         {"event": "request_changes"},
-        {"event": None},
         {"head_sha": HEAD2},
         {"base_ref": "dev"},
         {"dedupe_key": "prc:rv:other"},
-        {"to": TO},
         {"actor": "human:bob"},
         {"actor": "auto:alice"},
         {"decision_ids": ["d1"]},
@@ -294,7 +321,10 @@ def mutate_paths() -> list[tuple[str, Any]]:
         ),
         (
             "body_swap",
-            lambda a: a["bodies"].__setitem__(slice(1, 3), [a["bodies"][2], a["bodies"][1]]),
+            lambda a: (
+                a["bodies"].__setitem__(slice(1, 3), [a["bodies"][2], a["bodies"][1]]),
+                a["inline_comments"].reverse(),
+            ),
         ),
         ("drop_body", lambda a: a["bodies"].pop()),
         ("path", lambda a: a["inline_comments"][0].__setitem__("path", "src/c.py")),
@@ -303,7 +333,13 @@ def mutate_paths() -> list[tuple[str, Any]]:
         ("start_line_none", lambda a: a["inline_comments"][1].__setitem__("start_line", None)),
         ("side", lambda a: a["inline_comments"][0].__setitem__("side", "left")),
         ("finding_id", lambda a: a["inline_comments"][1].__setitem__("finding_id", "f9")),
-        ("inline_order", lambda a: a["inline_comments"].reverse()),
+        (
+            "inline_order",
+            lambda a: (
+                a["inline_comments"].reverse(),
+                a["bodies"].__setitem__(slice(1, 3), [a["bodies"][2], a["bodies"][1]]),
+            ),
+        ),
     ]
 
 
@@ -343,7 +379,7 @@ def test_plan_hash_does_not_mutate_its_input() -> None:
 
 def test_plan_hash_is_exact_about_text() -> None:
     base = h()
-    for text in ("Summary\r\n\r\n<!-- pr-comment:v1 -->", "Summary\n\n<!-- pr-comment:v1 -->\n"):
+    for text in ("Summary\n\n<!-- pr-comment:v1 -->\n", "Summary\t\n\n<!-- pr-comment:v1 -->"):
         args = review_args()
         args["bodies"][0]["text"] = text
         assert keys.plan_sha256(**args) != base
@@ -363,10 +399,20 @@ def test_plan_hash_has_no_ascii_escape_ambiguity() -> None:
 
 
 def test_plan_hash_hostile_texts() -> None:
-    for text in ("\x00", "x" * 3_000_000, "\U0001f600‮", '"}],"to":"x'):
+    for text in ("x" * 3_000_000, "\U0001f600‮", '"}],"to":"x', "a\tb\n"):
         args = review_args()
         args["bodies"][0]["text"] = text
         check_plan_hash(keys.plan_sha256(**args))
+
+
+@pytest.mark.parametrize("text", ["\x00", "a\rb", "a\x0bb", "\x1b[0m", "\x7f", "a\x85b"])
+def test_plan_hash_refuses_a_control_character_in_text_without_echo(text: str) -> None:
+    for index in (0, 1):
+        args = review_args()
+        args["bodies"][index]["text"] = text
+        with pytest.raises(ValueError) as err:
+            keys.plan_sha256(**args)
+        assert "\x00" not in str(err.value)
 
 
 @pytest.mark.parametrize("bad", ["\ud800", "a\udc00"])
@@ -422,6 +468,91 @@ def test_plan_hash_refuses_malformed_plans() -> None:
             h(**over)
 
 
+def test_plan_hash_requires_the_canonical_pr() -> None:
+    for pr in (
+        "https://example.test/team/proj/pull/7",
+        "proj#7",
+        "Example.test/team/proj#7",
+        "example.test/team/proj#0",
+        "example.test/team/../proj#7",
+        "example.test/team/proj#7\n",
+    ):
+        with pytest.raises(ValueError):
+            h(pr=pr)
+    h(pr="example.test:8080/a/b.c-d_e#1234567890")
+
+
+def test_plan_hash_action_event_to_consistency() -> None:
+    comment_base = {"bodies": review_args()["bodies"][:1], "inline_comments": []}
+    bad: list[dict[str, Any]] = [
+        {"event": None},  # review needs an event
+        {"to": TO},  # to only for reply
+        {"action": "reply", "event": None, "to": None, **comment_base},
+        {"action": "reply", "event": "comment", "to": TO, **comment_base},
+        {"action": "comment", "event": "comment", **comment_base},
+        {"action": "comment", "event": None, "to": TO, **comment_base},
+        {"action": "approve", "event": None, **comment_base},
+        {"action": "approve", "event": "comment", **comment_base},
+        {"action": "approve", "event": "approve", "to": TO, **comment_base},
+    ]
+    for over in bad:
+        with pytest.raises(ValueError):
+            h(**over)
+    for over in (
+        {"action": "reply", "event": None, "to": TO, **comment_base},
+        {"action": "comment", "event": None, **comment_base},
+        {"action": "approve", "event": "approve", **comment_base},
+        {"event": "approve"},
+        {"event": "request_changes"},
+    ):
+        h(**over)
+
+
+def test_plan_hash_does_not_tie_the_key_prefix_to_the_action() -> None:
+    h(dedupe_key="custom-key")
+    h(action="review", dedupe_key="prc:comment:" + "a" * 20)
+
+
+def test_plan_hash_inline_roles_must_match_bodies_exactly() -> None:
+    dup = review_args()
+    dup["bodies"].append({"role": "inline:f1", "text": "again"})
+    dup["inline_comments"].append(copy.deepcopy(dup["inline_comments"][0]))
+    orphan_body = review_args()
+    orphan_body["inline_comments"].pop()
+    orphan_comment = review_args()
+    orphan_comment["bodies"].pop()
+    reordered = review_args()
+    reordered["inline_comments"].reverse()
+    for args in (dup, orphan_body, orphan_comment, reordered):
+        with pytest.raises(ValueError):
+            keys.plan_sha256(**args)
+
+
+def test_plan_hash_start_line_must_be_less_than_line() -> None:
+    for start, line in ((11, 10), (10, 10)):
+        args = review_args()
+        args["inline_comments"][0]["start_line"] = start
+        args["inline_comments"][0]["line"] = line
+        with pytest.raises(ValueError):
+            keys.plan_sha256(**args)
+    args = review_args()
+    args["inline_comments"][0]["start_line"] = 9
+    keys.plan_sha256(**args)
+
+
+def test_plan_hash_line_cap() -> None:
+    top = 2**31 - 1
+    args = review_args()
+    args["inline_comments"][0]["line"] = top
+    args["inline_comments"][0]["start_line"] = top - 1
+    keys.plan_sha256(**args)
+    for field in ("line", "start_line"):
+        args = review_args()
+        args["inline_comments"][1][field] = top + 1
+        with pytest.raises(ValueError):
+            keys.plan_sha256(**args)
+
+
 def test_plan_hash_refuses_inconsistent_roles() -> None:
     args = review_args()
     args["inline_comments"][0]["role"] = "inline:f2"
@@ -449,20 +580,20 @@ def test_plan_hash_for_comment_reply_approve() -> None:
         "follow_ups": [],
     }
     comment = keys.plan_sha256(
-        **base, action="comment", event=None, dedupe_key=keys.comment_key(PR, "hi"), to=None
+        **base, action="comment", event=None, dedupe_key=keys.comment_key("PR_kwDOA", "hi"), to=None
     )
     reply = keys.plan_sha256(
         **base,
         action="reply",
         event=None,
-        dedupe_key=keys.reply_key(PR, TO, "hi"),
+        dedupe_key=keys.reply_key("PR_kwDOA", TO, "hi"),
         to=TO,
     )
     approve = keys.plan_sha256(
         **base,
         action="approve",
         event="approve",
-        dedupe_key=keys.approve_key(PR, HEAD, BASE, "hi"),
+        dedupe_key=keys.approve_key("PR_kwDOA", HEAD, BASE, "hi"),
         to=None,
     )
     assert len({comment, reply, approve}) == 3
@@ -485,7 +616,7 @@ def test_plan_hash_random_drafts_property() -> None:
                 {
                     "finding_id": i,
                     "path": rng.choice(["a.py", "b/c.py", "d e.py"]),
-                    "line": rng.randrange(1, 500),
+                    "line": rng.randrange(2, 500),
                     "start_line": rng.choice([None, 1]),
                     "side": rng.choice(["left", "right"]),
                     "role": f"inline:{i}",
