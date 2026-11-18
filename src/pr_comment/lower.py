@@ -55,6 +55,9 @@ _EXIT12_PASSTHROUGH: Final = frozenset(
         "wrong_host_response",
     }
 )
+# forgectl's own ``tool_missing`` (gh or glab absent, ``details.install``) passes through on a host
+# read only: a read gives ``codes``, a write never lists it, so there it stays pr-comment's own.
+_EXIT12_READ_ONLY: Final = frozenset({"tool_missing"})
 _EXIT20_REASONS: Final = frozenset(
     {
         "stale_head",
@@ -129,9 +132,15 @@ def _display_version(version: str | None) -> str | None:
     did), cut to 64 characters, or None when nothing is left."""
     if version is None:
         return None
-    text = sanitize(version)
-    marker = text[:MAX_VERSION_CHARS]
-    return cut_bytes(marker) or None
+    kept: list[str] = []
+    size = 0
+    for char in version:
+        piece = sanitize(char)  # one character gives a character or one whole ``<U+XXXX>`` marker
+        if size + len(piece) > MAX_VERSION_CHARS:
+            break
+        kept.append(piece)
+        size += len(piece)
+    return cut_bytes("".join(kept)) or None
 
 
 def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -248,6 +257,8 @@ def failure_outcome(
         )
     allowed = _PASSTHROUGH.get(result.exit_code)
     write = _unknown_write(result)
+    if allowed is not None and result.exit_code == 12 and codes is not None:
+        allowed = allowed | (_EXIT12_READ_ONLY & codes)
     if allowed is None:
         return mismatch_outcome(
             command, f"unknown exit status {result.exit_code}", gateway=gateway, write=write
@@ -286,7 +297,7 @@ def partial_document(result: ForgectlResult) -> dict[str, Any] | None:
     hosts reads it here: None unless the exit is 12 and the output is an object with a ``hosts``
     list and an ``errors`` list and no ``error`` key.
     """
-    if result.exit_code != 12:
+    if result.exit_code != 12 or result.timed_out or result.stdout_truncated:
         return None
     try:
         document = _load_json(result, None)
@@ -323,9 +334,9 @@ def _passthrough(
         details = refusal.get("details")
         if reason not in _EXIT20_REASONS or not isinstance(message, str):
             raise _Mismatch("unknown refusal")
-        if (codes is not None and "refused" not in codes) or (
-            reasons is not None and reason not in reasons
-        ):
+        if codes is not None:  # a read never runs with --dry-run
+            raise _Mismatch("dry-run refusal on a read", top)
+        if reasons is not None and reason not in reasons:
             raise _Mismatch("refusal this command cannot give", top)
         if details is not None and not isinstance(details, dict):
             raise _Mismatch("details is not an object")

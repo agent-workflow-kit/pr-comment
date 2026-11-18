@@ -19,6 +19,7 @@ forgectl never go into pr-comment's own messages.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Annotated, Any, Final, Literal, TypeVar
@@ -33,17 +34,19 @@ from pydantic import (
 )
 
 from .errors import cut_bytes
-from .gateway import Gateway
-from .grammars import GrammarError, check_branch, check_pr, check_reply_target, check_thread
+from .gateway import MAX_STDOUT_BYTES, Gateway
+from .grammars import GrammarError, check_branch, check_pr, check_reply_target
 from .lower import LowerFailure, mismatch_outcome, partial_document, require_ok
 from .output import error_outcome
 
 MAX_ITEMS: Final = 100_000
 MAX_TEXT_BYTES: Final = 4 * 1024 * 1024
+MAX_DIFF_BYTES: Final = MAX_STDOUT_BYTES  # forgectl says too_large only above its stdout cap
 MAX_PATH_BYTES: Final = 64 * 1024
 MAX_ID_CHARS: Final = 256
 MAX_COUNT: Final = 2**31 - 1
 MAX_DETAIL_BYTES: Final = 1024
+MAX_BRANCH_CHARS: Final = 1024
 
 # Failures a read can end in (the pinned fake's tables: ``tests/fake_forgectl.py``
 # ``ALLOWED_CODES`` and ``ALLOWED_REASONS``). A write's codes (``vetoed``, ``outcome_partial``,
@@ -63,6 +66,7 @@ _HOST_READ_CODES: Final = frozenset(
         "invalid_pr",
         "config_invalid",
         "refused",
+        "tool_missing",
     }
 )
 _READ_CODES: Final = {
@@ -97,7 +101,8 @@ _HOST_RE: Final = re.compile(
 )
 _SHA_RE: Final = re.compile(r"[0-9a-f]{40}")
 _OPAQUE_RE: Final = re.compile(r"[A-Za-z0-9:/_=-]{1,128}")
-_ONE_LINE_BAD_RE: Final = re.compile(r"[\r\n]")
+_LISTED_THREAD_RE: Final = re.compile(r"gh:(?:rt|ic):[A-Za-z0-9_=-]{1,100}|gl:d:[0-9a-f]{40}")
+_ONE_LINE_BAD_RE: Final = re.compile(r"[\n\v\f\r\x85\u2028\u2029]")
 
 
 def _fullmatch(pattern: re.Pattern[str], what: str, limit: int = MAX_ID_CHARS) -> AfterValidator:
@@ -107,6 +112,16 @@ def _fullmatch(pattern: re.Pattern[str], what: str, limit: int = MAX_ID_CHARS) -
         return value
 
     return AfterValidator(check)
+
+
+def _check_base_ref(value: str) -> str:
+    """A base ref as git allows it, one line: 1 to 1024 characters, no control, format, surrogate
+    or separator character (forgectl shows those as ``<U+XXXX>`` markers, which pass)."""
+    if not 1 <= len(value) <= MAX_BRANCH_CHARS:
+        raise ValueError("invalid base ref")
+    if any(unicodedata.category(c) in ("Cc", "Cf", "Cs", "Zl", "Zp") for c in value):
+        raise ValueError("base ref holds a control character")
+    return value
 
 
 def _grammar(check: Any) -> AfterValidator:
@@ -143,10 +158,14 @@ RepoId = Annotated[str, _fullmatch(_REPO_RE, "repo", 2048)]
 Host = Annotated[str, _fullmatch(_HOST_RE, "host", 300)]
 Sha = Annotated[str, _fullmatch(_SHA_RE, "sha", 40)]
 Opaque = Annotated[str, _fullmatch(_OPAQUE_RE, "id", 128)]
-Branch = Annotated[str, _grammar(check_branch)]
-ThreadId = Annotated[str, _grammar(check_thread)]
+BaseRef = Annotated[str, AfterValidator(_check_base_ref)]
+# A listed thread: a resolvable one (``gh:rt:``, ``gl:d:``) or a GitHub general comment shown as a
+# one-comment thread (``gh:ic:``, never resolvable). ``grammars.check_thread`` stays strict for
+# resolve targets.
+ThreadId = Annotated[str, _fullmatch(_LISTED_THREAD_RE, "thread id", 256)]
 CommentId = Annotated[str, _grammar(check_reply_target)]
 Body = Annotated[str, _text(MAX_TEXT_BYTES)]
+DiffText = Annotated[str, _text(MAX_DIFF_BYTES)]
 Path = Annotated[str, _text(MAX_PATH_BYTES, one_line=True)]
 Login = Annotated[str, _text(MAX_ID_CHARS * 4, one_line=True), Field(min_length=1)]
 Count = Annotated[int, Field(ge=0, le=MAX_COUNT)]
@@ -168,7 +187,7 @@ class _Head(_Model):
 
 
 class _Base(_Model):
-    ref: Branch
+    ref: BaseRef
     sha: Sha | None
 
 
@@ -208,6 +227,12 @@ class Show(_Model):
         """The host: the repo id up to its first ``/``."""
         return self.repo.split("/", 1)[0]
 
+    def expected_base(self) -> str:
+        """The base ref as ``--expected-base`` takes it. ``show`` accepts any one-line ref (git
+        allows ``refs/x``, ``HEAD``, a leading ``-``); forwarding needs forgectl's branch grammar
+        and raises ``GrammarError`` for one that fails it."""
+        return check_branch(self.base.ref)
+
 
 # --- diff, compare, files ------------------------------------------------------------------------
 
@@ -217,7 +242,7 @@ class DiffRead(_Model):
     head_sha: Sha
     base_sha: Sha | None
     merge_base_sha: Sha | None
-    diff: Body
+    diff: DiffText
 
 
 class CompareRead(_Model):
@@ -225,7 +250,7 @@ class CompareRead(_Model):
     from_sha: Sha
     to_sha: Sha
     status: Literal["ahead", "behind", "diverged", "identical", "unavailable"]
-    diff: Body | None
+    diff: DiffText | None
 
     @model_validator(mode="after")
     def _consistent(self) -> CompareRead:
@@ -262,9 +287,22 @@ class FilesRead(_Model):
 
     @model_validator(mode="after")
     def _unique(self) -> FilesRead:
-        paths = [f.path for f in self.files]
-        if len(set(paths)) != len(paths):
-            raise ValueError("a path is listed twice")
+        # a path repeats only for a file that became a symlink or back (GitLab lists the
+        # deletion, then the addition)
+        statuses: dict[str, list[str]] = {}
+        for f in self.files:
+            statuses.setdefault(f.path, []).append(f.status)
+        for found in statuses.values():
+            if len(found) > 1 and found != ["deleted", "added"]:
+                raise ValueError("a path is listed twice")
+        return self
+
+    @model_validator(mode="after")
+    def _count(self) -> FilesRead:
+        # forgectl sets files_complete only when the list is as long as changed_files
+        counted = self.changed_files is not None and self.changed_files != len(self.files)
+        if self.files_complete and counted:
+            raise ValueError("changed_files is not the number of files listed")
         return self
 
 
@@ -426,7 +464,7 @@ class Forge:
             value = model.model_validate(document)
         except ValidationError as exc:
             raise self._mismatch(command, _why(exc)) from None
-        if pr is not None and _PR_RE.fullmatch(pr):
+        if pr is not None and _canonical(pr) is not None:
             echoed: str = value.pr  # type: ignore[attr-defined]
             if echoed.lower() != pr.lower():
                 raise self._mismatch(command, "the document is for another PR")
@@ -436,13 +474,19 @@ class Forge:
         """``forgectl show <pr>``: the canonical ``pr``, ``pr_id``, ``repo``, ``backend``,
         ``state``, head sha and base. Raises ``GrammarError`` for a ``pr`` that is not a PR
         reference (callers validate first and exit 2 ``invalid_pr``)."""
-        return self._read("show", [check_pr(pr)], Show)
+        shown = self._read("show", [check_pr(pr)], Show)
+        asked = _canonical(pr)
+        # a rename changes the path only: the host and the number are the ones asked for
+        if asked is not None and asked != (shown.host, shown.number):
+            raise self._mismatch("show", "the document is for another PR")
+        return shown
 
     def diff(self, pr: str, *, expect_head: str | None = None) -> DiffRead:
         """``forgectl diff <pr> --json``. With ``expect_head``, a head that differs is exit 20
         ``stale_head`` (``details.head_sha``)."""
+        head = _sha_arg(expect_head) if expect_head is not None else None
         value = self._read("diff", [check_pr(pr)], DiffRead, pr=pr)
-        if expect_head is not None and value.head_sha != expect_head:
+        if head is not None and value.head_sha != head:
             raise _stale_head(value.head_sha)
         return value
 
@@ -470,7 +514,12 @@ class Forge:
         ``partial_results`` is not a failure here: it returns with ``partial`` true and the host's
         ``errors``, and the caller decides what is fatal (``resolve`` goes on with the author
         unknown)."""
-        if type(host) is not str or len(host) > 300 or not _HOST_RE.fullmatch(host):
+        if (
+            type(host) is not str
+            or len(host) > 300
+            or not _HOST_RE.fullmatch(host)
+            or _forgectl_host(host) != host
+        ):
             raise GrammarError("invalid host")
         result = self._gateway.call("whoami", [f"--host={host}"])
         partial = partial_document(result) is not None
@@ -498,6 +547,35 @@ class Forge:
             id=entry.id,
             errors=parsed.errors,
         )
+
+
+_BUILT_IN_HOSTS: Final = frozenset({"github.com", "gitlab.com"})
+
+
+def _forgectl_host(host: str) -> str | None:
+    """The host as forgectl normalizes it (lowercase, ``:443`` dropped, ``www.`` stripped on a
+    built-in host), or None for a port forgectl refuses (leading zero, above 65535)."""
+    name, _, port = host.lower().partition(":")
+    if port:
+        if port.startswith("0") or not 1 <= int(port) <= 65535:
+            return None
+        if port == "443":
+            port = ""
+    if not port and name.startswith("www.") and name[4:] in _BUILT_IN_HOSTS:
+        name = name[4:]
+    return f"{name}:{port}" if port else name
+
+
+def _canonical(pr: str) -> tuple[str, int] | None:
+    """``(host, number)`` of a ``host/path#N`` reference as forgectl reads it, or None for a URL
+    or anything else (forgectl parses those). The host is lowercased first, as forgectl does."""
+    host, slash, rest = pr.partition("/")
+    if not slash or not _PR_RE.fullmatch(f"{host.lower()}/{rest}"):
+        return None
+    normalized = _forgectl_host(host)
+    if normalized is None:
+        return None
+    return normalized, int(pr.rsplit("#", 1)[1])
 
 
 def _sha_arg(value: str) -> str:
@@ -536,9 +614,10 @@ def match_draft_pr(forge: Forge, draft_pr: str, shown: Show) -> None:
     """Check a draft's ``pr`` against ``show``'s (docs/interface.md: Draft fields).
 
     Host and path are compared in ASCII lowercase. When they differ, ``forgectl show <draft pr>``
-    decides: the same ``pr_id`` on the same backend (a renamed repo) is accepted, anything else is
-    exit 2 ``draft_pr_mismatch`` (``details.draft_pr``, ``details.pr``), also a draft ``pr`` that
-    is not a PR reference or that forgectl cannot find (exit 10 or ``invalid_pr``). Any other
+    decides: the same ``pr_id`` on the same backend, host and number (a renamed repo changes the
+    path only) is accepted, anything else is exit 2 ``draft_pr_mismatch`` (``details.draft_pr``,
+    ``details.pr``), also a draft ``pr`` that is not a PR reference or that forgectl cannot find
+    (exit 10, ``invalid_pr``, or ``unknown_host`` for a host the config does not declare). Any other
     failure of that read (auth, rate limit, a contract mismatch) is passed on as it is. Raises
     ``LowerFailure`` and never calls forgectl with a value that fails ``check_pr``.
     """
@@ -554,8 +633,10 @@ def match_draft_pr(forge: Forge, draft_pr: str, shown: Show) -> None:
         document = failure.outcome.document
         error: object = document.get("error") if document is not None else None
         code = error.get("code") if isinstance(error, dict) else None  # pyright: ignore[reportUnknownMemberType]
-        if code in ("not_found", "invalid_pr"):
+        reason = error.get("reason") if isinstance(error, dict) else None  # pyright: ignore[reportUnknownMemberType]
+        if code in ("not_found", "invalid_pr") or (code == "refused" and reason == "unknown_host"):
             raise _mismatch_of_draft(draft_pr, shown) from None
         raise
-    if other.pr_id != shown.pr_id or other.backend != shown.backend:
+    same_host = other.host == shown.host and other.number == shown.number
+    if other.pr_id != shown.pr_id or other.backend != shown.backend or not same_host:
         raise _mismatch_of_draft(draft_pr, shown)

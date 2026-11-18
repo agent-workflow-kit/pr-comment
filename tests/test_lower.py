@@ -283,6 +283,23 @@ def test_pr_comments_own_exit_12_codes_are_never_taken_from_forgectl(code: str) 
     assert error["lower_error"] == env["error"]  # kept for the human
 
 
+def test_tool_missing_passes_through_only_when_a_read_allows_it() -> None:
+    env = envelope("tool_missing", details={"install": "brew install gh"})
+    codes = frozenset({"tool_missing"})
+    error = error_of(outcome_of(result(12, env), codes=codes))
+    assert error["code"] == "tool_missing" and error["details"] == {"install": "brew install gh"}
+    error = error_of(outcome_of(result(12, env), codes=frozenset({"internal"})))
+    assert error["code"] == "lower_contract_mismatch"
+
+
+def test_a_would_refuse_form_is_a_mismatch_when_the_call_is_a_read() -> None:
+    plan = {"would_refuse": {"reason": "too_large", "message": "x"}}
+    error = error_of(
+        outcome_of(result(20, plan), codes=frozenset({"refused"}), reasons=frozenset({"too_large"}))
+    )
+    assert error["code"] == "lower_contract_mismatch" and error["lower_error"] == plan
+
+
 def test_invalid_position_from_forgectl_passes_through() -> None:
     env = envelope("invalid_position", details={"invalid": [{"index": 0}]})
     error = error_of(outcome_of(result(12, env, write=True)))
@@ -326,6 +343,24 @@ def test_partial_document_returns_the_whoami_shape_for_exit_12_only() -> None:
         ),
     ):
         assert partial_document(bad) is None
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [{"timed_out": True}, {"stdout_truncated": True}, {"exit_code": None}],
+)
+def test_partial_document_is_none_for_a_killed_cut_or_signalled_result(
+    fields: dict[str, Any],
+) -> None:
+    document = {"hosts": [], "errors": []}
+    base: dict[str, Any] = {
+        "command": "whoami",
+        "write": False,
+        "exit_code": 12,
+        "stdout": json.dumps(document).encode(),
+    }
+    assert partial_document(ForgectlResult(**base)) == document
+    assert partial_document(ForgectlResult(**{**base, **fields})) is None
 
 
 def test_mismatch_outcome_lets_an_interrupted_version_read_propagate() -> None:
@@ -462,6 +497,21 @@ def test_lower_version_in_a_mismatch_is_sanitized_and_cut_to_64_characters() -> 
     version = outcome.document["error"]["details"]["lower_version"]  # type: ignore[index]
     assert len(version) <= 64 and "\x1b" not in version and "‮" not in version
     assert "<U+001B>" in version
+
+
+def test_lower_version_cut_never_leaves_part_of_a_marker() -> None:
+    for pad in range(54, 64):
+        gateway = FakeGateway(version="a" * pad + "\x01tail")
+        outcome = mismatch_outcome("show", "why", gateway=gateway)
+        version = outcome.document["error"]["details"]["lower_version"]  # type: ignore[index]
+        assert len(version) <= 64
+        assert "<" not in version or version.count("<U+0001>") == 1, version
+        assert version.startswith("a" * pad)
+    gateway = FakeGateway(version="a" * 60 + "\x01tail")
+    version = mismatch_outcome("show", "why", gateway=gateway).document["error"]["details"][  # type: ignore[index]
+        "lower_version"
+    ]
+    assert version == "a" * 60
 
 
 def test_lower_version_of_none_stays_none() -> None:

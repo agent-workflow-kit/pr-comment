@@ -115,6 +115,34 @@ def test_show_reads_the_canonical_identity(backend: str) -> None:
     assert [(c.subcommand, c.args) for c in gateway.calls] == [("show", (url,))]
 
 
+def test_show_with_a_canonical_argument_needs_the_same_host_and_number() -> None:
+    renamed = h.show_doc("github.com/acme/renamed#7")
+    assert forge_of(ok("show", renamed))[0].show(PR).repo == "github.com/acme/renamed"  # a rename
+    mismatch_of(lambda f: f.show(PR), ok("show", h.show_doc("gitlab.com/acme/widgets#7")))
+    mismatch_of(lambda f: f.show(PR), ok("show", h.show_doc("github.com/acme/widgets#8")))
+
+
+def test_show_compares_a_mixed_case_host_and_forgectls_normal_forms() -> None:
+    forge_of(ok("show", h.show_doc()))[0].show("GitHub.com/acme/widgets#7")
+    forge_of(ok("show", h.show_doc()))[0].show("www.github.com/acme/widgets#7")
+    forge_of(ok("show", h.show_doc()))[0].show("github.com:443/acme/widgets#7")
+    mismatch_of(
+        lambda f: f.show("GitHub.com/acme/widgets#7"),
+        ok("show", h.show_doc("gitlab.com/acme/widgets#7")),
+    )
+
+
+def test_show_with_a_url_argument_skips_the_host_and_number_check() -> None:
+    forge_of(ok("show", h.show_doc()))[0].show("https://other.example/acme/widgets/pull/9")
+
+
+def test_a_mixed_case_pr_argument_is_still_compared_on_the_other_reads() -> None:
+    mismatch_of(
+        lambda f: f.diff("GitHub.com/acme/widgets#7"),
+        ok("diff", h.diff_doc("github.com/acme/other#7")),
+    )
+
+
 def test_show_accepts_unknown_fields_and_a_null_base_sha() -> None:
     doc = h.show_doc()
     doc["something_new"] = {"nested": [1, 2]}
@@ -175,11 +203,10 @@ def test_show_missing_a_used_field_is_a_mismatch(path: str) -> None:
         ("state", "OPEN"),
         ("state", "draft"),
         ("state", ["open"]),
-        ("base.ref", "-x"),
         ("base.ref", ""),
-        ("base.ref", "a..b"),
-        ("base.ref", "refs/heads/x"),
+        ("base.ref", "x" * 1025),
         ("base.ref", "x\ny"),
+        ("base.ref", "x\x00y"),
         ("base.ref", "x‮y"),
         ("base.ref", 1),
         ("base", "main"),
@@ -191,6 +218,21 @@ def test_show_with_a_bad_value_is_a_mismatch(path: str, value: Any) -> None:
     doc = with_(h.show_doc(), path, value)
     # the fake would refuse a document like this (the pinned schema), so the gateway is lax
     mismatch_of(lambda f: f.show(PR), ok("show", doc))
+
+
+@pytest.mark.parametrize("ref", ["refs/heads/x", "-x", "HEAD", "a..b", "<U+202E>x", "x" * 1024])
+def test_show_keeps_a_base_ref_git_allows_and_check_branch_judges_the_forwarding(ref: str) -> None:
+    from pr_comment.grammars import check_branch
+
+    shown = forge_of(ok("show", with_(h.show_doc(), "base.ref", ref)))[0].show(PR)
+    assert shown.base_ref == ref
+    try:
+        expected = check_branch(ref)
+    except GrammarError:
+        with pytest.raises(GrammarError):
+            shown.expected_base()
+    else:
+        assert shown.expected_base() == expected
 
 
 def test_show_with_an_nan_or_infinity_literal_is_a_mismatch() -> None:
@@ -331,11 +373,40 @@ def test_diff_with_a_lone_surrogate_in_the_text_is_a_mismatch() -> None:
     )
 
 
-def test_diff_text_over_the_cap_is_a_mismatch() -> None:
+def test_diff_text_is_capped_at_forgectls_stdout_cap_not_the_body_cap() -> None:
+    from pr_comment.forge import MAX_DIFF_BYTES, MAX_TEXT_BYTES
+    from pr_comment.gateway import MAX_STDOUT_BYTES
+
+    assert MAX_DIFF_BYTES == MAX_STDOUT_BYTES == 32 * 1024 * 1024 and MAX_TEXT_BYTES == 4 * 1024**2
+    forge_of(ok("diff", h.diff_doc(diff="y" * (MAX_TEXT_BYTES + 1))))[0].diff(PR)
+    forge_of(ok("diff", h.diff_doc(diff="y" * MAX_DIFF_BYTES)))[0].diff(PR)
+    mismatch_of(lambda f: f.diff(PR), ok("diff", h.diff_doc(diff="y" * (MAX_DIFF_BYTES + 1))))
+
+
+def test_compare_text_is_capped_at_forgectls_stdout_cap() -> None:
+    from pr_comment.forge import MAX_DIFF_BYTES, MAX_TEXT_BYTES
+
+    big = h.compare_doc(from_sha=HEAD, to_sha=OTHER, diff="y" * (MAX_TEXT_BYTES + 1))
+    forge_of(ok("compare", big))[0].compare(PR, HEAD, OTHER)
+    huge = h.compare_doc(from_sha=HEAD, to_sha=OTHER, diff="y" * (MAX_DIFF_BYTES + 1))
+    mismatch_of(lambda f: f.compare(PR, HEAD, OTHER), ok("compare", huge))
+
+
+def test_comment_bodies_stay_capped_at_4_mib() -> None:
     from pr_comment.forge import MAX_TEXT_BYTES
 
-    mismatch_of(lambda f: f.diff(PR), ok("diff", h.diff_doc(diff="y" * (MAX_TEXT_BYTES + 1))))
-    forge_of(ok("diff", h.diff_doc(diff="y" * MAX_TEXT_BYTES)))[0].diff(PR)
+    doc = h.comments_doc(threads=[a_thread(comments=[a_comment(body="y" * (MAX_TEXT_BYTES + 1))])])
+    mismatch_of(lambda f: f.comments(PR), ok("comments", doc))
+
+
+def test_diff_expect_head_is_lowered_and_junk_is_a_grammar_error_before_any_call() -> None:
+    forge, gateway = forge_of(ok("diff", h.diff_doc(head_sha=HEAD)))
+    assert forge.diff(PR, expect_head=HEAD.upper()).head_sha == HEAD
+    forge, gateway = forge_of()
+    for bad in ("", "abc", "g" * 40, "--x"):
+        with pytest.raises(GrammarError):
+            forge.diff(PR, expect_head=bad)
+    assert gateway.calls == []
 
 
 # --- compare -------------------------------------------------------------------------------------
@@ -433,6 +504,39 @@ def test_files_accepts_an_incomplete_list_and_a_null_count() -> None:
     assert read.files_complete is False and read.changed_files is None
 
 
+def test_files_accepts_a_symlink_type_change_as_deleted_then_added() -> None:
+    files = [a_file("l", "deleted"), a_file("l", "added"), a_file("b.py")]
+    read = forge_of(ok("files", h.files_doc(files=files)))[0].files(PR)
+    assert [(f.path, f.status) for f in read.files][:2] == [("l", "deleted"), ("l", "added")]
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        [a_file("l", "added"), a_file("l", "deleted")],  # the wrong order
+        [a_file("l", "deleted"), a_file("l", "added"), a_file("l", "added")],  # three times
+        [a_file("l", "deleted"), a_file("l", "deleted")],
+        [a_file("l", "added"), a_file("l", "added")],
+        [a_file("l", "modified"), a_file("l", "added")],
+    ],
+)
+def test_files_with_any_other_repeated_path_is_a_mismatch(files: Any) -> None:
+    mismatch_of(lambda f: f.files(PR), ok("files", h.files_doc(files=files)))
+
+
+def test_files_complete_with_a_count_that_is_not_the_list_length_is_a_mismatch() -> None:
+    doc = h.files_doc()
+    doc["changed_files"] = 5
+    mismatch_of(lambda f: f.files(PR), ok("files", doc))
+
+
+def test_files_incomplete_may_have_any_count() -> None:
+    doc = h.files_doc()
+    doc["files_complete"] = False
+    doc["changed_files"] = 5
+    assert forge_of(ok("files", doc))[0].files(PR).changed_files == 5
+
+
 def test_files_with_unicode_paths_keeps_them() -> None:
     doc = h.files_doc(files=[a_file("café/日本.py")])
     assert forge_of(ok("files", doc))[0].files(PR).files[0].path == "café/日本.py"
@@ -445,6 +549,11 @@ def test_files_with_unicode_paths_keeps_them() -> None:
         [a_file("")],
         [a_file("x\ny")],
         [a_file("x\ry")],
+        [a_file("x\x0by")],
+        [a_file("x\x0cy")],
+        [a_file("x\x85y")],
+        [a_file("x\u2028y")],
+        [a_file("x\u2029y")],
         [a_file("x\x00y")],
         [a_file("a.py", "renamed", None)],  # renamed without previous_path
         [a_file("a.py", "modified", "old.py")],  # previous_path without rename
@@ -570,6 +679,22 @@ def test_comments_reads_threads_and_comments() -> None:
     assert gateway.calls[0].args == (PR,)
 
 
+def test_comments_accepts_a_general_comment_as_a_one_comment_pseudo_thread() -> None:
+    # forgectl lists a GitHub issue comment as a thread that shares its id with its one comment
+    thread = a_thread(
+        "gh:ic:IC_1",
+        [a_comment("gh:ic:IC_1")],
+        resolvable=False,
+        path=None,
+        line=None,
+        side=None,
+        outdated=None,
+        commit_sha=None,
+    )
+    read = forge_of(ok("comments", h.comments_doc(threads=[thread])))[0].comments(PR)
+    assert read.threads[0].id == "gh:ic:IC_1" and read.threads[0].comments[0].id == "gh:ic:IC_1"
+
+
 def test_comments_accepts_null_authors_and_an_incomplete_listing() -> None:
     comment = a_comment()
     comment["author"] = {"login": None, "id": None, "is_bot": None}
@@ -582,7 +707,6 @@ def test_comments_accepts_null_authors_and_an_incomplete_listing() -> None:
 @pytest.mark.parametrize(
     "thread",
     [
-        a_thread("gh:ic:IC_1"),  # a comment id is not a thread id
         a_thread("gh:rt:"),
         a_thread("gh:rt:has space"),
         a_thread("gl:d:" + "G" * 40),
@@ -617,6 +741,10 @@ def test_comments_accepts_null_authors_and_an_incomplete_listing() -> None:
         a_thread(side="middle"),
         a_thread(side="RIGHT"),
         a_thread(path="a\nb"),
+        a_thread(path="a\u2028b"),
+        a_thread(
+            comments=[{**a_comment(), "author": {"login": "a\x85", "id": None, "is_bot": None}}]
+        ),
         a_thread(path=5),
         a_thread(commit_sha="HEAD"),
         a_thread(outdated="false"),
@@ -758,12 +886,33 @@ def test_whoami_exit_12_with_an_error_envelope_is_a_mismatch_not_a_passthrough()
 
 def test_whoami_rejects_a_host_argument_before_any_call() -> None:
     forge, gateway = forge_of()
-    for bad in ("", "-x", "a b", "UPPER.test", "x/y", "h\n", "a" * 400):
+    for bad in (
+        "",
+        "-x",
+        "a b",
+        "UPPER.test",
+        "x/y",
+        "h\n",
+        "a" * 400,
+        "github.com:443",  # forgectl drops :443
+        "ghe.test:0443",
+        "ghe.test:65536",
+        "ghe.test:0",
+        "www.github.com",  # forgectl strips www. on built-in hosts
+        "www.gitlab.com",
+    ):
         with pytest.raises(GrammarError):
             forge.whoami(bad)
     with pytest.raises(GrammarError):
         forge.whoami(5)  # type: ignore[arg-type]
     assert gateway.calls == []
+
+
+def test_whoami_keeps_hosts_forgectl_leaves_alone() -> None:
+    for host in ("www.ghe.test", "ghe.test:8443", "ghe.test:65535"):
+        forge, gateway = forge_of(ok("whoami", h.whoami_doc([host], backends={host: "github"})))
+        assert forge.whoami(host).host == host
+        assert gateway.calls[0].args == (f"--host={host}",)
 
 
 # --- failures: passed through or lowered, per command ---------------------------------------------
@@ -807,6 +956,25 @@ def test_a_read_passes_forgectls_failure_through_with_the_envelope(
         assert error["details"] == {"x": 1}
     if exit_code == 12:
         assert error["landed"] is False and error["retry"] == "same_command"
+
+
+@pytest.mark.parametrize("command", ["show", "diff", "compare", "files", "comments"])
+def test_forgectls_own_tool_missing_passes_through_on_a_host_read(command: str) -> None:
+    envelope = error_envelope(
+        "tool_missing", "gh not found", details={"install": "brew install gh"}
+    )
+    outcome = failure_of(READS[command], failing(command, 12, envelope))
+    error = outcome.document["error"]
+    assert outcome.exit_code == 12 and error["code"] == "tool_missing"
+    assert error["details"] == {"install": "brew install gh"}
+    assert error["lower_error"] == envelope["error"]
+    assert error["landed"] is False and error["retry"] == "same_command"
+
+
+def test_forgectls_tool_missing_on_whoami_is_a_mismatch() -> None:
+    envelope = error_envelope("tool_missing", details={"install": "brew install gh"})
+    error = mismatch_of(READS["whoami"], failing("whoami", 12, envelope))
+    assert error["lower_error"]["code"] == "tool_missing"
 
 
 def test_whoami_passes_internal_through() -> None:
@@ -875,14 +1043,13 @@ def test_refusal_reasons_per_read(command: str, reason: str, passes: bool) -> No
         assert error["code"] == "lower_contract_mismatch"
 
 
-def test_a_dry_run_style_would_refuse_document_on_a_read_is_a_mismatch_or_passes_by_reason() -> (
-    None
-):
+@pytest.mark.parametrize("command", ["show", "diff", "compare", "files", "comments"])
+def test_a_dry_run_style_would_refuse_document_on_a_read_is_a_mismatch(command: str) -> None:
     doc = {"would_refuse": {"reason": "too_large", "message": "m", "details": None}}
-    outcome = failure_of(READS["diff"], failing("diff", 20, doc))
-    assert outcome.exit_code == 20 and outcome.document["error"]["reason"] == "too_large"
-    outcome = failure_of(READS["files"], failing("files", 20, doc))
-    assert outcome.document["error"]["code"] == "lower_contract_mismatch"
+    outcome = failure_of(READS[command], failing(command, 20, doc))
+    error = outcome.document["error"]
+    assert outcome.exit_code == 12 and error["code"] == "lower_contract_mismatch"
+    assert error["lower_error"] == doc
 
 
 @pytest.mark.parametrize("command", ["show", "diff", "compare", "files", "comments", "whoami"])
@@ -1114,11 +1281,20 @@ def test_the_same_pr_id_on_another_backend_is_a_mismatch() -> None:
     assert caught.value.outcome.document["error"]["code"] == "draft_pr_mismatch"  # type: ignore[index]
 
 
+def test_the_same_pr_id_on_another_host_or_number_is_a_mismatch() -> None:
+    for pr in ("ghe.example.com/acme/old-name#7", "github.com/acme/old-name#8"):
+        _, _, run = draft_match(pr, ok("show", h.show_doc(pr)))
+        with pytest.raises(LowerFailure) as caught:
+            run()
+        assert caught.value.outcome.document["error"]["code"] == "draft_pr_mismatch"  # type: ignore[index]
+
+
 @pytest.mark.parametrize(
     "reply",
     [
         failing("show", 10, error_envelope("not_found")),
         failing("show", 2, error_envelope("invalid_pr")),
+        failing("show", 20, error_envelope("refused", reason="unknown_host")),
     ],
 )
 def test_a_draft_pr_forgectl_cannot_find_is_a_mismatch(reply: ForgectlResult) -> None:
