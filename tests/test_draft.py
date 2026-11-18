@@ -160,6 +160,11 @@ def _unanchored(n: int, prefix: str) -> list[dict[str, Any]]:
     ]
 
 
+def _left_over_int32(doc: Doc) -> None:
+    doc["findings"][0]["side"] = "left"
+    doc["findings"][0]["line"] = 2**31
+
+
 FINDING = {"id": "x", "path": "p", "line": 1, "body": "b"}
 LONG_LINE = "x" * 1000
 
@@ -271,6 +276,33 @@ RULES: list[tuple[str, Mutator, str, bool]] = [
     ("side-null", _set(["findings", 0, "side"], None), "/findings/0/side", True),
     ("severity-bad", _set(["findings", 0, "severity"], "critical"), "/findings/0/severity", True),
     ("title-257-chars", _set(["findings", 0, "title"], "t" * 257), "/findings/0/title", True),
+    ("path-space-only", _set(["findings", 0, "path"], " "), "/findings/0/path", False),
+    ("path-tab-only", _set(["findings", 0, "path"], "\t \t"), "/findings/0/path", False),
+    (
+        "unanchored-path-space-only",
+        _set(["unanchored", 0, "finding", "path"], " "),
+        "/unanchored/0/finding/path",
+        False,
+    ),
+    ("line-over-int32", _set(["findings", 0, "line"], 2**31), "/findings/0/line", True),
+    (
+        "left-line-over-int32",
+        _left_over_int32,
+        "/findings/0/line",
+        True,
+    ),
+    (
+        "unanchored-line-over-int32",
+        _set(["unanchored", 0, "finding", "line"], 2**31),
+        "/unanchored/0/finding/line",
+        True,
+    ),
+    (
+        "start-line-over-int32",
+        _set(["findings", 1, "start_line"], 2**31),
+        "/findings/1/start_line",
+        True,
+    ),
     ("title-newline", _set(["findings", 0, "title"], "a\nb"), "/findings/0/title", True),
     ("title-type", _set(["findings", 0, "title"], 1), "/findings/0/title", True),
     ("finding-body-empty", _set(["findings", 0, "body"], ""), "/findings/0/body", True),
@@ -594,16 +626,22 @@ def test_moderate_nesting_inside_meta_is_accepted() -> None:
     assert parse_draft(dumps(doc)).data["meta"] == doc["meta"]
 
 
-def test_huge_line_number_is_accepted_without_crashing() -> None:
-    # The schema sets no upper bound for line, so an integer past Python's digit limit loads.
+def test_huge_line_number_is_refused_without_crashing() -> None:
+    # An integer past Python's digit limit loads, and is out of range like any line over 2**31-1.
     raw = dumps(good()).replace(b'"line": 10', b'"line": ' + b"9" * 5000)
-    assert parse_draft(raw).data["findings"][0]["line"] > 0
+    with pytest.raises(DraftError) as caught:
+        parse_draft(raw)
+    assert caught.value.code == "invalid_draft"
 
 
-def test_large_but_in_range_integer_is_not_a_crash() -> None:
+def test_the_largest_line_is_int32_max() -> None:
     doc = good()
-    doc["findings"][0]["line"] = 10**30
+    doc["findings"][0]["line"] = 2**31 - 1
+    doc["findings"][1]["line"] = 2**31 - 1
+    doc["findings"][1]["start_line"] = 2**31 - 2
     assert validate_document(doc) == []
+    doc["findings"][0]["line"] = 2**31
+    assert pointers_of(doc) == ["/findings/0/line"]
 
 
 def test_lone_surrogate_escape_does_not_crash_loading() -> None:

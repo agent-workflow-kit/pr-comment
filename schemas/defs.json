@@ -126,6 +126,12 @@
       "pattern": "^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$",
       "description": "A name without the @; a team as org/team. Matched in ASCII lowercase."
     },
+    "mention_name_reported": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$",
+      "maxLength": 128,
+      "description": "A name in a mentions_neutralized report: a mention_name cut to 128 characters (the report is capped silently; the count stays exact)."
+    },
     "duration": {
       "anyOf": [
         {

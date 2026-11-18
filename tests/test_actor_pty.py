@@ -108,13 +108,12 @@ def assert_usage(result: tuple[int, dict[str, Any]], needle: str) -> None:
 
 
 def assert_accepted(result: tuple[int, dict[str, Any]]) -> None:
-    """Validation passed; the handlers are not written yet, so the not-implemented envelope shows.
-
-    Update this one helper when the handlers land.
-    """
+    """Validation passed: the posting handler ran and failed on the body file, which these tests
+    do not create (``b.md`` is absent and ``-`` reads as empty)."""
     code, doc = result
-    assert code == 1
-    assert doc["error"]["code"] == "internal"
+    assert code == 2
+    assert doc["error"]["code"] == "usage"
+    assert doc["error"]["message"] in ("the body file cannot be opened", "the body is empty")
 
 
 def test_human_on_a_real_terminal_may_use_allow_mention(tmp_path: Path) -> None:
@@ -199,4 +198,5 @@ def test_draft_check_dash_with_a_terminal_stdin_is_accepted(tmp_path: Path) -> N
 
 def test_dash_input_from_a_pipe_is_accepted(tmp_path: Path) -> None:
     argv = ["comment", "a#1", "--body-file", "-"]
-    assert_accepted(run_cli(tmp_path, argv, stdin="pipe", stderr="pipe"))
+    # stdin is /dev/null: not a terminal, and it ends at once, so the handler can read it.
+    assert_accepted(run_cli(tmp_path, argv, stdin="null", stderr="pipe"))

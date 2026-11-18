@@ -588,8 +588,8 @@ class LoadedConfig:
         """Global values with the ``repos.<id>`` override merged over them (key match ignores
         ASCII case; unset keys inherit; a list the override sets replaces the global one).
 
-        TODO(#26): the forgectl reads call this with the canonical repo id from ``show``.
-        TODO(#29): the review order takes the footer, mentions and approval settings from it.
+        The posting orders (``prepare.py``) call this with the canonical repo id from ``show``.
+        TODO(#31): the automatic approval guard takes ``allow_auto_approve`` from it.
         """
         cfg = self.config
         wanted = _fold(repo_id)

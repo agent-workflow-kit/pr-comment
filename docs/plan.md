@@ -32,7 +32,7 @@ Status: planned, 2026-11-03. Implements [interface.md](interface.md) (normative)
 | `keys.py` | 1 | dedupe keys and `plan_sha256` |
 | `diffmap.py` | 2 | unified-diff parser and hunk mapping, left-side merge-base rule, `unanchored` |
 | `forge.py` | 3 | forgectl calls, field checks of its output, `lower_error`, `lower_contract_mismatch` |
-| `plan.py` | 3 | the posting plan, Pre-check rounds |
+| `plan.py`, `precheck.py`, `prepare.py` | 3 | the posting plan; the Pre-check rounds; the orders up to the plan, `--expect-plan` and `--dry-run` |
 | `confirm.py` | 3 | the TTY dialog and its summary |
 | `post.py` | 3 | Review, Approve, and Comment and reply orders; automatic approval guard; `--expect-plan` |
 | `hooks.py` | 4 | hook processes, payloads, outcomes, decision ids, override scopes |

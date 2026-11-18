@@ -89,7 +89,7 @@ REPLACED = [
     ("@a...", f"{AT}a...", ("a",), 1),
     ("@...", f"{AT}...", (), 1),
     ("@org/team.", f"{AT}org/team.", ("org/team",), 1),
-    ("@a/.", f"{AT}a/.", ("a/",), 1),  # the trailing dot is removed from what matched
+    ("@a/.", f"{AT}a/.", ("a",), 1),  # the trailing dot, then the slash it exposed, are removed
 ]
 
 
@@ -562,6 +562,17 @@ def test_a_reported_name_is_cut_to_128_characters_before_dedupe() -> None:
     assert neutralizer.names == (long,)
     assert neutralizer.count == 3
     assert out == f"{AT}{long}b {AT}{long}c {AT}{'a' * 500}"  # the text is neutralized exactly
+
+
+def test_a_cut_that_ends_in_a_slash_drops_the_slash_so_the_name_fits_the_schema() -> None:
+    neutralizer = MentionNeutralizer()
+    head = "a" * 127
+    out = neutralizer.neutralize(f"@{head}/b @{head}/c")
+    assert neutralizer.names == (head,)
+    assert neutralizer.count == 2
+    assert out == f"{AT}{head}/b {AT}{head}/c"
+    pattern = json.loads(Path("schemas/defs.json").read_text())["$defs"]["mention_name_reported"]
+    assert re.fullmatch(pattern["pattern"], neutralizer.names[0])
 
 
 def test_at_most_100_names_are_reported_but_every_form_is_counted() -> None:

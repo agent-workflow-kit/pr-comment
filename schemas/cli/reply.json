@@ -29,8 +29,9 @@
     "mentions_neutralized": {
       "type": "array",
       "items": {
-        "$ref": "../defs.json#/$defs/mention_name"
+        "$ref": "../defs.json#/$defs/mention_name_reported"
       },
+      "maxItems": 100,
       "uniqueItems": true,
       "x-untrusted": true,
       "description": "Untrusted: names after a replaced @, without it; in order of first appearance, deduplicated in ASCII lowercase."

@@ -292,8 +292,9 @@ def test_main_override_escalation_yes_human_actor_is_accepted(
     argv = ["comment", "a#1", "--body-file", "b", "--override-escalation=forgectl", "--yes"]
     argv += ["--actor", "human:x"]
     code, doc = _main(monkeypatch, capsys, argv, stdin_tty=False, stderr_tty=False)
-    assert code == 1  # passes validation; the handler is not written yet
-    assert doc is not None and doc["error"]["code"] == "internal"
+    # Passes validation; the posting handler then fails on the body file, which does not exist.
+    assert code == 2
+    assert doc is not None and doc["error"]["message"] == "the body file cannot be opened"
 
 
 def test_main_hostile_actor_claims_still_fail_grammar(

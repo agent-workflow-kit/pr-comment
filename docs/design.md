@@ -105,8 +105,10 @@ Each becomes a `live` test in the plan.
 | `assemble.py` | attribution line, body layouts, marker and `has_marker`, pre-applied forgectl neutralizing (step 6) |
 | `keys.py` | dedupe keys and `plan_sha256` |
 | `neutralize.py` | the character pass of the text pipeline (`<` and `![`, never on applicable suggestion lines) and the body counts (`raw_html`, `images`, `links`, `invisible`); `render.py` calls it |
-| `plan.py` | the posting plan shown by the dialog and `--dry-run`, and its `plan_sha256` |
-| `forge.py` | the forgectl edge: argv in `=` form, stdin input, the pre-check, result and envelope parsing by the fields pr-comment uses |
+| `plan.py` | the posting plan shown by the dialog and `--dry-run`: bodies (steps 3 to 6), inline comments, the fate of every finding, follow-ups, the forgectl input and command, counts, and its `plan_sha256`; pure, one `MentionNeutralizer` per plan |
+| `precheck.py` | the pre-check rounds: forgectl's dry run of the real call, at most one `too_large` round, then at most one `invalid_position` round, each rebuilding the plan |
+| `prepare.py` | the posting orders up to the plan (usage, reads, re-anchoring, the plan, the pre-check), `--expect-plan` binding and the `--dry-run` result; the dialog and the writes are not here |
+| `forge.py` | the forgectl edge: argv in `=` form, stdin input, result and envelope parsing by the fields pr-comment uses |
 | `gateway.py` | the only subprocess boundary |
 | `files.py` | state and temporary directory checks, no-follow and exclusive creation, hook directory removal, sweeping |
 | `hooks.py` | `pre-post` and `post-post` |

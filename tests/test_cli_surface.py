@@ -790,12 +790,17 @@ def test_expect_plan_allowed_on_posting_commands(
 ) -> None:
     argv = [*MINIMAL[command], "--expect-plan", SHA, "--json"]
     code, doc, _ = _run_json(capsys, argv)
-    # Dispatch reached the (unimplemented) handler: internal, not usage.
-    assert code == 1
-    assert doc["error"]["code"] == "internal"
+    # Dispatch reached the posting handler, which fails on its own inputs (the draft or body
+    # file named here does not exist, or approve lacks its pins): never as an --expect-plan usage
+    # error, and not as an internal error.
+    assert code == 2
+    assert "--expect-plan" not in doc["error"]["message"]
+    assert doc["error"]["code"] in ("usage", "invalid_draft")
 
 
-@pytest.mark.parametrize("command", sorted(set(MINIMAL) - {"draft check", "export", "draft new"}))
+@pytest.mark.parametrize(
+    "command", [c for c in NON_POSTING if c not in ("draft check", "export", "draft new")]
+)
 def test_unimplemented_handlers_return_internal_envelope(
     capsys: pytest.CaptureFixture[str],
     golden_json: Callable[[str, Any], None],
@@ -811,7 +816,7 @@ def test_unimplemented_handlers_return_internal_envelope(
 def test_unimplemented_handler_human_output_goes_to_stderr(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert main(MINIMAL["review"]) == 1
+    assert main(MINIMAL["resolve"]) == 1
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "not implemented" in captured.err

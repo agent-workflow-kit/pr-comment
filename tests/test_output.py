@@ -188,10 +188,10 @@ def _run(capsys: pytest.CaptureFixture[str], argv: list[str]) -> tuple[int, str,
 
 
 def test_main_honors_quiet_and_verbose_on_a_failure(capsys: pytest.CaptureFixture[str]) -> None:
-    base = ["comment", PR, "--body-file", "b"]
+    base = ["resolve", PR, "--thread", "gh:rt:1"]
     code, out, err = _run(capsys, base)
     assert (code, out) == (1, "")
-    assert err == "pr-comment: comment is not implemented yet\n"
+    assert err == "pr-comment: resolve is not implemented yet\n"
     assert _run(capsys, [*base, "--quiet"])[2] == err
     verbose = _run(capsys, [*base, "--verbose"])[2]
     assert verbose.startswith(err)
@@ -209,7 +209,7 @@ def test_the_full_envelope_reaches_json_stdout_for_the_unimplemented_stub(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     code, out, _ = _run(
-        capsys, ["review", "https://example.test/o/r/pull/1", "--draft-file", "d.json", "--json"]
+        capsys, ["resolve", "https://example.test/o/r/pull/1", "--thread", "gh:rt:1", "--json"]
     )
     document: dict[str, Any] = json.loads(out)
     assert code == 1

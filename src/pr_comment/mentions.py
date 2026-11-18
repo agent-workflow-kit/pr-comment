@@ -9,10 +9,9 @@ whose name is on the allowlist is kept.
 review body first, then inline comments in draft order), then read ``names`` and ``count``.
 
 Callers: render.py applies it to each untrusted part of finding text and sections (#18); the
-attribution line is ``assemble.render_attribution`` (#20). Not written yet: the posting plan
-reports ``names`` as
-``mentions_neutralized`` and ``count`` as ``counts.mentions_neutralized`` (TODO(#27)); the review
-order builds it from ``LoadedConfig.for_repo`` plus ``--allow-mention`` (TODO(#29)).
+attribution line is ``assemble.render_attribution`` (#20). ``plan.py`` builds one per plan from
+``LoadedConfig.for_repo`` plus ``--allow-mention`` and reports ``names`` as
+``mentions_neutralized`` and ``count`` as ``counts.mentions_neutralized``.
 """
 
 from __future__ import annotations
@@ -116,8 +115,11 @@ class MentionNeutralizer:
 
     def _report(self, name: str) -> None:
         """Adds ``name`` to the report: cut to 128 characters before the repeat check, and
-        dropped once 100 names are held. ``count`` is not affected."""
-        key = name.translate(_ASCII_LOWER)[:_MAX_NAME_LENGTH]
+        dropped once 100 names are held. A trailing ``/`` left by the cut is removed (the schema's
+        name grammar has none). ``count`` is not affected."""
+        key = name.translate(_ASCII_LOWER)[:_MAX_NAME_LENGTH].rstrip("/")
+        if not key:  # a cut that left only slashes: not listed (the form is still counted)
+            return
         if key not in self._names and len(self._names) < _MAX_NAMES:
             self._names[key] = None
 

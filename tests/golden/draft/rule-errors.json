@@ -305,6 +305,12 @@
       "pointer": "/unanchored"
     }
   ],
+  "left-line-over-int32": [
+    {
+      "message": "must be at most 2147483647",
+      "pointer": "/findings/0/line"
+    }
+  ],
   "line-bool": [
     {
       "message": "must be an integer of at least 1, or null",
@@ -320,6 +326,12 @@
   "line-negative": [
     {
       "message": "must be an integer of at least 1, or null",
+      "pointer": "/findings/0/line"
+    }
+  ],
+  "line-over-int32": [
+    {
+      "message": "must be at most 2147483647",
       "pointer": "/findings/0/line"
     }
   ],
@@ -431,6 +443,18 @@
       "pointer": "/findings/0/path"
     }
   ],
+  "path-space-only": [
+    {
+      "message": "must not be empty",
+      "pointer": "/findings/0/path"
+    }
+  ],
+  "path-tab-only": [
+    {
+      "message": "must not be empty",
+      "pointer": "/findings/0/path"
+    }
+  ],
   "path-trailing-newline": [
     {
       "message": "must be one line",
@@ -495,6 +519,12 @@
     {
       "message": "must be less than line",
       "pointer": "/findings/0/start_line"
+    }
+  ],
+  "start-line-over-int32": [
+    {
+      "message": "must be at most 2147483647",
+      "pointer": "/findings/1/start_line"
     }
   ],
   "start-line-type": [
@@ -611,6 +641,12 @@
       "pointer": "/unanchored/0"
     }
   ],
+  "unanchored-line-over-int32": [
+    {
+      "message": "must be at most 2147483647",
+      "pointer": "/unanchored/0/finding/line"
+    }
+  ],
   "unanchored-missing-head": [
     {
       "message": "missing required property head_sha",
@@ -621,6 +657,12 @@
     {
       "message": "missing required property reason",
       "pointer": "/unanchored/0"
+    }
+  ],
+  "unanchored-path-space-only": [
+    {
+      "message": "must not be empty",
+      "pointer": "/unanchored/0/finding/path"
     }
   ],
   "unanchored-type": [

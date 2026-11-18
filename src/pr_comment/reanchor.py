@@ -20,8 +20,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
-from .diffmap import DiffMapper, Mapped, printed_path
-from .draft import Draft
+from .diffmap import DiffMapper, Mapped, MovedReason, printed_path
+from .draft import MAX_LINE, Draft
 from .output import Outcome, error_outcome
 
 BASE_CHANGED: Final = "base_changed"
@@ -217,6 +217,9 @@ def _place(
     result = mapper.map_right(path, line, start)
     if not isinstance(result, Mapped):
         return None, str(result.reason)
+    if result.line > MAX_LINE:
+        # shifted past the largest line a draft (or a plan) can hold: no real file has it
+        return None, MovedReason.CHANGED.value
     placed["path"] = _followed(path, result.path)
     placed["line"] = result.line
     if start is not None:
