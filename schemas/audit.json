@@ -18,7 +18,7 @@
     "attempt_id": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]{8,64}$",
-      "description": "Pairs the run's attempted record with its outcome."
+      "description": "Pairs the run's attempted record with its outcome. Made as a 22-character URL-safe token (128 random bits)."
     },
     "actor": {
       "$ref": "defs.json#/$defs/actor"

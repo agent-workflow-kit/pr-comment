@@ -105,7 +105,9 @@ Each becomes a `live` test in the plan.
 | `gateway.py` | the only subprocess boundary |
 | `files.py` | state and temporary directory checks, no-follow and exclusive creation, hook directory removal, sweeping |
 | `hooks.py` | `pre-post` and `post-post` |
-| `audit.py` | audit and log records, `export` |
+| `appendfile.py` | the append-only line file under the state directory (no-follow, regular file, 0600, torn-line handling) |
+| `audit.py` | audit record pairs, write results and their aggregation, `export` |
+| `jsonlog.py` | `log.jsonl` events and the config warnings |
 | `display.py` | display sanitizing with forgectl's rules (`sanitize_text`, `sanitize_line`, `sanitize_bytes`) and the shared predicate `is_marked` / `count_marked` |
 | `confirm.py` | the TTY dialog and the summary (shows untrusted text through `display.py`) |
 
