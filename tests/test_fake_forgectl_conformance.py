@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from tests import fake_forgectl as ff
+from tests import forgectl_harness
 from tests.fakes import Tracker, alive, make_fake, record, recorded
 from tests.forgectl_harness import PINNED_VERSION, PR, FakeForgectl, fail
 
@@ -134,13 +135,33 @@ def out_code(proc: subprocess.CompletedProcess[bytes]) -> str:
 
 
 def _real_forgectl() -> str:
-    found = shutil.which("forgectl")
+    # the tests run with an empty PATH; the real one was captured when the harness was imported
+    found = shutil.which("forgectl", path=forgectl_harness.REAL_PATH)
     if found is None:
         pytest.skip("no forgectl on PATH")
     version = subprocess.run([found, "--version"], capture_output=True, text=True, check=True)
     if version.stdout.strip() != f"forgectl {PINNED_VERSION}":
         pytest.skip(f"forgectl is {version.stdout.strip()!r}, the pin is {PINNED_VERSION}")
     return found
+
+
+def test_the_live_lookup_uses_the_path_captured_before_the_tests_empty_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stand-in on the captured PATH is found even though this test's own PATH is empty; it is
+    only looked up and asked its version, never given a case."""
+    bin_dir = tmp_path / "real-bin"
+    bin_dir.mkdir()
+    stand_in = bin_dir / "forgectl"
+    stand_in.write_text(f"#!/bin/sh\necho 'forgectl {PINNED_VERSION}'\n", encoding="utf-8")
+    stand_in.chmod(0o755)
+    monkeypatch.setattr(forgectl_harness, "REAL_PATH", str(bin_dir))
+    assert shutil.which("forgectl") is None  # the autouse empty PATH
+    assert _real_forgectl() == str(stand_in)
+
+
+def test_the_captured_path_is_the_real_one_not_the_empty_one() -> None:
+    assert forgectl_harness.REAL_PATH and "empty-path" not in forgectl_harness.REAL_PATH
 
 
 @pytest.mark.live

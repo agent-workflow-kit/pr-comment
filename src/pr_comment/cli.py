@@ -18,13 +18,15 @@ from typing import Any, NoReturn, cast
 from . import __version__, grammars
 from .actor import ActorError, resolve_run, stream_is_tty, with_me_name
 from .config import ConfigError, load_config
-from .draft import run_check
+from .draft import run_check, run_new
 from .errors import sanitize
 from .export import handle_export
 from .files import StateUnsafeError, open_state_dirs
-from .gateway import ForgectlInterrupted
+from .forge import Forge
+from .gateway import ForgectlInterrupted, ProcessGateway, ToolMissing
 from .grammars import MAX_DECISION_IDS, MAX_THREADS
 from .jsonlog import LogWriter, write_config_warnings
+from .lower import tool_missing_outcome
 from .output import LOG, PROG, Outcome, check_outcome, error_outcome, internal_outcome, render
 
 DESCRIPTION = "Posts reviews, replies and comments to PRs, safely and with attribution."
@@ -432,10 +434,19 @@ def _not_implemented(args: argparse.Namespace) -> Outcome:
 
 # One handler per command path. Later issues replace the entries with real handlers.
 # TODO(#29): review; TODO(#30): comment and reply; TODO(#31): approve and review --approve;
-# TODO(#35): resolve and unresolve; TODO(#37): draft new.
+# TODO(#35): resolve and unresolve.
 def _draft_check(args: argparse.Namespace) -> Outcome:
     # TODO(#5): `-` with a TTY stdin exits 2 usage (the TTY rule is not in this base).
     return run_check(args.path)
+
+
+def _draft_new(args: argparse.Namespace) -> Outcome:
+    # TODO(#5): `--from -` with a TTY stdin exits 2 usage (the TTY rule is not in this base).
+    gateway = ProcessGateway.from_config(args.loaded_config, environ=os.environ)
+    try:
+        return run_new(Forge(gateway), args.pr, event=args.event, from_draft=args.from_draft)
+    except ToolMissing as exc:
+        return tool_missing_outcome(exc)
 
 
 HANDLERS: dict[str, Handler] = {
@@ -448,11 +459,11 @@ HANDLERS: dict[str, Handler] = {
             "approve",
             "resolve",
             "unresolve",
-            "draft new",
         )
     },
     "draft check": _draft_check,
     "export": handle_export,
+    "draft new": _draft_new,
 }
 
 _VALUE_FLAGS = frozenset(flag for spec in _GLOBAL_FLAGS if spec.takes_value for flag in spec.flags)
