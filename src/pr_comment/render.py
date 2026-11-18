@@ -13,8 +13,8 @@ reports names in the order the text appears. The body counts are taken from ``fi
 Suggestion blocks are ``render_suggestion`` (applicable, degraded or moved); the caller of
 ``render_finding_text`` passes the block as ``suggestion_block``, and ``render_moved_entry`` renders
 a moved finding's own. Not here: the attribution line, the marker, the layout around the parts and
-forgectl's neutralizing (TODO(#20)), and the re-anchoring that decides a moved finding's anchor and
-reason (TODO(#22)).
+forgectl's neutralizing (assemble.py, #20), and the re-anchoring that decides a moved finding's
+anchor and reason (TODO(#22)).
 """
 
 from __future__ import annotations
@@ -189,8 +189,11 @@ def render_finding_text(
     as it is. A caller that renders the suggestion itself passes a zero-argument callable, called
     after the title and the body, so ``mentions`` reports names in the order the text appears.
 
-    todo(#20): ensure an open fence in the body cannot be closed by suggestion lines or
-    swallow/forge the block (layout)
+    A fence the body leaves open cannot be seen without a parser. ``render_suggestion`` therefore
+    renders a degraded or moved block with no fence run in its lines whenever the finding's body
+    holds one, so no line of the block can end a fence the body left open and leave later lines
+    as live Markdown. An applicable block (no fence run in its lines) is then at worst swallowed
+    into that fence and shown as code.
     """
     pieces: list[str] = []
     prefix = render_prefix(finding, mentions)
@@ -281,7 +284,14 @@ def _split_long_run(match: re.Match[str]) -> str:
     return _RUN_SPLIT.join(run[i : i + MAX_FENCE - 1] for i in range(0, len(run), MAX_FENCE - 1))
 
 
-def _text_block(lines: Sequence[str], mentions: MentionNeutralizer) -> str:
+def _isolate_run(match: re.Match[str]) -> str:
+    run = match.group()
+    return _RUN_SPLIT.join(run[i : i + 2] for i in range(0, len(run), 2))
+
+
+def _text_block(
+    lines: Sequence[str], mentions: MentionNeutralizer, *, isolate: bool = False
+) -> str:
     """The lines as a ``text`` block: mentions, then ``<`` and ``![``, then the markers (which
     are not neutralized), in a backtick fence one more than the longest run in the content."""
     shown = [
@@ -290,6 +300,8 @@ def _text_block(lines: Sequence[str], mentions: MentionNeutralizer) -> str:
             (mentions.neutralize(line) for line in lines), applicable=False
         )
     ]
+    if isolate:
+        shown = [_FENCE_RUN_RE.sub(_isolate_run, line) for line in shown]
     char, size = _fence_for(shown)
     if size is None:
         shown = [_BACKTICK_RUN_RE.sub(_split_long_run, line) for line in shown]
@@ -312,7 +324,8 @@ def render_suggestion(
     its lines are raw. When a line has an invisible character, a fence run or a leading ``/``, or
     when ``moved`` is true, it is a ``text`` block with a note before it and its lines neutralized
     and marked; only the first case reports a reason. Text pipeline step 6's leading space for a
-    ``/`` line is forgectl's pre-applied neutralizing (TODO(#20)).
+    ``/`` line is forgectl's pre-applied neutralizing, applied once to the whole body by
+    ``assemble.build_body`` and ``assemble.build_inline``.
     """
     if host not in SUGGESTION_HOSTS:
         raise ValueError("host must be github or gitlab")
@@ -320,8 +333,11 @@ def render_suggestion(
     if lines is None:
         return None
     _refuse_suggestion_fences(lines)
+    body = _str_field(finding, "body")
+    isolate = body is not None and _FENCE_RUN_RE.search(body) is not None
     if moved:
-        return SuggestionBlock(MOVED_NOTE + _SEPARATOR + _text_block(lines, mentions), None)
+        block = _text_block(lines, mentions, isolate=isolate)
+        return SuggestionBlock(MOVED_NOTE + _SEPARATOR + block, None)
     line: Any = finding.get("line")
     start: Any = finding.get("start_line")
     if not _is_int(line):
@@ -332,7 +348,8 @@ def render_suggestion(
         raise ValueError("a suggestion is only for the right side")
     reason = degrade_reason(lines)
     if reason is not None:
-        return SuggestionBlock(DEGRADE_NOTE + _SEPARATOR + _text_block(lines, mentions), reason)
+        block = _text_block(lines, mentions, isolate=isolate)
+        return SuggestionBlock(DEGRADE_NOTE + _SEPARATOR + block, reason)
     offset = 0 if start is None else int(line) - int(start)
     info = "suggestion" if host == "github" else f"suggestion:-{offset}+0"
     return SuggestionBlock("\n".join(["```" + info, *lines, "```"]), None)
@@ -402,8 +419,8 @@ def render_review_parts(
 ) -> list[str]:
     """The review body's parts in order, each only when non-empty: the draft ``body``, the
     file-level section and the moved section (moved findings of this run, then ``unanchored``
-    entries, as the caller orders them). Each is one block; the layout joins them with a blank
-    line (TODO(#20))."""
+    entries, as the caller orders them). Each is one block; ``assemble.build_body`` joins them
+    with a blank line."""
     parts: list[str] = []
     if body:
         parts.append(_clean(textpipe.normalize_lines(body), mentions))

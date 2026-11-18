@@ -9,7 +9,8 @@ whose name is on the allowlist is kept.
 review body first, then inline comments in draft order), then read ``names`` and ``count``.
 
 Callers: render.py applies it to each untrusted part of finding text and sections (#18); the
-attribution line is TODO(#20). Not written yet: the posting plan reports ``names`` as
+attribution line is ``assemble.render_attribution`` (#20). Not written yet: the posting plan
+reports ``names`` as
 ``mentions_neutralized`` and ``count`` as ``counts.mentions_neutralized`` (TODO(#27)); the review
 order builds it from ``LoadedConfig.for_repo`` plus ``--allow-mention`` (TODO(#29)).
 """
