@@ -413,6 +413,7 @@ def test_a_bare_override_escalation_is_a_usage_error(
         *hook_flags(e1), "--override-escalation", *following,
     )  # fmt: skip
     assert code == 2 and doc["error"]["code"] == "usage"
+    assert "--override-escalation" in doc["error"]["message"]
     assert forgectl.calls() == [] and not hooks.ran("e1")
 
 
