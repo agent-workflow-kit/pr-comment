@@ -253,7 +253,7 @@ def test_main_dash_body_with_tty_stdin_exits_usage(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     code, doc = _main(
-        monkeypatch, capsys, ["comment", "1", "--body-file", "-"], stdin_tty=True, stderr_tty=True
+        monkeypatch, capsys, ["comment", "a#1", "--body-file", "-"], stdin_tty=True, stderr_tty=True
     )
     assert code == 2
     assert doc is not None and doc["error"]["code"] == "usage"
@@ -262,7 +262,7 @@ def test_main_dash_body_with_tty_stdin_exits_usage(
 def test_main_allow_mention_with_yes_exits_usage(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    argv = ["comment", "1", "--body-file", "b", "--allow-mention", "bob", "--yes"]
+    argv = ["comment", "a#1", "--body-file", "b", "--allow-mention", "bob", "--yes"]
     code, doc = _main(monkeypatch, capsys, argv, stdin_tty=True, stderr_tty=True)
     assert code == 2
     assert doc is not None and doc["error"]["code"] == "usage"
@@ -271,10 +271,10 @@ def test_main_allow_mention_with_yes_exits_usage(
 @pytest.mark.parametrize(
     "argv",
     [
-        ["review", "1", "--draft-file", "d.json", "--allow-mention", "bob"],
-        ["comment", "1", "--body-file", "b", "--allow-mention", "bob"],
-        ["reply", "1", "--to", "gh:ic:abc", "--body-file", "b", "--allow-mention", "bob"],
-        ["approve", "1", "--body-file", "b", "--allow-mention", "bob"],
+        ["review", "a#1", "--draft-file", "d.json", "--allow-mention", "bob"],
+        ["comment", "a#1", "--body-file", "b", "--allow-mention", "bob"],
+        ["reply", "a#1", "--to", "gh:ic:abc", "--body-file", "b", "--allow-mention", "bob"],
+        ["approve", "a#1", "--body-file", "b", "--allow-mention", "bob"],
     ],
 )
 def test_main_allow_mention_without_tty_exits_usage(
@@ -289,7 +289,7 @@ def test_main_allow_mention_without_tty_exits_usage(
 def test_main_override_escalation_yes_human_actor_is_accepted(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    argv = ["comment", "1", "--body-file", "b", "--override-escalation=forgectl", "--yes"]
+    argv = ["comment", "a#1", "--body-file", "b", "--override-escalation=forgectl", "--yes"]
     argv += ["--actor", "human:x"]
     code, doc = _main(monkeypatch, capsys, argv, stdin_tty=False, stderr_tty=False)
     assert code == 1  # passes validation; the handler is not written yet
@@ -300,7 +300,7 @@ def test_main_hostile_actor_claims_still_fail_grammar(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     for claim in ("human:", "human:a b", "Human:x", "human:x\n", "admin:x", "human:" + "x" * 65):
-        argv = ["comment", "1", "--body-file", "b", "--actor", claim]
+        argv = ["comment", "a#1", "--body-file", "b", "--actor", claim]
         code, _ = _main(monkeypatch, capsys, argv, stdin_tty=True, stderr_tty=True)
         assert code == 2, claim
 
@@ -309,7 +309,7 @@ def test_main_stdin_without_isatty_is_not_a_tty(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(sys, "stdin", None)
-    code = main(["comment", "1", "--body-file", "b", "--allow-mention", "x", "--json"])
+    code = main(["comment", "a#1", "--body-file", "b", "--allow-mention", "x", "--json"])
     assert code == 2
     assert json.loads(capsys.readouterr().out)["error"]["code"] == "usage"
 
@@ -320,7 +320,7 @@ def test_main_closed_stdin_is_not_a_tty(
     closed = io.StringIO()
     closed.close()
     monkeypatch.setattr(sys, "stdin", closed)
-    code = main(["comment", "1", "--body-file", "b", "--allow-mention", "x", "--json"])
+    code = main(["comment", "a#1", "--body-file", "b", "--allow-mention", "x", "--json"])
     assert code == 2
 
 

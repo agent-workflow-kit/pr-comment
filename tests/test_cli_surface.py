@@ -473,7 +473,10 @@ USAGE_CASES: list[tuple[str, list[str]]] = [
     ("empty hook cmd", ["comment", PR, "--body-file", "b", "--hook", "pre-post="]),
     ("bad expect-plan", ["comment", PR, "--body-file", "b", "--expect-plan", "abc"]),
     ("bad event", ["draft", "new", PR, "--event", "approve"]),
-    ("too many threads", ["resolve", PR, *[x for i in range(101) for x in ("--thread", f"t{i}")]]),
+    (
+        "too many threads",
+        ["resolve", PR, *[x for i in range(101) for x in ("--thread", f"gh:rt:t{i}")]],
+    ),
     ("json with a value", ["comment", PR, "--body-file", "b", "--json=1"]),
     ("bad flag between draft and subcommand", ["draft", "--nope", "check", "x"]),
 ]
@@ -599,8 +602,9 @@ def test_double_dash_after_the_command_token_is_left_to_the_parser() -> None:
 def test_undecodable_and_control_characters_are_replaced_in_the_envelope(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    argv = ["comment", PR, "--body-file", "b", "--nope\udcff\x1b[31m\u202e", "--json"]
-    code, out, _ = _run_raw(capsys, argv)
+    # Parser errors no longer echo caller text; the sanitizer still guards every other message.
+    code = cli._fail_usage(["--json"], "bad \udcff\x1b[31m\u202e", "")  # pyright: ignore[reportPrivateUsage]
+    out = capsys.readouterr().out
     assert code == 2
     assert out.isascii()
     message = json.loads(out)["error"]["message"]
@@ -611,7 +615,9 @@ def test_undecodable_and_control_characters_are_replaced_in_the_envelope(
 
 
 def test_control_characters_never_reach_stderr(capsys: pytest.CaptureFixture[str]) -> None:
-    code, out, err = _run_raw(capsys, ["comment", PR, "--body-file", "b", "--nope\x1b[31m"])
+    code = cli._fail_usage([], "bad \x1b[31m", "")  # pyright: ignore[reportPrivateUsage]
+    captured = capsys.readouterr()
+    out, err = captured.out, captured.err
     assert code == 2
     assert out == ""
     assert "\x1b" not in err
@@ -636,14 +642,15 @@ def test_a_huge_argument_in_human_mode_is_truncated_on_stderr(
 def test_non_ascii_text_is_escaped_in_json_and_cannot_break_an_ascii_stream(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    code, out, _ = _run_raw(capsys, ["comment", PR, "--body-file", "b", "--n\u00f6pe", "--json"])
+    code = cli._fail_usage(["--json"], "bad n\u00f6pe", "")  # pyright: ignore[reportPrivateUsage]
+    out = capsys.readouterr().out
     assert code == 2
     assert out.isascii()
     assert "\u00f6" in json.loads(out)["error"]["message"]
 
     stream = io.TextIOWrapper(io.BytesIO(), encoding="ascii", errors="strict")
     monkeypatch.setattr(sys, "stderr", stream)
-    assert main(["comment", PR, "--body-file", "b", "--n\u00f6pe"]) == 2
+    assert cli._fail_usage([], "bad n\u00f6pe", "") == 2  # pyright: ignore[reportPrivateUsage]
     stream.flush()
     assert b"\\xf6" in stream.buffer.getvalue()  # pyright: ignore[reportAttributeAccessIssue]
 
@@ -699,7 +706,7 @@ def test_argument_count_limit_is_exactly_1024(capsys: pytest.CaptureFixture[str]
 
 
 def test_repeat_cap_is_enforced_while_parsing(capsys: pytest.CaptureFixture[str]) -> None:
-    argv = ["resolve", PR, *[x for i in range(500) for x in ("--thread", f"t{i}")]]
+    argv = ["resolve", PR, *[x for i in range(500) for x in ("--thread", f"gh:rt:t{i}")]]
     started = time.monotonic()
     code, doc, _ = _run_json(capsys, [*argv, "--json"])
     assert time.monotonic() - started < 10
@@ -836,12 +843,12 @@ def test_repeatable_flags_collect() -> None:
         [*MINIMAL["comment"], "--allow-mention", "a", "--allow-mention", "b"]
     )
     assert args.allow_mention == ["a", "b"]
-    args = build_parser().parse_args(["resolve", PR, "--thread", "x", "--thread", "y"])
-    assert args.thread == ["x", "y"]
+    args = build_parser().parse_args(["resolve", PR, "--thread", "gh:rt:x", "--thread", "gh:rt:y"])
+    assert args.thread == ["gh:rt:x", "gh:rt:y"]
 
 
 def test_exactly_100_threads_parse() -> None:
-    argv = ["resolve", PR, *[x for i in range(100) for x in ("--thread", f"t{i}")]]
+    argv = ["resolve", PR, *[x for i in range(100) for x in ("--thread", f"gh:rt:t{i}")]]
     assert len(build_parser().parse_args(argv).thread) == 100
 
 

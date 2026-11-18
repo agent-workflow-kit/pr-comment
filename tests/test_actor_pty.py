@@ -22,7 +22,7 @@ TIMEOUT = 20
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="needs a POSIX pty")
 
-COMMENT = ["comment", "1", "--body-file", "b.md"]
+COMMENT = ["comment", "a#1", "--body-file", "b.md"]
 
 
 def run_cli(
@@ -172,11 +172,11 @@ def test_override_escalation_with_yes_and_human_claim_is_accepted_without_termin
 @pytest.mark.parametrize(
     "argv",
     [
-        ["comment", "1", "--body-file", "-"],
-        ["reply", "1", "--to", "gh:ic:abc", "--body-file", "-"],
-        ["approve", "1", "--body-file", "-"],
-        ["review", "1", "--draft-file", "-"],
-        ["draft", "new", "1", "--from", "-"],
+        ["comment", "a#1", "--body-file", "-"],
+        ["reply", "a#1", "--to", "gh:ic:abc", "--body-file", "-"],
+        ["approve", "a#1", "--body-file", "-"],
+        ["review", "a#1", "--draft-file", "-"],
+        ["draft", "new", "a#1", "--from", "-"],
     ],
 )
 def test_dash_input_with_a_terminal_stdin_is_usage(tmp_path: Path, argv: list[str]) -> None:
@@ -190,5 +190,5 @@ def test_draft_check_dash_with_a_terminal_stdin_is_accepted(tmp_path: Path) -> N
 
 
 def test_dash_input_from_a_pipe_is_accepted(tmp_path: Path) -> None:
-    argv = ["comment", "1", "--body-file", "-"]
+    argv = ["comment", "a#1", "--body-file", "-"]
     assert_accepted(run_cli(tmp_path, argv, stdin="pipe", stderr="pipe"))
