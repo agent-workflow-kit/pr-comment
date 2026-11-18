@@ -306,6 +306,7 @@ Prints audit records (or, with `--log`, log records) as JSONL, oldest first; wit
 - A global flag is accepted before the command, after it, and, for `draft check` and `draft new`, between `draft` and its subcommand; repeatable flags collect the values from every position.
 - A scalar global flag (`--config`, `--actor`, `--expect-plan`) given more than once with different values, in any position, exits 2 (`usage`, "<flag> given more than once with different values"); the same value given twice is accepted.
 - `--` before the command (or between `draft` and its subcommand) exits 2 (`usage`).
+- A command line may have at most 1024 arguments.
 - `-h` and `--help` always print plain-text help on stdout and exit 0, with or without `--json`.
 
 ## Review order

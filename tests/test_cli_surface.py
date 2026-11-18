@@ -674,16 +674,32 @@ def test_append_action_appends_in_place_and_stops_at_the_cap() -> None:
         action(parser, namespace, "4", "--x")
 
 
-def test_thousands_of_repeats_parse_in_bounded_time() -> None:
-    argv = [*MINIMAL["comment"], *[x for i in range(5000) for x in ("--allow-mention", f"n{i}")]]
+@pytest.mark.parametrize("flag", ["--yes", "--allow-mention"])
+def test_huge_repeat_lists_are_refused_quickly(
+    capsys: pytest.CaptureFixture[str], flag: str
+) -> None:
+    argv = [*MINIMAL["comment"], *([flag] * 20000), "--json"]
     started = time.monotonic()
-    args = build_parser().parse_args(argv)
-    assert time.monotonic() - started < 10
-    assert len(args.allow_mention) == 5000
+    code, doc, _ = _run_json(capsys, argv)
+    assert time.monotonic() - started < 2
+    assert code == 2
+    assert doc["error"]["code"] == "usage"
+    assert "too many arguments" in doc["error"]["message"]
+
+
+def test_argument_count_limit_is_exactly_1024(capsys: pytest.CaptureFixture[str]) -> None:
+    base = MINIMAL["comment"]
+    ok = [*base, *(["--yes"] * (1024 - len(base) - 1)), "--json"]
+    assert len(ok) == 1024
+    _, doc_ok, _ = _run_json(capsys, ok)
+    assert "too many arguments" not in json.dumps(doc_ok)
+    code, doc, _ = _run_json(capsys, [*ok, "--yes"])
+    assert code == 2
+    assert "too many arguments" in doc["error"]["message"]
 
 
 def test_repeat_cap_is_enforced_while_parsing(capsys: pytest.CaptureFixture[str]) -> None:
-    argv = ["resolve", PR, *[x for i in range(20000) for x in ("--thread", f"t{i}")]]
+    argv = ["resolve", PR, *[x for i in range(500) for x in ("--thread", f"t{i}")]]
     started = time.monotonic()
     code, doc, _ = _run_json(capsys, [*argv, "--json"])
     assert time.monotonic() - started < 10

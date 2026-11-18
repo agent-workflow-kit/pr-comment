@@ -448,6 +448,9 @@ def _wants_json(argv: list[str]) -> bool:
     return any(token == "--json" or token.startswith("--json=") for token in head)
 
 
+MAX_ARGV_TOKENS = 1024
+
+
 def _dash_dash_before_command(argv: list[str]) -> bool:
     """True when ``--`` appears before the command token (or between ``draft`` and its subcommand).
 
@@ -516,6 +519,10 @@ def _fail_usage(argv: list[str], message: str, usage: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     parser = build_parser()
+    if len(argv) > MAX_ARGV_TOKENS:  # argparse is quadratic in repeated flags
+        return _fail_usage(
+            argv, f"too many arguments (at most {MAX_ARGV_TOKENS})", parser.format_usage()
+        )
     if _dash_dash_before_command(argv):
         return _fail_usage(argv, "'--' is not allowed before the command", parser.format_usage())
     try:
