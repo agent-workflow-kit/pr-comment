@@ -1,7 +1,7 @@
 {
  "_meta": {
   "recorded_from": "forgectl 0.55.2",
-  "how": "real forgectl run through pr-comment's own gateway, scratch HOME, no credentials, PATH with only an empty directory (no gh or glab); every case ends before a host is read. A case with stdin_unread true left at least 8 MiB of its stdin unread."
+  "how": "real forgectl run through pr-comment's own gateway, scratch HOME and XDG, no credentials, PATH with only an empty directory (no gh or glab); every case ends before a host is read. A case with stdin_unread true left at least 8 MiB of its stdin unread. To regenerate: for each case, build a ProcessGateway(forgectl_bin=<absolute pinned forgectl>, environ=<HOME and XDG_*_HOME in a fresh private directory, PATH=one empty absolute directory>) and call gateway.call(argv[0], argv[1:] without --json, stdin=<stdin bytes> when the arguments carry '-'); record a result of exit 12 with error code tool_missing as {reaches_host: true, expect: {reaches_host: true}}, any other as expect {exit, stdout (parsed JSON), stderr}, with stdin_unread true when the result says forgectl left its stdin unread; write the file with json.dumps(document, indent=1, ensure_ascii=False) plus a newline (a test checks that byte for byte). GitLab cases use the placeholder host gitlab.com/g/s/r#1."
  },
  "cases": [
   {
@@ -2756,6 +2756,193 @@
     "stderr": "forgectl: error: refused (unknown_host): host 'example.test' is not built in or declared in the config\n"
    },
    "stdin_unread": true
+  },
+  {
+   "name": "stdin-review-dry-run-full-flags",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--actor=auto:x",
+    "--dedupe-key=k",
+    "--decision-id=d",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"hello\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-dry-run-full-flags",
+   "argv": [
+    "comment",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--actor=auto:x",
+    "--dedupe-key=k",
+    "--decision-id=d",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-reply-dry-run-full-flags",
+   "argv": [
+    "reply",
+    "--json",
+    "github.com/o/r#1",
+    "--to=gh:rt:T_1",
+    "--body-file",
+    "-",
+    "--actor=auto:x",
+    "--dedupe-key=k",
+    "--decision-id=d",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-approve-dry-run-full-flags",
+   "argv": [
+    "approve",
+    "--json",
+    "github.com/o/r#1",
+    "--body-file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--actor=auto:x",
+    "--dedupe-key=k",
+    "--decision-id=d",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-yes-gitlab-valid",
+   "argv": [
+    "comment",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "hello"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-yes-gitlab-at-limit",
+   "argv": [
+    "comment",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       1048576
+      ]
+     }
+    ]
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "stdin-comment-yes-gitlab-over-limit",
+   "argv": [
+    "comment",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--body-file",
+    "-",
+    "--yes"
+   ],
+   "stdin": {
+    "parts": [
+     {
+      "repeat": [
+       "x",
+       1048577
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "body_too_large",
+      "message": "the body is larger than 1048576 bytes",
+      "details": {
+       "index": null,
+       "limit": 1048576
+      }
+     }
+    },
+    "stderr": "forgectl: error: body_too_large: the body is larger than 1048576 bytes\n"
+   }
+  },
+  {
+   "name": "stdin-review-yes-gitlab-valid",
+   "argv": [
+    "review",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--file",
+    "-",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main",
+    "--yes"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"hello\"}"
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
   },
   {
    "name": "stdin-review-body-file-flag",
