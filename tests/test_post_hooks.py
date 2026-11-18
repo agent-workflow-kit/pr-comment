@@ -23,7 +23,7 @@ from pr_comment import hooks as hooks_module
 from tests.forgectl_harness import FakeForgectl, fail, ok
 from tests.posting import PR, A, finding
 from tests.schema_harness import validate
-from tests.test_hooks import alive, pids, signal_self_when_started  # noqa: F401  (pids: fixture)
+from tests.test_hooks import alive, pids, signal_self_when_started, wait_dead, wait_file  # noqa: F401  (pids: fixture)
 from tests.test_review_post import (  # noqa: F401  (cli and state_home are fixtures)
     ACTOR,
     Run,
@@ -596,6 +596,30 @@ def test_an_async_post_post_hook_is_not_waited_for(
         time.sleep(0.05)
     assert done.exists()
     validate("pr-comment/hooks/post-post.json", json.loads((tmp_path / "async.json").read_text()))
+
+
+def test_an_async_hook_over_its_timeout_changes_neither_the_exit_code_nor_the_audit(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, hooks: Hooks, state_home: Path
+) -> None:
+    config = tmp_path / "config.yaml"
+    runaway = hooks.script('echo \'{"decision_id": "late-id"}\'; sleep 60')
+    config.write_text(
+        f"hooks:\n  post-post:\n    - cmd: {runaway}\n      async: true\n      timeout: 1s\n",
+        encoding="utf-8",
+    )
+    code, doc, _ = review_run(cli, forgectl, tmp_path, "--config", str(config))
+    assert code == 0, doc
+    assert wait_file(hooks.pids, 10)  # the hook has started (the run did not wait for it)
+    hook_pid = int(hooks.pids.read_text().split()[0])
+    assert wait_dead(hook_pid, 15)  # ended by its watchdog, long before its 60 s
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and not any(r["event"] == "warning" for r in log(state_home)):
+        time.sleep(0.05)
+    warnings = [r for r in log(state_home) if r["event"] == "warning"]
+    assert [r["details"]["reason"] for r in warnings] == ["hook_timeout"]
+    assert warnings[0]["details"]["hook"] == "post-post" and "late-id" not in json.dumps(warnings)
+    assert "late-id" not in json.dumps(audit(state_home))  # no ids from an async hook
+    assert os.listdir(state_home / "pr-comment" / "tmp") == []
 
 
 # --- comment: the null fields of the payload ---------------------------------------------------

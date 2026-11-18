@@ -23,9 +23,11 @@ write. This module is the only place pr-comment starts one. Rules:
 - A decision id a hook prints (exit 0 only) is recorded in the audit outcome, passed to that write's
   forgectl call and shown to later hooks. It is never part of the plan or of the caller's ids, so
   it never satisfies the automatic approval guard (``approve.py``), which ran before any hook.
-- ``async: true`` (``post-post`` only) starts the hook detached in its own session: pr-comment
-  neither waits for it, nor reads its output, nor enforces its timeout, and its working directory
-  is left to the hook (``files.sweep_stale_hook_dirs`` removes an empty one after a day).
+- ``async: true`` (``post-post`` only) starts the hook under a watchdog (``watchdog.py``), a
+  detached supervisor process in its own session that runs the hook as above (same timeout,
+  SIGTERM, grace, SIGKILL and PID plus start time guard), logs a ``hook_timeout`` warning when it
+  ends the hook and removes the hook's working directory. pr-comment neither waits for it, nor
+  reads the hook's output (no decision ids), nor needs to outlive it.
 """
 
 from __future__ import annotations
@@ -35,11 +37,12 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final
 
-from . import grammars
+from . import grammars, watchdog
 from .config import HookEntry
 from .errors import cut_bytes, sanitize
 from .files import StateDirs, StateUnsafeError, create_file_exclusive, create_hook_dir
@@ -72,8 +75,9 @@ TOKEN_ENV: Final = frozenset(
     }
 )
 PAYLOAD_FILE: Final = "payload.json"
+WATCHDOG_MODULE: Final = "pr_comment.watchdog"
 
-# Detached (async) hooks: a reference keeps ``Popen`` from warning about a child still running.
+# Watchdogs of async hooks: a reference keeps ``Popen`` from warning about a child still running.
 _DETACHED: list[subprocess.Popen[bytes]] = []
 
 
@@ -441,9 +445,14 @@ class HookRunner:
     def spawn_detached(
         self, hook: str, entry: HookEntry, payload: Mapping[str, Any], index: int | None = None
     ) -> bool:
-        """Start an ``async`` hook detached; True when it was started. Never waits and never
-        reads its output; its stdin is the payload, held by an unlinked file. When it cannot be
-        started its working directory is removed again (a removal failure is a warning)."""
+        """Start an ``async`` hook under its watchdog, detached; True when it was started.
+
+        The watchdog (``watchdog.py``) is a separate process in its own session that starts the
+        hook, enforces ``entry.timeout`` and removes the hook's working directory; this run never
+        waits for it, reads no output and does not need to outlive it. Its job (the command, the
+        environment and the payload) is the stdin of the watchdog, an unlinked file. When it
+        cannot be started the working directory is removed again (a failure is a warning).
+        """
         dirs = self._dirs
         if dirs is None:
             return False
@@ -455,16 +464,38 @@ class HookRunner:
         stdin_fd = -1
         proc: subprocess.Popen[bytes] | None = None
         try:
-            stdin_fd = _payload_descriptor(workdir.fd, encode_payload(payload))
+            if "\0" in entry.cmd:
+                raise ValueError("NUL in a command")
+            os.fsencode(entry.cmd)  # a lone surrogate cannot be passed to exec
+            job = watchdog.job_for(
+                dirs,
+                shell=SHELL,
+                cmd=entry.cmd,
+                timeout=entry.timeout,
+                term_grace=self._term_grace,
+                env=env,
+                hook=hook,
+                index=-1 if index is None else index,
+                pr=self._pr,
+                attempt_id=self._attempt_id,
+                log=self._log.enabled,
+                dir_fd=workdir.fd,
+                dir_name=workdir.name,
+            )
+            stdin_fd = _payload_descriptor(
+                workdir.fd, watchdog.encode_job(job, encode_payload(payload))
+            )
+            _prune_detached()
             proc = subprocess.Popen(
-                [SHELL, "-c", entry.cmd],
+                [sys.executable, "-I", "-m", WATCHDOG_MODULE],
                 stdin=stdin_fd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                env=env,
-                cwd=str(workdir.path),
+                env={},
+                cwd="/",
                 shell=False,
                 close_fds=True,
+                pass_fds=(dirs.state_fd, dirs.tmp_fd, workdir.fd),
                 start_new_session=True,
             )
         except (OSError, ValueError):
@@ -478,12 +509,17 @@ class HookRunner:
                     os.close(stdin_fd)
             if proc is not None:
                 with contextlib.suppress(OSError):
-                    os.close(workdir.fd)  # the hook owns its directory from here on
+                    os.close(workdir.fd)  # the watchdog owns its copy and the directory now
             else:
                 try:
                     workdir.remove(dirs.tmp_fd)  # closes the descriptor, once
                 except StateUnsafeError:
                     self.warn(hook, index, "hook_directory_not_removed")
+
+
+def _prune_detached() -> None:
+    """Forget (and so reap) the watchdogs that have ended, so none stays a zombie of this run."""
+    _DETACHED[:] = [proc for proc in _DETACHED if proc.poll() is None]
 
 
 def _payload_descriptor(dir_fd: int, data: bytes) -> int:

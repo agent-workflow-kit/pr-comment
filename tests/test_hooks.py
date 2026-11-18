@@ -566,15 +566,15 @@ def test_an_async_hook_is_detached_and_not_waited_for(
     assert pgid != os.getpgrp() and sid != os.getsid(0)
 
 
-@pytest.mark.parametrize("failure", ["no_shell", "payload_write", "nul_in_command"])
+@pytest.mark.parametrize("failure", ["payload_write", "nul_in_command", "lone_surrogate"])
 def test_an_async_hook_that_cannot_start_leaves_no_directory_behind(
     dirs: StateDirs, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
     cmd = "exit 0"
-    if failure == "no_shell":
-        monkeypatch.setattr(hooks_module, "SHELL", "/nonexistent/sh")
-    elif failure == "nul_in_command":
+    if failure == "nul_in_command":
         cmd = "exit 0\0"
+    elif failure == "lone_surrogate":
+        cmd = "exit 0\ud800"
     else:
 
         def broken(dir_fd: int, data: bytes) -> int:

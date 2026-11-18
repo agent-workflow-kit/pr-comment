@@ -98,6 +98,11 @@ class LogWriter:
             return writer
         return cls(file, verbose=verbose, clock=clock)
 
+    @property
+    def enabled(self) -> bool:
+        """Whether this writer has a file (a disabled one writes nothing)."""
+        return self._file is not None
+
     def close(self) -> None:
         if self._file is not None:
             self._file.close()
