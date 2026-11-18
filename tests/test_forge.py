@@ -139,8 +139,44 @@ def test_show_with_a_url_argument_skips_the_host_and_number_check() -> None:
 def test_a_mixed_case_pr_argument_is_still_compared_on_the_other_reads() -> None:
     mismatch_of(
         lambda f: f.diff("GitHub.com/acme/widgets#7"),
-        ok("diff", h.diff_doc("github.com/acme/other#7")),
+        ok("diff", h.diff_doc("gitlab.com/acme/widgets#7")),
     )
+
+
+_READS: list[tuple[str, Callable[[Forge, str], object], Callable[[str], Any]]] = [
+    ("diff", lambda f, pr: f.diff(pr), lambda pr: h.diff_doc(pr)),
+    ("files", lambda f, pr: f.files(pr), lambda pr: h.files_doc(pr)),
+    ("comments", lambda f, pr: f.comments(pr), lambda pr: h.comments_doc(pr)),
+    (
+        "compare",
+        lambda f, pr: f.compare(pr, HEAD, OTHER),
+        lambda pr: h.compare_doc(pr, from_sha=HEAD, to_sha=OTHER),
+    ),
+]
+_READ_IDS = [name for name, _, _ in _READS]
+
+
+@pytest.mark.parametrize(("name", "call", "doc"), _READS, ids=_READ_IDS)
+@pytest.mark.parametrize(
+    "asked",
+    [
+        "github.com:443/acme/widgets#7",
+        "www.github.com/acme/widgets#7",
+        "GitHub.com/acme/renamed-from#7",
+    ],
+)
+def test_reads_accept_the_canonical_echo_of_a_normalized_or_renamed_argument(
+    name: str, call: Callable[[Forge, str], object], doc: Callable[[str], Any], asked: str
+) -> None:
+    call(forge_of(ok(name, doc(PR)))[0], asked)
+
+
+@pytest.mark.parametrize(("name", "call", "doc"), _READS, ids=_READ_IDS)
+@pytest.mark.parametrize("echoed", ["gitlab.com/acme/widgets#7", "github.com/acme/widgets#8"])
+def test_reads_reject_an_echo_for_another_host_or_number(
+    name: str, call: Callable[[Forge, str], object], doc: Callable[[str], Any], echoed: str
+) -> None:
+    mismatch_of(lambda f: call(f, "www.github.com/acme/widgets#7"), ok(name, doc(echoed)))
 
 
 def test_show_accepts_unknown_fields_and_a_null_base_sha() -> None:
@@ -333,7 +369,7 @@ def test_diff_with_another_head_is_stale_head() -> None:
 
 
 def test_diff_for_another_pr_is_a_mismatch() -> None:
-    mismatch_of(lambda f: f.diff(PR), ok("diff", h.diff_doc("github.com/acme/other#7")))
+    mismatch_of(lambda f: f.diff(PR), ok("diff", h.diff_doc("github.com/acme/widgets#8")))
 
 
 def test_diff_for_a_url_argument_does_not_check_the_pr_it_echoes() -> None:
@@ -448,7 +484,7 @@ def test_compare_identical_has_an_empty_diff() -> None:
         h.compare_doc(from_sha=OTHER),  # not the commit asked for
         h.compare_doc(from_sha="x" * 40),
         h.compare_doc(diff=3),  # type: ignore[arg-type]
-        h.compare_doc("github.com/acme/other#7"),
+        h.compare_doc("github.com/acme/widgets#8"),
     ],
 )
 def test_compare_with_an_answer_that_does_not_fit_is_a_mismatch(doc: dict[str, Any]) -> None:
@@ -776,7 +812,8 @@ def test_comments_missing_a_field_is_a_mismatch(path: str) -> None:
 
 
 def test_comments_for_another_pr_is_a_mismatch() -> None:
-    mismatch_of(lambda f: f.comments(PR), ok("comments", h.comments_doc("github.com/acme/other#7")))
+    other = h.comments_doc("github.com/acme/widgets#8")
+    mismatch_of(lambda f: f.comments(PR), ok("comments", other))
 
 
 def test_comments_with_a_lone_surrogate_body_is_a_mismatch() -> None:

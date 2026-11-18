@@ -464,9 +464,10 @@ class Forge:
             value = model.model_validate(document)
         except ValidationError as exc:
             raise self._mismatch(command, _why(exc)) from None
-        if pr is not None and _canonical(pr) is not None:
-            echoed: str = value.pr  # type: ignore[attr-defined]
-            if echoed.lower() != pr.lower():
+        if pr is not None:
+            asked = _canonical(pr)
+            # a URL argument is parsed by forgectl, so it is not compared
+            if asked is not None and asked != _canonical(value.pr):  # type: ignore[attr-defined]
                 raise self._mismatch(command, "the document is for another PR")
         return value
 
