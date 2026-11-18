@@ -65,7 +65,7 @@ _SURROGATE_RE = re.compile("[\ud800-\udfff]")
 # `export --since`: RFC 3339 with an offset (or Z), or a whole number with one unit.
 _RFC3339_RE = re.compile(
     r"([0-9]{4}-[0-9]{2}-[0-9]{2})[Tt]([0-9]{2}:[0-9]{2}:[0-9]{2})"
-    r"(?:\.([0-9]{1,9}))?([Zz]|[+-][0-9]{2}:[0-9]{2})"
+    r"(?:\.([0-9]+))?([Zz]|[+-][0-9]{2}:[0-9]{2})"
 )
 _SINCE_DURATION_RE = re.compile(r"([0-9]{1,12})([smhd])")
 _SINCE_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -241,7 +241,7 @@ def check_forgectl_config(value: object) -> str:
 def parse_rfc3339(value: object) -> datetime | None:
     """A strict RFC 3339 time as an aware UTC ``datetime``, or ``None``.
 
-    The offset (or ``Z``) is required, the fraction has one to nine digits (kept to microseconds),
+    The offset (or ``Z``) is required, the fraction has one or more digits (kept to microseconds),
     and ASCII digits only. A leap second, an impossible date or an offset of 24 hours or more is
     refused (the narrower reading), and so is a time that falls outside years 1 to 9999 in UTC.
     """

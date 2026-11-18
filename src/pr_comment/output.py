@@ -32,12 +32,16 @@ class Outcome:
     ``stream`` is for a command whose stdout is too large to build first (``export``): it is
     called with a ``write(text)`` function after the other output, only on exit 0 and with no
     document. Its text goes to stdout as given, so it must be safe to print (ASCII).
+
+    ``close`` releases what ``stream`` holds (an open file); the caller runs it when the stream
+    never runs because something failed first. It must be safe to call more than once.
     """
 
     exit_code: int
     document: dict[str, Any] | None = None
     human: tuple[str, ...] = ()
     stream: Callable[[Callable[[str], None]], None] | None = None
+    close: Callable[[], None] | None = None
 
 
 def error_outcome(code: str, message: str, **fields: Any) -> Outcome:

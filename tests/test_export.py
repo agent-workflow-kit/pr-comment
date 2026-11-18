@@ -6,6 +6,8 @@ import argparse
 import json
 import os
 import stat
+import subprocess
+import sys
 import tracemalloc
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -159,7 +161,7 @@ def test_an_empty_file_prints_nothing(capsys: pytest.CaptureFixture[str]) -> Non
     assert run(capsys, "--json") == (0, "[]\n", "")
 
 
-def test_audit_records_are_printed_as_jsonl_oldest_first(
+def test_audit_records_are_printed_as_jsonl_in_file_order(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     records = [audit_rec(ATT1, "attempted", T0), audit_rec(ATT1, "done", T1)]
@@ -829,6 +831,178 @@ def test_a_file_that_grows_during_the_read_does_not_lengthen_the_run(
     pieces: list[str] = []
     outcome.stream(pieces.append)
     assert len(out_lines("".join(pieces))) == 1
+
+
+# --- review round 1 ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("huge", ["1e999", "1e400", "-1e400"])
+@pytest.mark.parametrize("name", ["audit.jsonl", "log.jsonl"])
+def test_a_float_that_overflows_is_skipped_with_a_warning(
+    capsys: pytest.CaptureFixture[str], name: str, huge: str
+) -> None:
+    if name == "audit.jsonl":
+        good1, good2 = audit_rec(ATT1), audit_rec(ATT2)
+        bad = line(audit_rec(ATT3)).replace(
+            b'"draft_sha256":null', b'"draft_sha256":' + huge.encode()
+        )
+    else:
+        good1, good2 = log_rec(), log_rec()
+        bad = line(log_rec()).replace(
+            b'"details":{"why":"x"}', b'"details":{"why":' + huge.encode() + b"}"
+        )
+    assert huge.encode() in bad
+    put(name, good1, bad, good2)
+    args = [] if name == "audit.jsonl" else ["--log"]
+    code, out, err = run(capsys, *args)
+    assert code == 0
+    assert out_lines(out) == [good1, good2]
+    assert err.count("skipped") == 1 and "line 2" in err and "not valid JSON" in err
+
+
+def _stream_into_early_reader(tmp_path: Path, *argv: str) -> tuple[int, bytes]:
+    """Run ``pr-comment export`` into a reader that exits after 10 bytes; (exit code, stderr)."""
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ["HOME"],
+        "XDG_CONFIG_HOME": os.environ["XDG_CONFIG_HOME"],
+        "XDG_STATE_HOME": os.environ["XDG_STATE_HOME"],
+    }
+    read_fd, write_fd = os.pipe()
+    err_path = tmp_path / "stderr.txt"
+    with err_path.open("wb") as err_file:
+        reader = subprocess.Popen(
+            [sys.executable, "-c", "import sys; sys.stdin.buffer.read(10)"], stdin=read_fd
+        )
+        os.close(read_fd)
+        try:
+            child = subprocess.Popen(
+                [sys.executable, "-m", "pr_comment", "export", *argv],
+                stdout=write_fd,
+                stderr=err_file,
+                env=env,
+            )
+        finally:
+            os.close(write_fd)
+        try:
+            code = child.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait()
+            raise
+        reader.wait(timeout=20)
+    return code, err_path.read_bytes()
+
+
+@pytest.mark.parametrize("flags", [(), ("--json",)])
+def test_a_closed_pipe_is_silent_and_exits_zero_for_a_real_process(
+    tmp_path: Path, flags: tuple[str, ...]
+) -> None:
+    put("log.jsonl", line(log_rec(details={"pad": "y" * 80})) * 20_000)
+    code, err = _stream_into_early_reader(tmp_path, "--log", *flags)
+    assert (code, err) == (0, b"")
+
+
+def test_a_failing_stdout_write_is_an_internal_error_without_a_traceback(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import errno
+
+    put("log.jsonl", log_rec())
+    real = cli._write  # pyright: ignore[reportPrivateUsage]
+
+    def full(stream: Any, text: str) -> None:
+        if text.startswith("{"):
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+        real(stream, text)
+
+    monkeypatch.setattr(cli, "_write", full)
+    code, out, err = run(capsys, "--log")
+    assert code == 1 and out == ""
+    assert "unexpected OSError" in err and "No space left on device" in err
+    assert "Traceback" not in err
+
+
+def test_the_descriptor_is_closed_when_rendering_fails_before_the_stream_runs(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    put("audit.jsonl", audit_rec(ATT1))
+    before = set(os.listdir("/proc/self/fd"))
+    real = cli.render
+    calls = 0
+
+    def flaky(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("render broke")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(cli, "render", flaky)
+    code, _, err = run(capsys)
+    assert code == 1 and "unexpected RuntimeError" in err
+    assert set(os.listdir("/proc/self/fd")) == before
+
+
+def test_the_descriptor_is_closed_when_check_outcome_fails(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    put("audit.jsonl", audit_rec(ATT1))
+    before = set(os.listdir("/proc/self/fd"))
+
+    def broken(_: Any) -> Any:
+        raise RuntimeError("check broke")
+
+    monkeypatch.setattr(cli, "check_outcome", broken)
+    code, _, _ = run(capsys)
+    assert code == 1
+    assert set(os.listdir("/proc/self/fd")) == before
+
+
+def test_a_failure_before_the_first_flush_under_json_is_the_error_envelope(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    put("log.jsonl", log_rec())
+
+    def broken(*_: Any) -> Any:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(export, "_emit_record", broken)
+    code, out, _ = run(capsys, "--log", "--json")
+    assert code == 1
+    assert json.loads(out)["error"]["code"] == "internal"
+
+
+def test_a_twelve_digit_fraction_is_printed_and_ordered_as_an_instant(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    before = audit_rec(ATT1, "done", "2026-11-10T10:00:00.123456000001Z")
+    after = audit_rec(ATT2, "done", "2026-11-10T10:00:00.123457000001Z")
+    put("audit.jsonl", before, after)
+    code, out, err = run(capsys)
+    assert (code, err) == (0, "")
+    assert out_lines(out) == [before, after]
+    code, out, err = run(capsys, "--since", "2026-11-10T10:00:00.1234575Z")
+    assert (code, err) == (0, "")
+    assert out_lines(out) == [after]
+
+
+def test_a_line_rewritten_between_the_passes_is_not_printed(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = put("audit.jsonl", audit_rec(ATT1), audit_rec(ATT2))
+    real = export._winners  # pyright: ignore[reportPrivateUsage]
+
+    def rewriting(*args: Any, **kwargs: Any) -> Any:
+        result = real(*args, **kwargs)
+        path.write_bytes(line(audit_rec(ATT1)) + line(audit_rec(ATT3)))
+        return result
+
+    monkeypatch.setattr(export, "_winners", rewriting)
+    code, out, err = run(capsys)
+    assert code == 0
+    assert [r["attempt_id"] for r in out_lines(out)] == [ATT1]
+    assert err.count("skipped") == 1 and "line 2" in err
 
 
 # --- the real writers and the schemas ----------------------------------------------------------

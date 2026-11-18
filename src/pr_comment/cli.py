@@ -666,22 +666,49 @@ def _load_config_into(args: argparse.Namespace) -> Outcome | None:
     return None
 
 
+def _silence_stdout() -> None:
+    """Point stdout at the null device, so the buffered data Python flushes again at exit does
+    not fail on a closed pipe or a full disk (the Python docs' recipe for ``BrokenPipeError``)."""
+    try:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+    except (AttributeError, OSError, ValueError):  # no real stdout (a test's capture, or closed)
+        pass
+
+
 def _run_stream(stream: Callable[[Callable[[str], None]], None], args: argparse.Namespace) -> int:
     """Run an outcome's stream to stdout. A reader that stops early (a closed pipe) ends it
-    quietly; any other failure after output began is an ``internal`` error on stderr."""
+    quietly; any other failure is an ``internal`` error without a traceback for a failed write
+    or read, and with one for anything else. Before the first write, ``--json`` gets the error
+    envelope on stdout like any other failure."""
+    started = False
 
     def write(text: str) -> None:
+        nonlocal started
+        started = True
         _write(sys.stdout, text)
 
     try:
         stream(write)
     except BrokenPipeError:
+        _silence_stdout()
         return 0
     except Exception as exc:
-        _, stderr = render(
-            internal_outcome(exc), as_json=False, quiet=args.quiet, verbose=args.verbose
+        if isinstance(exc, OSError):
+            _silence_stdout()
+            outcome = error_outcome(
+                "internal", f"unexpected {type(exc).__name__}: {exc.strerror or 'I/O error'}"
+            )
+        else:
+            outcome = internal_outcome(exc)
+        stdout, stderr = render(
+            outcome,
+            as_json=bool(args.json) and not started,
+            quiet=args.quiet,
+            verbose=args.verbose,
         )
         _write(sys.stderr, stderr)
+        if not started:
+            _write(sys.stdout, stdout)
         return 1
     return 0
 
@@ -703,10 +730,15 @@ def _main(argv: list[str]) -> int:
         validate_args(args)
     except UsageError as exc:
         return _fail_usage(argv, exc.message, exc.usage, exc.code)
+    raw: Outcome | None = None
     try:
-        outcome = _load_config_into(args) or check_outcome(HANDLERS[args.command](args))
+        raw = _load_config_into(args) or HANDLERS[args.command](args)
+        outcome = check_outcome(raw)
         stdout, stderr = render(outcome, as_json=args.json, quiet=args.quiet, verbose=args.verbose)
     except Exception as exc:  # a handler bug must still honor the exit-code and envelope contract
+        close = getattr(raw, "close", None)
+        if callable(close):
+            close()
         outcome = internal_outcome(exc)
         stdout, stderr = render(outcome, as_json=args.json, quiet=args.quiet, verbose=args.verbose)
     _write(sys.stderr, stderr)

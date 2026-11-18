@@ -15,8 +15,9 @@
   terminal raw whatever the file held.
 - Memory is bounded: the log streams line by line; the audit file takes one pass that remembers
   only the line number of the last record per ``attempt_id`` and kind (at most ``MAX_TRACKED``),
-  then a second pass that prints those lines. The records are printed in file order (append
-  order), each pair member at the place of its last copy.
+  then a second pass that prints those lines (skipping one whose pair changed in between). The
+  records are printed in file order (append order), each pair member at the place of its last
+  copy.
 
 ``--since`` keeps records whose ``ts`` is at or after the instant (compared as instants, not text);
 the last record per ``attempt_id`` and kind decides first, so a superseded copy never shows.
@@ -26,12 +27,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, BinaryIO, Final, Literal
+from typing import Any, BinaryIO, Final, Literal, Protocol
 
 from . import grammars
 from .appendfile import MAX_LINE_BYTES, AppendError, refuse_unsafe
@@ -117,6 +119,13 @@ def _no_constant(_: str) -> Any:
     raise ValueError("not JSON")
 
 
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError("not finite")
+    return value
+
+
 def _is_attempt_id(value: object) -> bool:
     return type(value) is str and _ATTEMPT_ID_RE.fullmatch(value) is not None
 
@@ -190,7 +199,10 @@ def _load(raw: bytes, kind: _Kind) -> tuple[dict[str, Any], datetime] | str:
         return "not ASCII"
     try:
         value: Any = json.loads(
-            body.decode("ascii"), object_pairs_hook=_no_duplicates, parse_constant=_no_constant
+            body.decode("ascii"),
+            object_pairs_hook=_no_duplicates,
+            parse_constant=_no_constant,
+            parse_float=_finite_float,
         )
     except (ValueError, RecursionError):
         return "not valid JSON"
@@ -204,6 +216,10 @@ def _load(raw: bytes, kind: _Kind) -> tuple[dict[str, Any], datetime] | str:
     if reason is not None:
         return reason
     return rec, moment
+
+
+class _Skipper(Protocol):
+    def skip(self, number: int, reason: str) -> None: ...
 
 
 class _Warner:
@@ -225,11 +241,23 @@ class _Warner:
             )
 
 
+class _OnlyLines:
+    """A warner that reports only the lines in ``wanted`` (the others were reported already)."""
+
+    def __init__(self, warner: _Warner, wanted: dict[int, str]) -> None:
+        self._warner = warner
+        self._wanted = wanted
+
+    def skip(self, number: int, reason: str) -> None:
+        if number in self._wanted:
+            self._warner.skip(number, reason)
+
+
 _STATUS_REASON: Final = {"long": "line too long", "torn": "torn line (no newline)"}
 
 
 def _records(
-    fh: BinaryIO, kind: _Kind, warner: _Warner | None
+    fh: BinaryIO, kind: _Kind, warner: _Skipper | None
 ) -> Iterator[tuple[int, dict[str, Any], datetime]]:
     """The valid records of ``fh`` with their line numbers; skipped lines go to ``warner``."""
     for number, status, raw in _read_lines(fh, kind.limit):
@@ -254,8 +282,8 @@ def _pair_key(rec: dict[str, Any]) -> str:
 # --- selecting and printing ---------------------------------------------------------------------
 
 
-def _winners(fh: BinaryIO, cutoff: datetime | None, warner: _Warner) -> set[int]:
-    """Line numbers of the last record per (attempt_id, kind) that is inside the window.
+def _winners(fh: BinaryIO, cutoff: datetime | None, warner: _Warner) -> dict[int, str]:
+    """Line number to pair key of the last record per (attempt_id, kind) inside the window.
 
     A later copy outside the window removes the key: the last copy decides, then the filter.
     """
@@ -268,7 +296,7 @@ def _winners(fh: BinaryIO, cutoff: datetime | None, warner: _Warner) -> set[int]
             last[key] = number
         else:
             last.pop(key, None)
-    return set(last.values())
+    return {number: key for key, number in last.items()}
 
 
 def _emit_record(rec: dict[str, Any]) -> str:
@@ -282,15 +310,23 @@ def _selected(
     fh: BinaryIO,
     kind: _Kind,
     cutoff: datetime | None,
-    winners: set[int] | None,
+    winners: dict[int, str] | None,
     warner: _Warner | None,
 ) -> Iterator[dict[str, Any]]:
+    """The records to print. With ``winners`` (the first pass's lines and pair keys) a wanted
+    line whose pair key changed since that pass is skipped with a warning, so a file rewritten
+    between the passes cannot change which record prints."""
     last_wanted = max(winners) if winners else 0
-    for number, rec, moment in _records(fh, kind, warner):
+    wanted_warner = None if winners is None or warner is None else _OnlyLines(warner, winners)
+    for number, rec, moment in _records(fh, kind, wanted_warner or warner):
         if winners is not None:
             if number > last_wanted:
                 return
             if number not in winners:
+                continue
+            if _pair_key(rec) != winners[number]:
+                if warner is not None:
+                    warner.skip(number, "changed since the first pass")
                 continue
         if cutoff is None or moment >= cutoff:
             yield rec
@@ -336,7 +372,7 @@ def handle_export(args: argparse.Namespace) -> Outcome:
         )
     as_json = bool(args.json)
     warner = _Warner(kind.name)
-    winners: set[int] | None = None
+    winners: dict[int, str] | None = None
     if fh is not None and kind.dedupe:
         try:
             winners = _winners(fh, cutoff, warner)
@@ -369,8 +405,7 @@ def handle_export(args: argparse.Namespace) -> Outcome:
             if as_json:
                 pieces.append("[")
             if fh is not None:
-                report = None if kind.dedupe else warner
-                for rec in _selected(fh, kind, cutoff, winners, report):
+                for rec in _selected(fh, kind, cutoff, winners, warner):
                     text = _emit_record(rec)
                     piece = ("," if as_json and count else "") + text + ("" if as_json else "\n")
                     count += 1
@@ -387,4 +422,8 @@ def handle_export(args: argparse.Namespace) -> Outcome:
             if fh is not None:
                 fh.close()
 
-    return Outcome(0, stream=stream)
+    def close() -> None:
+        if fh is not None:
+            fh.close()
+
+    return Outcome(0, stream=stream, close=close)
