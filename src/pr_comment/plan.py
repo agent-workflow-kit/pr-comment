@@ -264,7 +264,7 @@ class Context:
 # --- counts ----------------------------------------------------------------------------------
 
 
-def _empty_counts() -> dict[str, Any]:
+def empty_counts() -> dict[str, Any]:
     return {
         "inline": 0,
         "moved": dict.fromkeys(MOVED_REASONS, 0),
@@ -584,7 +584,7 @@ def _review_counts(
     """Counts over the raw untrusted parts (``count_parts(finding_parts(f))`` and the draft body),
     taken before the pipeline neutralizes anything; severity over the findings and ``unanchored``
     entries; moved by reason over this run's moves."""
-    counts = _empty_counts()
+    counts = empty_counts()
     shown: list[Mapping[str, Any]] = [*inline, *file_level, *(m.finding for m in moves)]
     shown += [e["finding"] for e in source.unanchored]
     parts: list[str] = [body_text] if body_text else []
@@ -661,7 +661,7 @@ def build_text_plan(
         inline=(),
         follow_ups=(),
     )
-    counts = _with_text_counts(_empty_counts(), count_parts(raw_parts), mentions.count)
+    counts = _with_text_counts(empty_counts(), count_parts(raw_parts), mentions.count)
     return Plan(
         pr=show.pr,
         pr_id=show.pr_id,

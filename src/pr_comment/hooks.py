@@ -482,11 +482,13 @@ def run_post(
     payload_for_entry: Callable[[HookEntry, Sequence[str]], Mapping[str, Any]],
     *,
     interrupted: Callable[[], bool] = lambda: False,
-) -> None:
+) -> int | None:
     """Run the ``post-post`` hooks. Nothing here changes an outcome: every failure is a logged
     warning, an id a hook prints joins ``ids`` (recorded in the audit outcome). After a signal
-    (``interrupted()``), the remaining hooks do not start."""
+    (``interrupted()``), the remaining hooks do not start. Returns the number of a signal that
+    ended a hook (the caller records that it was received), else None."""
     stopped = False
+    signum: int | None = None
     for index, entry in enumerate(runner.hooks.post):
         if stopped or interrupted():
             runner.warn(POST, index, "hook_skipped_after_signal")
@@ -498,8 +500,9 @@ def run_post(
             continue
         try:
             result = runner.run_sync(POST, index, entry, payload)
-        except ForgectlInterrupted:
+        except ForgectlInterrupted as exc:
             stopped = True
+            signum = exc.signum
             runner.warn(POST, index, "hook_interrupted")
             continue
         for reason in result.warnings:
@@ -509,3 +512,4 @@ def run_post(
             continue
         for reason in ids.add(result.decision_ids):
             runner.warn(POST, index, reason)
+    return signum

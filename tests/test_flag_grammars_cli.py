@@ -23,9 +23,10 @@ def _run(capsys: pytest.CaptureFixture[str], argv: list[str]) -> tuple[int, dict
     return code, json.loads(captured.out), captured.err
 
 
-def _parse(argv: list[str]) -> argparse.Namespace:
+def _parse(argv: list[str], *, check_run_rules: bool = True) -> argparse.Namespace:
     args = build_parser().parse_args(argv)
-    cli.validate_args(args)
+    if check_run_rules:
+        cli.validate_args(args)
     return args
 
 
@@ -89,13 +90,14 @@ def _complete(base: list[str], flag: str) -> list[str]:
 
 @pytest.mark.parametrize(("base", "flag", "good", "bad"), FLAGS, ids=lambda v: str(v)[:24])
 def test_valid_values_parse_in_both_forms(
-    monkeypatch: pytest.MonkeyPatch, base: list[str], flag: str, good: str, bad: list[str]
+    base: list[str], flag: str, good: str, bad: list[str]
 ) -> None:
-    # --allow-mention needs an interactive run (docs/interface.md, Actors and interactive runs).
-    monkeypatch.setattr(cli, "stream_is_tty", lambda _stream: True)
     extra = _complete(base, flag)
-    _parse([*base, *extra, flag, good])
-    _parse([*base, *extra, f"{flag}={good}"])
+    # --allow-mention also needs a human actor and a terminal (validate_args, tested with the
+    # actor rules); here only the value grammar is under test.
+    check_run_rules = flag != "--allow-mention"
+    _parse([*base, *extra, flag, good], check_run_rules=check_run_rules)
+    _parse([*base, *extra, f"{flag}={good}"], check_run_rules=check_run_rules)
 
 
 @pytest.mark.parametrize(("base", "flag", "good", "bad"), FLAGS, ids=lambda v: str(v)[:24])

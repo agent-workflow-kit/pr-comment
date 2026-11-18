@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import signal
 import stat
 import subprocess
@@ -38,6 +39,7 @@ from pr_comment.hooks import (
     run_pre,
 )
 from pr_comment.jsonlog import LogWriter
+from tests.forgectl_harness import REAL_PATH
 
 BASE_ENV = {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}
 PR = "example.test/o/r#7"
@@ -325,8 +327,11 @@ def test_a_timeout_sends_sigterm_to_the_whole_group_before_the_kill(
 def test_a_timeout_never_touches_a_process_of_another_session(
     dirs: StateDirs, tmp_path: Path
 ) -> None:
+    # the autouse private_home fixture empties os.environ PATH, so name the binary in full
+    sleep = shutil.which("sleep", path=REAL_PATH)
+    assert sleep is not None
     bystander = subprocess.Popen(
-        ["sleep", "60"],
+        [sleep, "60"],
         start_new_session=True,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
