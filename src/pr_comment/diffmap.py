@@ -1,9 +1,11 @@
 """Unified-diff parser for re-anchoring (docs/interface.md, Re-anchoring, "Reading the diff").
 
-``parse_diff`` splits the diff text that forgectl prints into file sections. Paths come only
-from the ``---`` and ``+++`` lines and the ``rename from`` and ``rename to`` lines, never from
-the ``diff --git`` line, which cannot be split reliably when a path has a space or a space
-followed by ``b/``. Anything the parser cannot read with certainty raises
+``parse_diff`` splits the diff text that forgectl prints into file sections. Paths come from
+the ``---`` and ``+++`` lines and the ``rename from`` and ``rename to`` lines. A section that
+carries none (a binary change, or an added or deleted file with headers only) takes its path
+from a ``Binary files X and Y differ`` line or from the ``diff --git a/P b/P`` line, only when
+exactly one reading exists, because those lines cannot be split reliably when a path has a space
+or a space followed by ``b/``. Anything the parser cannot read with certainty raises
 ``AmbiguousDiffError``; the caller moves every right-side finding with ``diff_unavailable``.
 
 The parser only reads. It maps no lines (TODO(#24): right-side mapping over these sections).
@@ -60,8 +62,7 @@ class Hunk:
 
 @dataclass(frozen=True, slots=True)
 class FileSection:
-    """One file of the diff. A path is ``None`` for ``/dev/null`` and for a section whose
-    paths are not needed (mode-only, or an added file without ``---``/``+++`` lines)."""
+    """One file of the diff. A path is ``None`` for ``/dev/null`` and for a mode-only section."""
 
     kind: SectionKind
     old_path: str | None
@@ -98,6 +99,8 @@ _ESCAPES = {
 }
 _BINARY_PREFIX = "Binary files "
 _BINARY_SUFFIX = " differ"
+_NO_NEWLINE_MARKER = "\\ No newline at end of file"
+_MAX_PATH_LINE = 8192
 
 
 class _Unreadable(Exception):
@@ -137,7 +140,10 @@ def _unquote(token: str) -> str:
             else:
                 out += char.encode("utf-8", "surrogatepass")
                 i += 1
-        return out.decode("utf-8", "replace")
+        try:
+            return out.decode("utf-8")
+        except UnicodeDecodeError:
+            raise _Unreadable from None
     if any(c in '"\\' or _is_control(c) for c in token):
         raise _Unreadable
     return token
@@ -165,31 +171,88 @@ def _rename_path(raw: str) -> str:
     return name
 
 
-def _binary_paths(line: str) -> tuple[str | None, str | None]:
-    """Paths of a ``Binary files X and Y differ`` line, only when exactly one reading exists.
+def _null_or_path(token: str, prefix: str) -> str | None:
+    return None if token == "/dev/null" else _strip_prefix(_unquote(token), prefix)
 
-    Without rename lines the two halves name the same file (or one is ``/dev/null``), so the
-    length of the line decides where ``and`` splits even when a path contains `` and b/``.
-    """
-    middle = line[len(_BINARY_PREFIX) : -len(_BINARY_SUFFIX)]
-    readings: set[tuple[str | None, str | None]] = set()
-    at = middle.find(" and ")
-    while at != -1:
-        try:
-            old = None if middle[:at] == "/dev/null" else _strip_prefix(_unquote(middle[:at]), "a/")
-            new = (
-                None
-                if middle[at + 5 :] == "/dev/null"
-                else _strip_prefix(_unquote(middle[at + 5 :]), "b/")
-            )
-        except _Unreadable:
-            old = new = None
-        if (old is not None or new is not None) and (old is None or new is None or old == new):
-            readings.add((old, new))
-        at = middle.find(" and ", at + 1)
-    if len(readings) != 1:
+
+def _equal_halves(middle: str, separator: str) -> tuple[str | None, str | None]:
+    """Read ``a/P<separator>b/P``: two halves of one length, so the split is the middle."""
+    half, odd = divmod(len(middle) - len(separator), 2)
+    if odd or half < 0 or middle[half : half + len(separator)] != separator:
         raise _Unreadable
-    return next(iter(readings))
+    old = _strip_prefix(_unquote(middle[:half]), "a/")
+    new = _strip_prefix(_unquote(middle[half + len(separator) :]), "b/")
+    if old != new:
+        raise _Unreadable
+    return old, new
+
+
+def _readings(middle: str, separator: str, *, equal_only: bool) -> tuple[str | None, str | None]:
+    """The only reading of ``old<separator>new`` as two paths of one file, in linear time.
+
+    Candidates: equal paths split at the middle, and (unless ``equal_only``) ``/dev/null`` as the
+    first or last token. Any other reading is ambiguous.
+    """
+    if len(middle) > _MAX_PATH_LINE:
+        raise _Unreadable
+    found: set[tuple[str | None, str | None]] = set()
+    candidates = [lambda: _equal_halves(middle, separator)]
+    if not equal_only:
+        null_old = "/dev/null" + separator
+        null_new = separator + "/dev/null"
+        if middle.startswith(null_old):
+            rest = middle[len(null_old) :]
+            candidates.append(lambda: (None, _strip_prefix(_unquote(rest), "b/")))
+        if middle.endswith(null_new):
+            head = middle[: -len(null_new)]
+            candidates.append(lambda: (_strip_prefix(_unquote(head), "a/"), None))
+    for candidate in candidates:
+        try:
+            found.add(candidate())
+        except _Unreadable:
+            pass
+    if len(found) != 1:
+        raise _Unreadable
+    return next(iter(found))
+
+
+def _binary_paths(line: str) -> tuple[str | None, str | None]:
+    """Paths of a ``Binary files X and Y differ`` line, only when exactly one reading exists."""
+    return _readings(line[len(_BINARY_PREFIX) : -len(_BINARY_SUFFIX)], " and ", equal_only=False)
+
+
+def _diff_line_path(line: str) -> str:
+    """The path of a ``diff --git a/P b/P`` line, only when the halves are equal."""
+    path = _readings(line[len("diff --git ") :], " ", equal_only=True)[0]
+    if path is None:
+        raise _Unreadable
+    return path
+
+
+def _binary_rename_matches(line: str, old: str, new: str) -> bool:
+    """Whether the Binary line reads exactly ``a/<old>`` and ``b/<new>``, in linear time."""
+    middle = line[len(_BINARY_PREFIX) : -len(_BINARY_SUFFIX)]
+    if len(middle) > _MAX_PATH_LINE:
+        return False
+    try:
+        if middle.startswith('"'):
+            end = 1
+            while end < len(middle) and middle[end] != '"':
+                end += 2 if middle[end] == "\\" else 1
+            first, rest = middle[: end + 1], middle[end + 1 :]
+            if not rest.startswith(" and "):
+                return False
+            second = rest[5:]
+        else:
+            first = "a/" + old
+            if not middle.startswith(first + " and "):
+                return False
+            second = middle[len(first) + 5 :]
+        return _strip_prefix(_unquote(first), "a/") == old and (
+            _strip_prefix(_unquote(second), "b/") == new
+        )
+    except _Unreadable:
+        return False
 
 
 def _check_mode(value: str) -> None:
@@ -211,6 +274,8 @@ def parse_diff(text: str) -> ParsedDiff:
     sections: list[FileSection] = []
     seen: set[str] = set()
     for n, start in enumerate(starts):
+        if any(_is_control(c) and c != "\t" for c in lines[start]):
+            raise AmbiguousDiffError("control_character_in_section_line", start + 1)
         end = starts[n + 1] if n + 1 < len(starts) else len(lines)
         section = _parse_section(lines, start, end)
         names = {p for p in (section.old_path, section.new_path) if p is not None}
@@ -236,6 +301,7 @@ def _parse_section(lines: list[str], start: int, end: int) -> FileSection:
     binary_line: str | None = None
     dash_old: str | None = None
     dash_new: str | None = None
+    full_similarity = False
     j = start + 1
     while j < end and not lines[j].startswith("@@"):
         line = lines[j]
@@ -265,7 +331,10 @@ def _parse_section(lines: list[str], start: int, end: int) -> FileSection:
             elif line.startswith("deleted file mode "):
                 once("deleted_file", j)
                 _check_mode(line[18:])
-            elif _INDEX_RE.fullmatch(line) or _SIMILARITY_RE.fullmatch(line):
+            elif _SIMILARITY_RE.fullmatch(line):
+                once("similarity", j)
+                full_similarity = line == "similarity index 100%"
+            elif _INDEX_RE.fullmatch(line):
                 pass
             else:
                 raise fail("unknown_header_line", j)
@@ -286,6 +355,8 @@ def _parse_section(lines: list[str], start: int, end: int) -> FileSection:
         raise fail("bad_rename_lines", at)
     if hunks and "dash" not in seen:
         raise fail("hunks_without_paths", at)
+    if "dash" in seen and not hunks:
+        raise fail("paths_without_hunks", at)
 
     old: str | None
     new: str | None
@@ -296,6 +367,8 @@ def _parse_section(lines: list[str], start: int, end: int) -> FileSection:
             if is_new or is_deleted:
                 raise fail("rename_with_new_or_deleted", at)
             old, new = rename_from, rename_to
+            if not _binary_rename_matches(binary_line, old, new):  # type: ignore[arg-type]
+                raise fail("binary_line_disagrees_with_rename", at)
         else:
             try:
                 old, new = _binary_paths(binary_line)
@@ -325,13 +398,25 @@ def _parse_section(lines: list[str], start: int, end: int) -> FileSection:
     elif has_rename:
         if is_new or is_deleted:
             raise fail("rename_with_new_or_deleted", at)
+        if not full_similarity:
+            raise fail("rename_without_full_similarity", at)
         old, new, kind = rename_from, rename_to, SectionKind.RENAMED
-    elif is_deleted:
-        raise fail("deleted_without_paths", at)
-    elif is_new:
-        old, new, kind = None, None, SectionKind.ADDED
-    else:
+    elif is_deleted or is_new:
+        try:
+            path = _diff_line_path(lines[start])
+        except _Unreadable:
+            raise fail("unreadable_diff_line_path", at) from None
+        if is_deleted:
+            old, new, kind = path, None, SectionKind.DELETED
+        else:
+            old, new, kind = None, path, SectionKind.ADDED
+    elif has_modes:
         old, new, kind = None, None, SectionKind.MODE_ONLY
+    else:
+        raise fail("section_without_content", at)
+
+    if kind in (SectionKind.ADDED, SectionKind.DELETED) and len(hunks) > 1:
+        raise fail("added_or_deleted_with_several_hunks", at)
 
     for hunk in hunks:
         if kind is SectionKind.ADDED and (hunk.old_start, hunk.old_count) != (0, 0):
@@ -366,37 +451,38 @@ def _parse_hunks(lines: list[str], j: int, end: int) -> list[Hunk]:
         j += 1
         remaining_old, remaining_new = old_count, new_count
         body: list[HunkLine] = []
-        can_mark = False
-        while remaining_old > 0 or remaining_new > 0:
+        last = ""  # tag of the content line just before, "" after a marker or at the start
+        while remaining_old > 0 or remaining_new > 0 or (j < end and lines[j].startswith("\\")):
             if j >= end:
                 raise AmbiguousDiffError("truncated_hunk", header_at + 1)
             line = lines[j]
             tag = line[:1]
             if tag == "\\":
-                if not can_mark:
+                ended = {
+                    "-": remaining_old == 0,
+                    "+": remaining_new == 0,
+                    " ": remaining_old == 0 and remaining_new == 0,
+                }.get(last, False)
+                if line != _NO_NEWLINE_MARKER or not ended:
                     raise AmbiguousDiffError("misplaced_no_newline_marker", j + 1)
-                can_mark = False
+                last = ""
             elif tag in (" ", ""):  # a bare empty line is a context line stripped of its space
                 if remaining_old <= 0 or remaining_new <= 0:
                     raise AmbiguousDiffError("hunk_longer_than_counts", j + 1)
                 remaining_old -= 1
                 remaining_new -= 1
                 body.append(HunkLine(" ", line[1:]))
-                can_mark = True
+                last = " "
             elif tag == "-" and remaining_old > 0:
                 remaining_old -= 1
                 body.append(HunkLine("-", line[1:]))
-                can_mark = True
+                last = "-"
             elif tag == "+" and remaining_new > 0:
                 remaining_new -= 1
                 body.append(HunkLine("+", line[1:]))
-                can_mark = True
+                last = "+"
             else:
                 raise AmbiguousDiffError("bad_hunk_line", j + 1)
-            j += 1
-        if j < end and lines[j].startswith("\\"):
-            if not can_mark:
-                raise AmbiguousDiffError("misplaced_no_newline_marker", j + 1)
             j += 1
         hunks.append(Hunk(old_start, old_count, new_start, new_count, tuple(body)))
     return hunks

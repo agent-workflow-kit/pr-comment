@@ -99,7 +99,7 @@ def test_rename_lines_disagreeing_with_dash_lines_is_ambiguous() -> None:
 
 
 def test_rename_path_is_not_prefix_stripped() -> None:
-    diff = "diff --git a/a/o b/b/n\nrename from a/o\nrename to b/n\n"
+    diff = "diff --git a/a/o b/b/n\nsimilarity index 100%\nrename from a/o\nrename to b/n\n"
     section = only(diff)
     assert (section.old_path, section.new_path) == ("a/o", "b/n")
 
@@ -111,12 +111,14 @@ def test_mode_only_section_needs_no_paths() -> None:
     assert (section.old_path, section.new_path, section.hunks) == (None, None, ())
 
 
-def test_bare_diff_header_is_mode_only() -> None:
-    assert only("diff --git a/f b/f\n").kind is SectionKind.MODE_ONLY
+def test_bare_diff_header_is_ambiguous() -> None:
+    ambiguous("diff --git a/f b/f\n")
+    ambiguous("diff --git a/f b/f\nindex 1..2 100644\n")
 
 
 def test_old_mode_without_new_mode_is_ambiguous() -> None:
     ambiguous("diff --git a/f b/f\nold mode 100644\n")
+    ambiguous("diff --git a/f b/f\nnew mode 100755\n")
 
 
 def test_binary_section_reads_path_from_binary_line() -> None:
@@ -162,6 +164,41 @@ def test_quoted_binary_paths() -> None:
     assert only(diff).old_path == "s p/é"
 
 
+def test_binary_rename_must_agree_with_the_binary_line() -> None:
+    head = "diff --git a/p b/q\nrename from p\nrename to q\n"
+    ambiguous(head + "Binary files a/p and b/zzz differ\n")
+    ambiguous(head + "Binary files a/zzz and b/q differ\n")
+    ambiguous(head + "Binary files /dev/null and b/q differ\n")
+    ambiguous(head + "Binary files p and q differ\n")
+
+
+def test_binary_rename_with_spaces_and_quotes_agrees() -> None:
+    head = "diff --git x y\nrename from x and b/p\nrename to q r\n"
+    assert only(head + "Binary files a/x and b/p and b/q r differ\n").new_path == "q r"
+    quoted = "diff --git x y\nrename from s p/\u00e9\nrename to q\n"
+    line = 'Binary files "a/s p/\\303\\251" and b/q differ\n'
+    assert only(quoted + line).old_path == "s p/\u00e9"
+
+
+def test_binary_line_with_many_and_separators_is_read_in_linear_time() -> None:
+    started = time.monotonic()
+    for repeat in (500, 1000):  # under the line cap, then over it
+        unit = " and b/x"
+        line = f"Binary files a/x{unit * repeat} differ\n"
+        ambiguous(f"diff --git a/x b/x\n{line}")
+    for size in (20_000, 100_000):
+        ambiguous(f"diff --git a/x b/x\nBinary files a/{'x and ' * size} differ\n")
+    assert time.monotonic() - started < 2
+
+
+def test_overlong_header_lines_are_ambiguous() -> None:
+    path = "x" * 5000
+    ambiguous(f"diff --git a/{path} b/{path}\nBinary files a/{path} and b/{path} differ\n")
+    ambiguous(f"diff --git a/{path} b/{path}\ndeleted file mode 100644\n")
+    ok = "x" * 3000
+    assert only(f"diff --git a/{ok} b/{ok}\nBinary files a/{ok} and b/{ok} differ\n").old_path == ok
+
+
 def test_git_binary_patch_is_ambiguous() -> None:
     ambiguous("diff --git a/b b/b\nGIT binary patch\nliteral 1\nAc\n\n")
 
@@ -173,14 +210,51 @@ def test_binary_line_with_hunks_is_ambiguous() -> None:
     )
 
 
-def test_deleted_headers_without_readable_path_is_ambiguous() -> None:
-    ambiguous("diff --git a/e b/e\ndeleted file mode 100644\nindex e69de29..0000000\n")
+def test_headers_only_deleted_file_reads_path_from_the_diff_line() -> None:
+    section = only("diff --git a/e b/e\ndeleted file mode 100644\nindex e69de29..0000000\n")
+    assert section.kind is SectionKind.DELETED
+    assert (section.old_path, section.new_path, section.hunks) == ("e", None, ())
 
 
-def test_added_headers_without_paths_is_accepted() -> None:
+def test_headers_only_added_file_reads_path_from_the_diff_line() -> None:
     section = only("diff --git a/e b/e\nnew file mode 100644\nindex 0000000..e69de29\n")
     assert section.kind is SectionKind.ADDED
-    assert (section.old_path, section.new_path) == (None, None)
+    assert (section.old_path, section.new_path, section.hunks) == (None, "e", ())
+
+
+@pytest.mark.parametrize(
+    ("header", "path"),
+    [
+        ("a/x and b/x b/x and b/x", "x and b/x"),
+        ("a/with space b/with space", "with space"),
+        ("a/a b/a b/a b/a", "a b/a"),
+        ('"a/s p/\\303\\251" "b/s p/\\303\\251"', "s p/\u00e9"),
+        ("a/\u65e5\u672c b/\u65e5\u672c", "\u65e5\u672c"),
+        ('"a/t\\tb" "b/t\\tb"', "t\tb"),
+    ],
+)
+def test_headers_only_path_shapes(header: str, path: str) -> None:
+    deleted = only(f"diff --git {header}\ndeleted file mode 100644\nindex 1..0\n")
+    added = only(f"diff --git {header}\nnew file mode 100644\nindex 0..1\n")
+    assert (deleted.old_path, deleted.new_path) == (path, None)
+    assert (added.old_path, added.new_path) == (None, path)
+
+
+@pytest.mark.parametrize(
+    "header",
+    ["a/e b/f", "a/e", "a/e b/", "x/e y/e", 'a/e "b/e"', "a/e b/e b/e", '"a/e\\q" "b/e\\q"', ""],
+)
+def test_headers_only_with_unreadable_diff_line_is_ambiguous(header: str) -> None:
+    ambiguous(f"diff --git {header}\ndeleted file mode 100644\nindex 1..0\n")
+    ambiguous(f"diff --git {header}\nnew file mode 100644\nindex 0..1\n")
+
+
+def test_deleted_file_with_hunks_still_uses_the_dash_line() -> None:
+    diff = (
+        "diff --git a/zzz b/zzz\ndeleted file mode 100644\n--- a/n\n+++ /dev/null\n"
+        "@@ -1 +0,0 @@\n-x\n"
+    )
+    assert only(diff).old_path == "n"
 
 
 def test_dev_null_without_matching_mode_header_is_ambiguous() -> None:
@@ -218,6 +292,66 @@ def test_section_split_needs_space_after_diff_git() -> None:
     ambiguous("diff --gitx a/f b/f\n")
 
 
+# --- hollow and truncated sections ----------------------------------------------------------
+
+
+def test_dash_pair_without_hunks_is_ambiguous() -> None:
+    ambiguous("diff --git a/f b/f\nindex 1..2 100644\n--- a/f\n+++ b/f\n")
+    ambiguous("diff --git a/n b/n\nnew file mode 100644\n--- /dev/null\n+++ b/n\n")
+    ambiguous("diff --git a/n b/n\ndeleted file mode 100644\n--- a/n\n+++ /dev/null\n")
+
+
+def test_pure_rename_needs_full_similarity() -> None:
+    ambiguous("diff --git a/o b/n\nsimilarity index 90%\nrename from o\nrename to n\n")
+    ambiguous("diff --git a/o b/n\nrename from o\nrename to n\n")
+    ambiguous("diff --git a/o b/n\ndissimilarity index 100%\nrename from o\nrename to n\n")
+    ambiguous("diff --git a/o b/n\nsimilarity index 100%\nrename from o\n")
+
+
+def test_pure_rename_with_mode_change_is_accepted() -> None:
+    diff = (
+        "diff --git a/o b/n\nold mode 100644\nnew mode 100755\nsimilarity index 100%\n"
+        "rename from o\nrename to n\n"
+    )
+    assert only(diff).kind is SectionKind.RENAMED
+
+
+def test_mode_header_with_new_mode_only_in_a_text_edit_is_ambiguous() -> None:
+    ambiguous(text_diff("a/f", "b/f").replace("index 1..2 100644", "new mode 100755"))
+
+
+@pytest.mark.parametrize("char", ["\r", "\x01", "\x1b", "\x7f"])
+def test_control_character_in_the_diff_line_is_ambiguous(char: str) -> None:
+    ambiguous(f"diff --git a/f{char} b/f\nold mode 100644\nnew mode 100755\n")
+
+
+def test_lone_cr_input_is_ambiguous() -> None:
+    ambiguous("diff --git a/f b/f\r--- a/f\r+++ b/f\r@@ -1 +1 @@\r-a\r+b\r")
+
+
+def test_tab_in_the_diff_line_is_not_a_control_character() -> None:
+    diff = "diff --git a/f\t b/f\t\nold mode 100644\nnew mode 100755\n"
+    assert only(diff).kind is SectionKind.MODE_ONLY
+
+
+def test_added_or_deleted_section_has_at_most_one_hunk() -> None:
+    added = "diff --git a/n b/n\nnew file mode 100644\n--- /dev/null\n+++ b/n\n"
+    ambiguous(added + "@@ -0,0 +1 @@\n+x\n@@ -0,0 +3 @@\n+y\n")
+    deleted = "diff --git a/n b/n\ndeleted file mode 100644\n--- a/n\n+++ /dev/null\n"
+    ambiguous(deleted + "@@ -1 +0,0 @@\n-x\n@@ -3 +0,0 @@\n-y\n")
+
+
+def test_typechange_and_rename_chain_are_ambiguous_by_design() -> None:
+    gone = "diff --git a/f b/f\ndeleted file mode 100644\n--- a/f\n+++ /dev/null\n"
+    gone += "@@ -1 +0,0 @@\n-x\n"
+    back = "diff --git a/f b/f\nnew file mode 120000\n--- /dev/null\n+++ b/f\n"
+    back += "@@ -0,0 +1 @@\n+x\n"
+    assert ambiguous(gone + back).reason == "duplicate_path"
+    first = "diff --git a/p b/q\nsimilarity index 100%\nrename from p\nrename to q\n"
+    second = "diff --git a/q b/r\nsimilarity index 100%\nrename from q\nrename to r\n"
+    assert ambiguous(first + second).reason == "duplicate_path"
+
+
 # --- duplicates -----------------------------------------------------------------------------
 
 
@@ -226,7 +360,7 @@ def test_two_sections_naming_one_path_are_ambiguous() -> None:
 
 
 def test_path_named_in_two_roles_is_ambiguous() -> None:
-    rename = "diff --git a/f b/g\nrename from f\nrename to g\n"
+    rename = "diff --git a/f b/g\nsimilarity index 100%\nrename from f\nrename to g\n"
     ambiguous(rename + text_diff("a/g", "b/g"))
 
 
@@ -237,7 +371,8 @@ def test_distinct_paths_are_fine() -> None:
 
 def test_by_old_path_lookup() -> None:
     parsed = parse_diff(
-        text_diff("a/f", "b/f") + "diff --git a/o b/n\nrename from o\nrename to n\n"
+        text_diff("a/f", "b/f")
+        + "diff --git a/o b/n\nsimilarity index 100%\nrename from o\nrename to n\n"
     )
     table = parsed.by_old_path()
     assert set(table) == {"f", "o"}
@@ -258,7 +393,6 @@ PATH_TABLE = [
     pytest.param('"a/tab\\there"', "tab\there", False, id="quoted-tab"),
     pytest.param('"a/s p/\\303\\251.txt"', "s p/é.txt", True, id="octal-utf8-space"),
     pytest.param('"a/\\342\\202\\254"', "€", False, id="octal-euro"),
-    pytest.param('"a/\\377bad"', "�bad", False, id="octal-invalid-utf8"),
     pytest.param("a/<U+202E>mark.txt", "<U+202E>mark.txt", False, id="sanitizing-marker"),
     pytest.param("a/<U+000A>x", "<U+000A>x", False, id="newline-marker-literal"),
     pytest.param("a/é/日本語.txt", "é/日本語.txt", False, id="raw-non-ascii"),
@@ -276,6 +410,18 @@ def test_path_table(token: str, expected: str, tab: bool) -> None:
     section = only(text_diff(token, new_token, tab=tab))
     assert section.old_path == expected
     assert section.new_path == expected
+
+
+@pytest.mark.parametrize("token", ['"a/\\377bad"', '"a/\\303"', '"a/\\300\\200"'])
+def test_invalid_utf8_in_a_quoted_path_is_ambiguous(token: str) -> None:
+    ambiguous(text_diff(token, "b/ok"))
+    ambiguous(text_diff("a/ok", token.replace("a/", "b/")))
+
+
+def test_invalid_utf8_in_rename_and_binary_lines_is_ambiguous() -> None:
+    ambiguous('diff --git x y\nsimilarity index 100%\nrename from "\\377"\nrename to n\n')
+    ambiguous('diff --git x y\nBinary files "a/\\377" and "b/\\377" differ\n')
+    ambiguous('diff --git "a/\\377" "b/\\377"\ndeleted file mode 100644\n')
 
 
 def test_only_one_trailing_tab_is_removed() -> None:
@@ -363,13 +509,61 @@ def test_marker_mid_hunk_and_between_sections() -> None:
     assert len(parse_diff(diff).sections) == 2
 
 
+NOMARK = "\\ No newline at end of file\n"
+
+
 def test_marker_first_in_hunk_or_doubled_is_ambiguous() -> None:
-    ambiguous(text_diff("a/f", "b/f", "@@ -1 +1 @@\n\\ No newline at end of file\n-a\n+b\n"))
-    ambiguous(
-        text_diff(
-            "a/f", "b/f", "@@ -1 +1 @@\n-a\n+b\n\\ No newline\n\\ No newline at end of file\n"
-        )
-    )
+    ambiguous(text_diff("a/f", "b/f", f"@@ -1 +1 @@\n{NOMARK}-a\n+b\n"))
+    ambiguous(text_diff("a/f", "b/f", f"@@ -1 +1 @@\n-a\n{NOMARK}{NOMARK}+b\n"))
+    ambiguous(text_diff("a/f", "b/f", f"@@ -1 +1 @@\n-a\n+b\n{NOMARK}{NOMARK}"))
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "\\ No newline",
+        "\\ No newline at end of file ",
+        "\\ no newline at end of file",
+        "\\ anything at all",
+        "\\",
+        "\\ No newline at end of file\r",
+        "\\  No newline at end of file",
+    ],
+)
+def test_marker_text_must_be_exact(marker: str) -> None:
+    ambiguous(text_diff("a/f", "b/f", f"@@ -1 +1 @@\n-a\n{marker}\n+b\n"))
+    ambiguous(text_diff("a/f", "b/f", f"@@ -1 +1 @@\n-a\n+b\n{marker}\n"))
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        f"@@ -1,2 +1 @@\n-a\n{NOMARK}-b\n+c\n",  # old side not finished
+        f"@@ -1 +1,2 @@\n-a\n+b\n{NOMARK}+c\n",  # new side not finished
+        f"@@ -1,2 +1,2 @@\n a\n{NOMARK} b\n",  # context not the last line
+        f"@@ -1 +1,2 @@\n+b\n{NOMARK}-a\n+c\n",  # + marker while - and + continue
+        f"@@ -1,2 +1,2 @@\n-a\n{NOMARK}+b\n{NOMARK}-c\n+d\n",  # marker, then the same side again
+        f"@@ -1,2 +1 @@\n a\n-b\n{NOMARK}{NOMARK}",  # two markers on one line pair
+    ],
+)
+def test_marker_only_at_the_end_of_a_side_is_accepted_or_rejected(body: str) -> None:
+    ambiguous(text_diff("a/f", "b/f", body))
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        f"@@ -1 +1 @@\n-a\n{NOMARK}+b\n",  # old side only
+        f"@@ -1 +1 @@\n-a\n+b\n{NOMARK}",  # new side only
+        f"@@ -1 +1 @@\n-a\n{NOMARK}+b\n{NOMARK}",  # both
+        f"@@ -1,2 +1,2 @@\n a\n b\n{NOMARK}",  # context, both sides ended
+        f"@@ -1,2 +1,2 @@\n-a\n-b\n{NOMARK}+c\n+d\n{NOMARK}",  # multi-line sides
+        f"@@ -1 +1,2 @@\n-a\n{NOMARK}+a\n+b\n",  # old no-newline, new grows
+    ],
+)
+def test_legal_marker_positions_parse(body: str) -> None:
+    (hunk,) = only(text_diff("a/f", "b/f", body)).hunks
+    assert all(line.tag in " +-" for line in hunk.lines)
 
 
 def test_cr_before_lf_is_content() -> None:
