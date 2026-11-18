@@ -82,12 +82,41 @@ def state_dir_path(env: Mapping[str, str] | None = None) -> Path:
 
 
 def _mkdir_exact(name: str, mode: int, dir_fd: int) -> None:
-    """``mkdirat`` that the umask cannot make unusable (a umask may only add restrictions)."""
-    old = os.umask(0)
+    """``mkdirat``; a umask can only narrow ``mode``, and callers ``fchmod`` the result exact.
+
+    The process umask is never touched (it is process-global and would race with threads).
+    """
+    os.mkdir(name, mode, dir_fd=dir_fd)
+
+
+def _ensure_dir(path: Path) -> int:
+    """Open ``path`` (following links in the user's own base path), creating missing parents.
+
+    Each missing component is made with mode 0700, opened without following links and set to
+    exactly 0700 before the next one is created below it.
+    """
     try:
-        os.mkdir(name, mode, dir_fd=dir_fd)
+        return os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    except FileNotFoundError:
+        if path.parent == path:
+            raise
+    parent_fd = _ensure_dir(path.parent)
+    try:
+        try:
+            os.mkdir(path.name, 0o700, dir_fd=parent_fd)
+            created = True
+        except FileExistsError:
+            created = False
+        fd = os.open(path.name, _DIR_FLAGS, dir_fd=parent_fd)
+        if created:
+            try:
+                os.fchmod(fd, 0o700)
+            except BaseException:
+                os.close(fd)
+                raise
+        return fd
     finally:
-        os.umask(old)
+        os.close(parent_fd)
 
 
 def _open_checked(parent_fd: int, name: str, path: Path, uid: int, *, create: bool) -> int:
@@ -162,19 +191,17 @@ def open_state_dirs(env: Mapping[str, str] | None = None, *, uid: int | None = N
     """Open (creating with mode 0700 when missing) and check the state directory and ``tmp/``.
 
     ``uid`` is the expected owner (default: the effective user); tests pass another one to
-    simulate a directory owned by someone else. Raises ``StateUnsafeError``.
+    simulate a directory owned by someone else. Raises ``StateUnsafeError``. Directories are
+    created 0700 and made exactly 0700 with ``fchmod``; a umask that leaves a new directory
+    unopenable surfaces as ``StateUnsafeError``.
     """
     expected_uid = os.geteuid() if uid is None else uid
     state_path = state_dir_path(env)
     base = state_path.parent
-    old_umask = os.umask(0o077)  # created parents get 0700 whatever the caller's umask
     try:
-        os.makedirs(base, mode=0o700, exist_ok=True)
-        base_fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        base_fd = _ensure_dir(base)
     except OSError as exc:
         raise _unsafe("cannot open the state base directory", base, exc) from exc
-    finally:
-        os.umask(old_umask)
     try:
         state_fd = _open_checked(base_fd, STATE_DIR_NAME, state_path, expected_uid, create=True)
     finally:
@@ -235,7 +262,7 @@ class HookDir:
                 os.close(self.fd)
             except OSError:
                 pass
-        remove_tree_at(tmp_fd, self.name)
+        remove_tree_at(tmp_fd, self.name, path=self.path)
 
 
 def create_hook_dir(tmp_fd: int, tmp_path: Path) -> HookDir:
@@ -252,48 +279,90 @@ def create_hook_dir(tmp_fd: int, tmp_path: Path) -> HookDir:
     raise StateUnsafeError("cannot find an unused hook directory name", {"path": str(tmp_path)})
 
 
-def _remove(parent_fd: int, name: str, depth: int) -> None:
-    try:
-        st = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        return
-    if not stat.S_ISDIR(st.st_mode):
-        os.unlink(name, dir_fd=parent_fd)  # a file or a symlink: removes the link itself
-        return
-    if depth >= MAX_REMOVE_DEPTH:
-        raise StateUnsafeError(
-            f"directory tree is nested deeper than {MAX_REMOVE_DEPTH}; left in place",
-            {"path": name},
-        )
+def _open_removable_dir(parent_fd: int, name: str, path: Path, euid: int) -> int:
+    """Open directory ``name`` for removal, making an own read-only or unreadable one usable.
+
+    The entry is only ever chmodded after a descriptor opened with ``O_NOFOLLOW`` (or ``O_PATH``
+    on Linux) shows it is a directory owned by the current user. Without ``O_PATH`` an
+    unreadable directory stays a ``StateUnsafeError``.
+    """
     try:
         fd = os.open(name, _DIR_FLAGS, dir_fd=parent_fd)
-    except OSError as exc:
-        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
-            # Replaced by a link or file after the check: remove that entry, never follow it.
-            os.unlink(name, dir_fd=parent_fd)
-            return
-        raise
+    except PermissionError:
+        o_path = getattr(os, "O_PATH", None)
+        if o_path is None:
+            raise
+        path_flags = o_path | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        pfd = os.open(name, path_flags, dir_fd=parent_fd)
+        try:
+            st = os.fstat(pfd)
+            if not stat.S_ISDIR(st.st_mode) or st.st_uid != euid:
+                raise _unsafe("not an owned directory; left in place", path)
+            os.chmod(f"/proc/self/fd/{pfd}", 0o700)
+        finally:
+            os.close(pfd)
+        fd = os.open(name, _DIR_FLAGS, dir_fd=parent_fd)
     try:
-        for entry in os.listdir(fd):
-            _remove(fd, entry, depth + 1)
-    finally:
+        st = os.fstat(fd)
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != euid:
+            raise _unsafe("not an owned directory; left in place", path)
+        if stat.S_IMODE(st.st_mode) & 0o700 != 0o700:
+            os.fchmod(fd, 0o700)
+    except BaseException:
         os.close(fd)
-    os.rmdir(name, dir_fd=parent_fd)
+        raise
+    return fd
 
 
-def remove_tree_at(parent_fd: int, name: str) -> None:
+def _remove(parent_fd: int, name: str, path: Path, depth: int, dev: int | None) -> None:
+    try:
+        st = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if not stat.S_ISDIR(st.st_mode):
+            os.unlink(name, dir_fd=parent_fd)  # a file or a symlink: removes the link itself
+            return
+        if depth > MAX_REMOVE_DEPTH:
+            raise _unsafe(
+                f"directory tree is nested deeper than {MAX_REMOVE_DEPTH}; left in place", path
+            )
+        if dev is not None and st.st_dev != dev:
+            raise _unsafe("directory is on another filesystem; left in place", path)
+        try:
+            fd = _open_removable_dir(parent_fd, name, path, os.geteuid())
+        except OSError as exc:
+            if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                # Replaced by a link or file after the check: remove that entry, never follow it.
+                os.unlink(name, dir_fd=parent_fd)
+                return
+            raise
+        try:
+            if dev is not None and os.fstat(fd).st_dev != dev:
+                raise _unsafe("directory is on another filesystem; left in place", path)
+            for entry in os.listdir(fd):
+                _remove(fd, entry, path / entry, depth + 1, st.st_dev)
+        finally:
+            os.close(fd)
+        os.rmdir(name, dir_fd=parent_fd)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise _unsafe("cannot remove", path, exc) from exc
+
+
+def remove_tree_at(parent_fd: int, name: str, *, path: Path | None = None) -> None:
     """Delete ``name`` below ``parent_fd`` with an ``unlinkat`` walk that never follows links.
 
     Symlinks (and any non-directory) are unlinked themselves; directories are entered only
-    through descriptors opened with ``O_NOFOLLOW``. A missing entry is fine. Raises
-    ``ValueError`` for a name that is not one path component and ``StateUnsafeError`` when
-    something cannot be removed.
+    through descriptors opened with ``O_NOFOLLOW``, never across a filesystem boundary, and at
+    most ``MAX_REMOVE_DEPTH`` levels below ``name``. Own directories lacking owner rwx are made
+    0700 first. A missing entry is fine. ``path`` is the absolute path of ``name`` (reported in
+    errors; default ``name``). Raises ``ValueError`` for a name that is not one path component
+    and ``StateUnsafeError`` (``details.path`` is the failing entry) when something cannot be
+    removed.
+
+    Removal is not atomic: a refused tree is left in place, partially emptied.
     """
     _check_name(name)
-    try:
-        _remove(parent_fd, name, 0)
-    except OSError as exc:
-        raise _unsafe("cannot remove", name, exc) from exc
+    _remove(parent_fd, name, path if path is not None else Path(name), 0, None)
 
 
 def sweep_stale_hook_dirs(

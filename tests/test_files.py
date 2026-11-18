@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 import stat
+import types
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -37,6 +38,11 @@ def umask0() -> Iterator[None]:
         yield
     finally:
         os.umask(old)
+
+
+def os_proxy(**overrides: object) -> types.SimpleNamespace:
+    """A stand-in for ``os`` seen only by ``pr_comment.files`` (patch ``files.os``)."""
+    return types.SimpleNamespace(**{**vars(os), **overrides})
 
 
 def mode_of(path: Path) -> int:
@@ -98,6 +104,47 @@ def test_creation_is_0700_even_under_a_restrictive_umask(
         os.umask(old)
     assert mode_of(state_path) == 0o700
     assert mode_of(state_path / "tmp") == 0o700
+
+
+def test_creation_is_0700_under_umask_077_and_the_process_umask_is_untouched(
+    env: dict[str, str], state_path: Path
+) -> None:
+    old = os.umask(0o077)
+    try:
+        with open_dirs(env):
+            pass
+        assert os.umask(0o077) == 0o077
+    finally:
+        os.umask(old)
+    assert mode_of(state_path) == 0o700
+    assert mode_of(state_path.parent) == 0o700
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can open mode 0 directories")
+def test_umask_777_surfaces_as_state_unsafe_not_a_hang(env: dict[str, str]) -> None:
+    old = os.umask(0o777)
+    try:
+        with pytest.raises(StateUnsafeError):
+            open_dirs(env)
+        assert os.umask(old) == 0o777
+    finally:
+        os.umask(old)
+
+
+def test_files_module_never_calls_umask() -> None:
+    assert "umask(" not in Path(files.__file__).read_text()
+
+
+def test_missing_parents_are_created_one_by_one_0700(env: dict[str, str]) -> None:
+    env["XDG_STATE_HOME"] = str(Path(env["HOME"]) / "a" / "b" / "c")
+    old = os.umask(0o022)
+    try:
+        with open_dirs(env):
+            pass
+    finally:
+        os.umask(old)
+    for sub in ("a", "a/b", "a/b/c"):
+        assert mode_of(Path(env["HOME"]) / sub) == 0o700
 
 
 def test_second_run_reopens_the_same_directories(env: dict[str, str], state_path: Path) -> None:
@@ -277,6 +324,20 @@ def test_state_unsafe_maps_to_the_exit_12_envelope(env: dict[str, str], state_pa
     assert error["code"] == "state_unsafe"
     assert (error["landed"], error["retry"]) == (False, "same_command")
     os.chmod(tmp, 0o700)
+
+
+def test_state_unsafe_details_are_an_absolute_path_and_a_symbolic_errno(
+    env: dict[str, str], state_path: Path
+) -> None:
+    tmp = make_safe(state_path)
+    os.chmod(tmp, 0o000)
+    try:
+        err = expect_unsafe(env)
+    finally:
+        os.chmod(tmp, 0o700)
+    assert set(err.details) <= {"path", "errno"}
+    assert os.path.isabs(err.details["path"])
+    assert err.details["errno"] == "EACCES"
 
 
 def test_base_directory_that_is_a_file_is_state_unsafe(env: dict[str, str], tmp_path: Path) -> None:
@@ -509,7 +570,7 @@ def test_removal_never_leaves_the_directory_when_a_subdir_is_swapped_for_a_symli
             os.symlink(outside, hook.path / "sub")
         return real_open(path, flags, *a, **kw)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(files.os, "open", evil_open)
+    monkeypatch.setattr(files, "os", os_proxy(open=evil_open))
     try:
         hook.remove(tmp_fd)
     except StateUnsafeError:
@@ -521,20 +582,129 @@ def test_removal_never_leaves_the_directory_when_a_subdir_is_swapped_for_a_symli
     assert not hook.path.exists()
 
 
-def test_very_deep_tree_is_refused_not_crashed(tmp_fd: int, state_path: Path) -> None:
-    hook = files.create_hook_dir(tmp_fd, state_path / "tmp")
+def nest(hook: files.HookDir, levels: int) -> None:
     fd = os.dup(hook.fd)
     try:
-        for _ in range(files.MAX_REMOVE_DEPTH + 20):
+        for _ in range(levels):
             os.mkdir("d", 0o700, dir_fd=fd)
             nfd = os.open("d", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             os.close(fd)
             fd = nfd
     finally:
         os.close(fd)
-    with pytest.raises(StateUnsafeError):
+
+
+def test_tree_nested_64_levels_below_the_hook_dir_is_removed(tmp_fd: int, state_path: Path) -> None:
+    hook = files.create_hook_dir(tmp_fd, state_path / "tmp")
+    nest(hook, files.MAX_REMOVE_DEPTH)
+    hook.remove(tmp_fd)
+    assert not hook.path.exists()
+
+
+def test_tree_nested_65_levels_is_refused_and_left_in_place(tmp_fd: int, state_path: Path) -> None:
+    hook = files.create_hook_dir(tmp_fd, state_path / "tmp")
+    nest(hook, files.MAX_REMOVE_DEPTH + 1)
+    with pytest.raises(StateUnsafeError) as info:
         hook.remove(tmp_fd)
     assert hook.path.is_dir()  # left in place; the sweep never touches non-empty directories
+    deepest = hook.path.joinpath(*(["d"] * (files.MAX_REMOVE_DEPTH + 1)))
+    assert info.value.details["path"] == str(deepest)
+
+
+def test_very_deep_tree_is_refused_not_crashed(tmp_fd: int, state_path: Path) -> None:
+    hook = files.create_hook_dir(tmp_fd, state_path / "tmp")
+    nest(hook, files.MAX_REMOVE_DEPTH + 20)
+    with pytest.raises(StateUnsafeError):
+        hook.remove(tmp_fd)
+    assert hook.path.is_dir()
+
+
+@pytest.mark.parametrize("mode", [0o555, 0o500, 0o300, 0o000])
+def test_unusable_own_subdirs_are_made_removable(tmp_fd: int, state_path: Path, mode: int) -> None:
+    hook = files.create_hook_dir(tmp_fd, state_path / "tmp")
+    sub = hook.path / "sub"
+    (sub / "inner").mkdir(parents=True)
+    (sub / "f").write_text("x")
+    (sub / "inner" / "g").write_text("y")
+    os.chmod(sub / "inner", mode)
+    os.chmod(sub, mode)
+    hook.remove(tmp_fd)
+    assert not hook.path.exists()
+
+
+def test_a_directory_not_owned_by_us_is_not_chmodded_and_removal_refuses(
+    tmp_fd: int, state_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hook = files.create_hook_dir(tmp_fd, state_path / "tmp")
+    sub = hook.path / "sub"
+    sub.mkdir()
+    os.chmod(sub, 0o500)
+    other = os.geteuid() + 1
+    monkeypatch.setattr(files, "os", os_proxy(geteuid=lambda: other))
+    try:
+        with pytest.raises(StateUnsafeError):
+            hook.remove(tmp_fd)
+    finally:
+        monkeypatch.undo()
+    assert mode_of(sub) == 0o500
+    os.chmod(sub, 0o700)
+    hook.remove(tmp_fd)
+
+
+def test_removal_does_not_cross_into_another_filesystem(
+    tmp_fd: int, state_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hook = files.create_hook_dir(tmp_fd, state_path / "tmp")
+    (hook.path / "mnt").mkdir()
+    (hook.path / "mnt" / "keep").write_text("x")
+    real_stat = os.stat
+
+    def fake_stat(path: object, *a: object, **kw: object) -> os.stat_result:
+        st = real_stat(path, *a, **kw)  # type: ignore[arg-type]
+        if path == "mnt":
+            values = list(st)
+            values[2] += 1  # st_dev
+            return os.stat_result(values)
+        return st
+
+    monkeypatch.setattr(files, "os", os_proxy(stat=fake_stat))
+    try:
+        with pytest.raises(StateUnsafeError) as info:
+            hook.remove(tmp_fd)
+    finally:
+        monkeypatch.undo()
+    assert info.value.details["path"] == str(hook.path / "mnt")
+    assert (hook.path / "mnt" / "keep").read_text() == "x"
+
+
+def test_removal_failure_reports_the_absolute_path_of_the_failing_entry(
+    tmp_fd: int, state_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hook = files.create_hook_dir(tmp_fd, state_path / "tmp")
+    (hook.path / "sub").mkdir()
+    (hook.path / "sub" / "f").write_text("x")
+    real_unlink = os.unlink
+
+    def failing_unlink(path: object, *a: object, **kw: object) -> None:
+        if path == "f":
+            raise PermissionError(errno_eperm(), "no")
+        real_unlink(path, *a, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(files, "os", os_proxy(unlink=failing_unlink))
+    try:
+        with pytest.raises(StateUnsafeError) as info:
+            hook.remove(tmp_fd)
+    finally:
+        monkeypatch.undo()
+    assert info.value.details["path"] == str(hook.path / "sub" / "f")
+    assert info.value.details["errno"] == "EPERM"
+    hook.remove(tmp_fd)
+
+
+def errno_eperm() -> int:
+    import errno
+
+    return errno.EPERM
 
 
 # --- sweeping ---------------------------------------------------------------------------------
@@ -620,7 +790,7 @@ def test_sweep_leaves_a_dir_that_gains_content_between_check_and_rmdir(
         (path / "late").write_text("x")
         real_rmdir(p, *a, **kw)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(files.os, "rmdir", racing_rmdir)
+    monkeypatch.setattr(files, "os", os_proxy(rmdir=racing_rmdir))
     assert files.sweep_stale_hook_dirs(tmp_fd, now=now) == []
     assert (path / "late").read_text() == "x"
 
