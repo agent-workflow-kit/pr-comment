@@ -10,10 +10,7 @@ private HOME with a ``PATH`` that holds no ``gh`` or ``glab``.
 
 from __future__ import annotations
 
-import base64
-import json
 import os
-import re
 import shutil
 import signal
 import subprocess
@@ -26,53 +23,22 @@ import pytest
 from tests import fake_forgectl as ff
 from tests import forgectl_harness
 from tests.fakes import Tracker, alive, make_fake, record, recorded
+from tests.forgectl_cases import (
+    CASES_FILE,
+    error_code,
+    expected_of,
+    load,
+    observed_of,
+    stdin_bytes,
+)
 from tests.forgectl_harness import PINNED_VERSION, PR, FakeForgectl, fail
 
-CASES_FILE = Path(__file__).resolve().parent / "forgectl_cases.json"
-RECORDED: dict[str, Any] = json.loads(CASES_FILE.read_text(encoding="utf-8"))
+RECORDED: dict[str, Any] = load(CASES_FILE)
 CASES: list[dict[str, Any]] = RECORDED["cases"]
 
 
-def stdin_bytes(spec: dict[str, Any]) -> bytes:
-    if "text" in spec:
-        return spec["text"].encode("utf-8", "surrogatepass")
-    if "b64" in spec:
-        return base64.b64decode(spec["b64"])
-    out = b""
-    for part in spec["parts"]:
-        if isinstance(part, str):
-            out += part.encode("utf-8")
-        else:
-            unit, count = part["repeat"]
-            out += unit.encode("utf-8") * count
-    return out
-
-
-_CHOICES = re.compile(r"\(choose from [^)]*\)")
-
-
-def _python_neutral(text: str) -> str:
-    """argparse quotes the choices of an invalid command from Python 3.13 on, not before."""
-    return _CHOICES.sub("(choose from ...)", text)
-
-
 def observed(proc: subprocess.CompletedProcess[bytes]) -> dict[str, Any]:
-    stdout = proc.stdout.decode("utf-8")
-    try:
-        document: Any = json.loads(stdout) if stdout.strip() else None
-    except ValueError:
-        document = None
-    return json.loads(
-        _python_neutral(
-            json.dumps(
-                {
-                    "exit": proc.returncode,
-                    "stdout": document if document is not None else stdout,
-                    "stderr": proc.stderr.decode("utf-8"),
-                }
-            )
-        )
-    )
+    return observed_of(proc.returncode, proc.stdout, proc.stderr)
 
 
 def command_of(argv: list[str]) -> str:
@@ -86,10 +52,6 @@ def materialize(case: dict[str, Any], directory: Path) -> list[str]:
     for name, text in case.get("files", {}).items():
         (directory / name).write_text(text, encoding="utf-8")
     return [a.replace("{tmp}", str(directory)) for a in case["argv"]]
-
-
-def _expected(case: dict[str, Any]) -> dict[str, Any]:
-    return json.loads(_python_neutral(json.dumps(case["expect"])))
 
 
 def test_the_recording_is_of_the_pinned_release() -> None:
@@ -109,7 +71,7 @@ def test_the_fake_refuses_as_the_real_forgectl_did(
 ) -> None:
     forgectl.allow_usage_errors = True  # these cases are the argv forgectl refuses
     proc = forgectl.run(materialize(case, tmp_path / "files"), stdin=stdin_bytes(case["stdin"]))
-    assert observed(proc) == _expected(case)
+    assert observed(proc) == expected_of(case)
 
 
 @pytest.mark.parametrize("case", ACCEPTED, ids=[c["name"] for c in ACCEPTED])
@@ -131,7 +93,7 @@ def test_the_fake_accepts_what_the_real_forgectl_accepted(
 
 
 def out_code(proc: subprocess.CompletedProcess[bytes]) -> str:
-    return json.loads(proc.stdout)["error"]["code"]
+    return error_code(proc.stdout)
 
 
 def _real_forgectl() -> str:
@@ -192,7 +154,7 @@ def test_the_real_forgectl_still_answers_as_recorded(case: dict[str, Any], tmp_p
         assert case["expect"] == {"reaches_host": True}
         assert proc.returncode == 12 and out_code(proc) == "tool_missing", proc.stdout
     else:
-        assert observed(proc) == _expected(case)
+        assert observed(proc) == expected_of(case)
 
 
 @pytest.mark.live
