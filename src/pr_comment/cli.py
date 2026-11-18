@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any, NoReturn, cast
 
 from . import __version__, grammars
+from .actor import ActorError, resolve_run, stream_is_tty
 from .config import ConfigError, load_config
 from .errors import sanitize
 from .grammars import MAX_DECISION_IDS, MAX_THREADS
@@ -313,8 +314,8 @@ def _add_common_posting_flags(parser: argparse.ArgumentParser, *, base: bool = F
     parser.add_argument(
         "--dedupe-key", action=_StoreOnce, metavar="KEY", type=_checked(grammars.check_dedupe_key)
     )
-    # TODO(#16): validate and apply the mention allowlist; TODO(#5): require a human actor and
-    # an interactive run for --allow-mention.
+    # TODO(#16): validate and apply the mention allowlist. The human-only, interactive-only rule
+    # for --allow-mention is enforced in actor.resolve_run.
     parser.add_argument("--allow-mention", action=AppendAction, default=[], metavar="NAME")
 
 
@@ -384,9 +385,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def validate_args(args: argparse.Namespace) -> None:
     """Rules argparse cannot express. Raises ``UsageError``."""
-    # TODO(#5): resolve the actor, detect interactive runs, apply the human-only flag rules
-    # (--allow-mention, --override-escalation) and refuse `--body-file -` / `--draft-file -`
-    # when stdin is a TTY.
+    try:
+        args.run = resolve_run(
+            args, stdin_tty=stream_is_tty(sys.stdin), stderr_tty=stream_is_tty(sys.stderr)
+        )
+    except ActorError as exc:
+        raise UsageError(str(exc)) from exc
     # Value grammars live in grammars.py and run as argparse types, so argparse names the flag;
     # the PR argument is checked here because its error code differs (`invalid_pr`).
     pr = getattr(args, "pr", None)
@@ -559,6 +563,7 @@ def _leading_dash_pr(argv: list[str]) -> bool:
 
 
 def _write(stream: Any, text: str) -> None:
+    # TODO(#4): tolerate None/closed stdout/stderr in _write
     """Write text that cannot fail on the stream's encoding."""
     if text:
         encoding = getattr(stream, "encoding", None) or "utf-8"

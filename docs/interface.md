@@ -21,11 +21,14 @@ References: architecture (`../awkit-docs/architecture.md`) sections 5.2, 12.4, 1
 
 - The actor comes from `--actor` (grammar `^(human|auto):[A-Za-z0-9._@-]{1,64}$`); the default is `human:<me.name>` when stdin is a TTY, else `auto:unknown`.
 - `me.name` must match `^[A-Za-z0-9._@-]{1,64}$`; an OS username that does not gives `human:unknown`.
+- The default `me.name` is the username from the password database (`pwd.getpwuid`), never read from `USER`, `LOGNAME` or any other environment variable; a failed lookup gives `human:unknown`.
 - A run is **interactive** when stdin and stderr are TTYs, the actor is not `auto:`, `--yes` is not given and no body or draft is read from stdin (`-`).
 - `--body-file -` or `--draft-file -` with stdin a TTY exits 2 (`usage`).
 - Human-only flags (`--allow-mention`, `--override-escalation=<scope>`) require a `human:` actor; otherwise exit 2. `--allow-mention` also requires an interactive run (exit 2 otherwise); its names show in the dialog summary and the audit record (`inputs.allowed_mentions`, `override: ["allow_mention"]`). `--override-escalation=<scope>` needs only the `human:` actor (an interactive run, or `--actor human:<user>`) and works with `--yes`, which is how a caller with its own dialog passes it.
 - A human who pipes a draft (`--draft-file -`) gets the default actor `auto:unknown` (stdin is not a TTY) and the automatic attribution; such a pipeline passes `--actor human:<me>` and `--yes`, or the human writes the draft to a file and runs `review --draft-file <path>`.
 - As in forgectl, human-only rules are advisory against a same-user process that claims `--actor human:<user>`; the audit record shows how the actor was obtained (`actor_source`, `stdin_tty`).
+- `actor_source` is `flag` when `--actor` is given (even when it equals the default), `tty` when `--actor` is absent and stdin is a TTY (actor `human:<me.name>`, or `human:unknown`), and `default` when `--actor` is absent and stdin is not a TTY (`auto:unknown`).
+- These usage rules run before other flag-combination usage errors, in this order: `-` with a TTY stdin, then `--allow-mention`, then `--override-escalation`. `draft check -` is not refused on a TTY stdin (it has no dialog) but is never interactive.
 
 ### Posting plan
 
@@ -506,7 +509,7 @@ Configured as `hooks.<name>`, a list of `{cmd, timeout, async, with_text}` (desi
 | `forgectl_bin` | `forgectl` | Path or name of forgectl (binding A); see [forgectl edge](#forgectl-edge). |
 | `forgectl_config` | unset | Passed to forgectl as `--config`. |
 | `timeout` | `120s` | Budget per forgectl call, passed as `--timeout`. |
-| `me.name` | OS username | Used for the default actor and `{user}`. |
+| `me.name` | OS username (password database) | Used for the default actor and `{user}`. |
 | `footer.human` | see [Footers and marker](#footers-and-marker) | String or `false`. |
 | `footer.auto` | see Footers and marker | A non-empty string, never `false`. |
 | `mentions.policy` | `neutralize` | `neutralize` or `allow`. |
