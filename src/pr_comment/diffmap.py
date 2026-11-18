@@ -100,7 +100,7 @@ _ESCAPES = {
 _BINARY_PREFIX = "Binary files "
 _BINARY_SUFFIX = " differ"
 _NO_NEWLINE_MARKER = "\\ No newline at end of file"
-_MAX_PATH_LINE = 8192
+_MAX_PATH_LINE = 32768
 
 
 class _Unreadable(Exception):
@@ -366,8 +366,10 @@ def _parse_section(lines: list[str], start: int, end: int) -> FileSection:
         if has_rename:
             if is_new or is_deleted:
                 raise fail("rename_with_new_or_deleted", at)
+            if rename_from is None or rename_to is None:
+                raise fail("bad_rename_lines", at)
             old, new = rename_from, rename_to
-            if not _binary_rename_matches(binary_line, old, new):  # type: ignore[arg-type]
+            if not _binary_rename_matches(binary_line, rename_from, rename_to):
                 raise fail("binary_line_disagrees_with_rename", at)
         else:
             try:

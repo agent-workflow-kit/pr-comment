@@ -182,7 +182,7 @@ def test_binary_rename_with_spaces_and_quotes_agrees() -> None:
 
 def test_binary_line_with_many_and_separators_is_read_in_linear_time() -> None:
     started = time.monotonic()
-    for repeat in (500, 1000):  # under the line cap, then over it
+    for repeat in (500, 5000):  # under the line cap, then over it
         unit = " and b/x"
         line = f"Binary files a/x{unit * repeat} differ\n"
         ambiguous(f"diff --git a/x b/x\n{line}")
@@ -192,11 +192,20 @@ def test_binary_line_with_many_and_separators_is_read_in_linear_time() -> None:
 
 
 def test_overlong_header_lines_are_ambiguous() -> None:
-    path = "x" * 5000
+    path = "x" * 17000
     ambiguous(f"diff --git a/{path} b/{path}\nBinary files a/{path} and b/{path} differ\n")
     ambiguous(f"diff --git a/{path} b/{path}\ndeleted file mode 100644\n")
     ok = "x" * 3000
     assert only(f"diff --git a/{ok} b/{ok}\nBinary files a/{ok} and b/{ok} differ\n").old_path == ok
+
+
+def test_long_quoted_non_ascii_path_fits_the_line_cap() -> None:
+    path = "é" * 520
+    quoted = '"' + "a/" + "\\303\\251" * 520 + '"'
+    quoted_b = quoted.replace('"a/', '"b/')
+    section = only(f"diff --git {quoted} {quoted_b}\ndeleted file mode 100644\n")
+    assert section.kind is SectionKind.DELETED
+    assert section.old_path == path
 
 
 def test_git_binary_patch_is_ambiguous() -> None:
