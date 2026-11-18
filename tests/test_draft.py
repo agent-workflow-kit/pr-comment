@@ -607,10 +607,12 @@ def test_large_but_in_range_integer_is_not_a_crash() -> None:
 
 
 def test_lone_surrogate_escape_does_not_crash_loading() -> None:
-    # Refusing the character is the text pipeline's job (invalid_text, TODO(#14)); loading must
-    # still not crash on the byte count of such a string.
+    # validate_document does not refuse the character (parse_draft does: invalid_text, see
+    # tests/test_draft_text.py); it must still not crash on the byte count of such a string.
     raw = dumps(good()).replace(b'"summary"', b'"\\ud800"')
-    parse_draft(raw)
+    with pytest.raises(DraftError) as info:
+        parse_draft(raw)
+    assert info.value.code == "invalid_text"
     doc = good()
     doc["findings"][0]["path"] = "a\ud800"
     doc["findings"][0]["body"] = "\udfff" * 20000

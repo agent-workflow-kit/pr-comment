@@ -13,8 +13,12 @@ key is ever echoed.
 ``jsonschema`` is a test-only dependency (design: Dependencies), so the schema's rules are written
 out here; tests/test_draft.py checks them against the schema.
 
-Not here: Text pipeline steps 1 and 2 on the text fields (control characters, lone surrogates,
-suggestion fences: ``invalid_text``) belong to #14; ``draft check`` output belongs to #15.
+``text_issues`` applies Text pipeline steps 1 and 2 (control characters, lone surrogates and
+suggestion fences: ``invalid_text``) to every text field of a schema-valid draft; ``parse_draft``
+refuses the first one. The draft data is not changed: the line-separator rewrite is
+``textpipe.normalize_lines``, applied where bodies are built.
+
+Not here: ``draft check`` output belongs to #15.
 """
 
 from __future__ import annotations
@@ -27,11 +31,11 @@ import os
 import re
 import stat
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
-from . import grammars
+from . import grammars, textpipe
 from .output import Outcome, error_outcome
 
 MAX_DRAFT_BYTES: Final = 16 * 1024 * 1024
@@ -288,11 +292,82 @@ def parse_draft(raw: bytes) -> Draft:
                 {"supported": list(SUPPORTED_VERSIONS)},
             )
     errors = validate_document(document)
-    # TODO(#14): text pipeline steps 1-2 on text fields (invalid_text for control characters
-    # and lone surrogates, suggestion fences)
     if errors:
         raise invalid_draft(errors)
+    issues = text_issues(document)
+    if issues:
+        first = issues[0]
+        raise DraftError(
+            "invalid_text",
+            f"invalid draft text: {_TEXT_KIND_MESSAGES[first['kind']]} (at {first['pointer']})",
+            dict(first),
+        )
     return Draft(document, hashlib.sha256(raw).hexdigest())
+
+
+# --- text pipeline ---------------------------------------------------------------------------
+
+_TEXT_KIND_MESSAGES: Final = {
+    textpipe.CONTROL_CHARACTER: "control character or lone surrogate",
+    textpipe.SUGGESTION_FENCE: "suggestion fence",
+}
+
+
+def _text_fields(finding: object, pointer: str) -> Iterator[tuple[str, str, bool]]:
+    """``(pointer, text, multi_line)`` for each text field of one finding that is a string."""
+    if not isinstance(finding, dict):
+        return
+    fields: dict[str, Any] = finding  # pyright: ignore[reportUnknownVariableType]
+    for key, multi_line in (("path", False), ("title", False), ("body", True)):
+        value = fields.get(key)
+        if type(value) is str:
+            yield f"{pointer}/{key}", value, multi_line
+    suggestion: object = fields.get("suggestion")
+    lines: object = suggestion.get("lines") if isinstance(suggestion, dict) else None  # pyright: ignore[reportUnknownMemberType]
+    if isinstance(lines, list):
+        for index, line in enumerate(lines):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+            if type(line) is str:
+                yield f"{pointer}/suggestion/lines/{index}", line, False
+
+
+def _all_text_fields(document: object) -> Iterator[tuple[str, str, bool]]:
+    if not isinstance(document, dict):
+        return
+    root: dict[str, Any] = document  # pyright: ignore[reportUnknownVariableType]
+    if type(root.get("body")) is str:
+        yield "/body", root["body"], True
+    findings: object = root.get("findings")
+    if isinstance(findings, list):
+        for index, item in enumerate(findings):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+            yield from _text_fields(item, f"/findings/{index}")
+    unanchored: object = root.get("unanchored")
+    if isinstance(unanchored, list):
+        for index, entry in enumerate(unanchored):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+            if isinstance(entry, dict):
+                yield from _text_fields(
+                    entry.get("finding"),  # pyright: ignore[reportUnknownMemberType]
+                    f"/unanchored/{index}/finding",
+                )
+
+
+def text_issues(document: object) -> list[dict[str, str]]:
+    """Text pipeline steps 1 and 2 over every text field: ``{pointer, kind}`` entries.
+
+    Step 1 problems (``control_character``) come before step 2 problems (``suggestion_fence``),
+    each in document order. Suggestion fences are looked for only in multi-line text (the draft
+    ``body`` and a finding ``body``); a suggestion line holding a fence degrades later. Only the
+    pointer and the kind are returned, never the text. Fields of the wrong type are skipped
+    (``validate_document`` reports them).
+    """
+    controls: list[dict[str, str]] = []
+    fences: list[dict[str, str]] = []
+    for pointer, text, multi_line in _all_text_fields(document):
+        normalized = textpipe.normalize_lines(text)
+        if textpipe.has_forbidden_character(normalized):
+            controls.append({"pointer": pointer, "kind": textpipe.CONTROL_CHARACTER})
+        elif multi_line and textpipe.suggestion_fence(normalized):
+            fences.append({"pointer": pointer, "kind": textpipe.SUGGESTION_FENCE})
+    return controls + fences
 
 
 # --- validation ------------------------------------------------------------------------------
