@@ -641,3 +641,103 @@ def test_the_schema_base_ref_refuses_what_check_branch_refuses(value: str) -> No
 @pytest.mark.parametrize("value", ["main", "feat/x", "a.b", "x@y", "a" * 1024, "a/b.c"])
 def test_the_schema_base_ref_accepts_valid_branches(value: str) -> None:
     validate("pr-comment/defs.json#/$defs/base_ref", value)
+
+
+# --- --since (export, issue #38) ------------------------------------------------------------
+
+
+SINCE_VALID = [
+    "7d",
+    "1s",
+    "90m",
+    "36h",
+    "2026-11-17T10:00:00Z",
+    "2026-11-17t10:00:00z",
+    "2026-11-17T10:00:00.123456789Z",
+    "2026-11-17T10:00:00.1234567890123Z",  # any number of digits
+    "2026-11-17T10:00:00+05:30",
+    "2026-11-17T10:00:00-00:00",
+    "2999-01-01T00:00:00Z",
+]
+SINCE_INVALID = [
+    "",
+    " 7d",
+    "7d ",
+    "7d\n",
+    "7",
+    "0d",
+    "00s",
+    "-7d",
+    "+7d",
+    "7.5d",
+    "7D",
+    "7ms",
+    "7w",
+    "d",
+    "7 d",
+    "７d",  # fullwidth digit
+    "1" * 40 + "s",
+    "999999999d",  # over 100 years
+    "2026-11-17",
+    "2026-11-17T10:00:00",  # no offset
+    "2026-11-17 10:00:00Z",
+    "2026-13-17T10:00:00Z",
+    "2026-02-30T10:00:00Z",
+    "2026-11-17T24:00:00Z",
+    "2026-11-17T10:00:60Z",  # leap second: refused (narrower)
+    "2026-11-17T10:00:00+24:00",
+    "2026-11-17T10:00:00+0530",
+    "2026-11-17T10:00:00.Z",
+    "0000-01-01T00:00:00Z",
+    "0001-01-01T00:00:00+23:59",  # before year 1 once converted to UTC
+    "2026-11-17T10:00:00Z\n",
+    "2026-11-17T10:00:00Z; rm -rf",
+    "--since",
+    "\x00",
+]
+
+
+@pytest.mark.parametrize("value", SINCE_VALID)
+def test_check_since_accepts_rfc3339_with_an_offset_and_durations(value: str) -> None:
+    assert grammars.check_since(value) == value
+
+
+@pytest.mark.parametrize("value", SINCE_INVALID)
+def test_check_since_refuses_everything_else_without_echoing_it(value: str) -> None:
+    with pytest.raises(GrammarError) as raised:
+        grammars.check_since(value)
+    if len(value.strip()) > 12:  # shorter ones can equal the message's own examples
+        assert value not in str(raised.value)
+
+
+def test_check_since_refuses_a_non_string() -> None:
+    for value in (None, 7, b"7d", ["7d"]):
+        with pytest.raises(GrammarError):
+            grammars.check_since(value)
+
+
+def test_since_cutoff_of_a_duration_counts_back_from_now() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
+    assert grammars.since_cutoff("7d", now) == now - timedelta(days=7)
+    assert grammars.since_cutoff("90m", now) == now - timedelta(minutes=90)
+    assert grammars.since_cutoff("5s", now) == now - timedelta(seconds=5)
+
+
+def test_since_cutoff_of_a_timestamp_honors_the_offset() -> None:
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
+    assert grammars.since_cutoff("2026-11-17T10:00:00+02:00", now) == datetime(
+        2026, 11, 17, 8, 0, tzinfo=UTC
+    )
+    assert grammars.since_cutoff("2026-11-17T10:00:00.5Z", now) == datetime(
+        2026, 11, 17, 10, 0, 0, 500000, tzinfo=UTC
+    )
+
+
+def test_parse_rfc3339_returns_none_for_anything_check_since_would_refuse_as_a_time() -> None:
+    assert grammars.parse_rfc3339("2026-11-17T10:00:00Z") is not None
+    for value in ("7d", "2026-11-17T10:00:00", "", "2026-11-17T10:00:00Z\n"):
+        assert grammars.parse_rfc3339(value) is None

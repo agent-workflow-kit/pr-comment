@@ -82,6 +82,21 @@ def test_no_files_gives_the_defaults(env: dict[str, str]) -> None:
     assert loaded.config_hash == LoadedConfig.defaults().config_hash
 
 
+def test_the_default_location_file_is_recorded_as_the_config_path(
+    cfg_dir: Path, write: Write, env: dict[str, str]
+) -> None:
+    write(cfg_dir / "config.yaml", {"timeout": "7s"})
+    loaded = load_config(None, env=env)
+    assert loaded.config_path == str(cfg_dir / "config.yaml")
+
+
+def test_only_drop_ins_leave_the_config_path_null(
+    cfg_dir: Path, write: Write, env: dict[str, str]
+) -> None:
+    write(cfg_dir / "config.d" / "x.yaml", {"timeout": "7s"})
+    assert load_config(None, env=env).config_path is None
+
+
 def test_example_file_equals_the_defaults(
     write: Write, tmp_path: Path, env: dict[str, str]
 ) -> None:

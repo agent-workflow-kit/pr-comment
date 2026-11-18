@@ -1,0 +1,26 @@
+diff --git a/f.txt b/f.txt
+deleted file mode 100644
+index c6aa3e4..0000000
+--- a/f.txt
++++ /dev/null
+@@ -1,20 +0,0 @@
+-line01
+-line02
+-line03
+-line04
+-line05
+-line06
+-line07
+-line08
+-line09
+-line10
+-line11
+-line12
+-line13
+-line14
+-line15
+-line16
+-line17
+-line18
+-line19
+-line20
