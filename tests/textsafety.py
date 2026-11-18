@@ -337,9 +337,9 @@ def parse(page_html: str) -> Page:
 
 
 def _unindented(text: str) -> str:
-    """Each line without leading spaces: an open fence indented by up to three spaces strips that
-    much from every content line."""
-    return "\n".join(line.lstrip(" ") for line in text.split("\n"))
+    """Each line without leading spaces and tabs: an open fence indented by up to three spaces
+    strips that much from every content line (part of a tab included)."""
+    return "\n".join(line.lstrip(" \t") for line in text.split("\n"))
 
 
 def live_mentions(page: Page, written: str | None = None) -> list[str]:
@@ -357,7 +357,7 @@ def live_mentions(page: Page, written: str | None = None) -> list[str]:
         text = node.text
         if written is not None and node.in_pre:
             exempt = set(_unindented(written).split("\n"))
-            text = "\n".join(line for line in text.split("\n") if line.lstrip(" ") not in exempt)
+            text = "\n".join(line for line in text.split("\n") if line.lstrip(" \t") not in exempt)
         if LIVE_MENTION.search(text):
             found.append(node.text)
     return found
