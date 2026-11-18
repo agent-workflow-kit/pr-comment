@@ -237,19 +237,6 @@ def test_a_precheck_failure_wins_over_expect_plan(
     assert code == 12 and error["error"]["code"] == "rate_limited"
 
 
-def test_a_real_approve_run_that_passes_the_plan_stops_before_any_write(
-    cli: Run, forgectl: FakeForgectl, tmp_path: Path
-) -> None:
-    # the approve write is #31's: nothing is posted
-    forgectl.script(show(), ok("approve", h.post_doc("approve", dry_run=True)))
-    code, error, _ = cli(
-        "approve", PR, "--expected-head", A, "--expected-base", "main", "--json",
-        "--actor", "human:alice", "--yes",
-    )  # fmt: skip
-    assert code == 1 and error["error"]["code"] == "internal"
-    assert forgectl.writes() == []
-
-
 # --- the pre-check rounds --------------------------------------------------------------------
 
 

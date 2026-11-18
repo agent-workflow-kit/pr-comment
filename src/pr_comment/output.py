@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,12 +27,24 @@ class Outcome:
     """What a handler returns.
 
     ``document`` is the ``--json`` document (None prints nothing). ``human`` holds extra stderr
-    lines for a human run; ``--quiet`` drops them on success.
+    lines for a human run; ``--quiet`` drops them on success. ``print_document`` makes a
+    successful run print the document on stdout without ``--json`` as well.
+
+    ``stream`` is for a command whose stdout is too large to build first (``export``): it is
+    called with a ``write(text)`` function after the other output, only on exit 0 and with no
+    document. Its text goes to stdout as given, so it must be safe to print (ASCII).
+
+    ``close`` releases what ``stream`` holds (an open file); the caller runs it when the stream
+    never runs because something failed first. It must be safe to call more than once.
     """
 
     exit_code: int
     document: dict[str, Any] | None = None
     human: tuple[str, ...] = ()
+    stream: Callable[[Callable[[str], None]], None] | None = None
+    close: Callable[[], None] | None = None
+    # True for a command whose result is its stdout product even without --json (draft new).
+    print_document: bool = False
 
 
 def error_outcome(code: str, message: str, **fields: Any) -> Outcome:
@@ -97,12 +109,15 @@ def check_outcome(result: object) -> Outcome:
     ):
         raise TypeError("handler human lines are not a tuple of strings")
     _check_error_document(result)
+    if result.stream is not None and (result.exit_code != 0 or result.document is not None):
+        raise TypeError("handler stream needs exit code 0 and no document")
     if result.document is not None:
-        _dumps(result.document)  # raises TypeError or ValueError for what JSON cannot hold
+        dumps_document(result.document)  # raises TypeError or ValueError for what JSON cannot hold
     return result
 
 
-def _dumps(document: Mapping[str, Any]) -> str:
+def dumps_document(document: Mapping[str, Any]) -> str:
+    """The JSON text the printer writes for a document (ASCII only)."""
     return json.dumps(document, ensure_ascii=True, allow_nan=False)
 
 
@@ -135,8 +150,10 @@ def render(
     outcome's own lines only without ``quiet``. ``quiet`` wins over ``verbose``.
     """
     stdout = ""
-    if as_json and outcome.document is not None:
-        stdout = _dumps(outcome.document) + "\n"
+    if outcome.document is not None and (
+        as_json or (outcome.print_document and outcome.exit_code == 0)
+    ):
+        stdout = dumps_document(outcome.document) + "\n"
     lines: list[str] = []
     error = _error_of(outcome.document)
     if outcome.exit_code != 0 and error is not None:

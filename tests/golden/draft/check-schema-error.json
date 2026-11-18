@@ -1,0 +1,13 @@
+{
+  "draft_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "errors": [
+    {
+      "kind": null,
+      "message": "must be an integer of at least 1, or null",
+      "pointer": "/findings/0/line"
+    }
+  ],
+  "findings": 3,
+  "schema_version": 1,
+  "valid": false
+}
