@@ -811,7 +811,7 @@ def test_unimplemented_handlers_return_internal_envelope(
 def test_unimplemented_handler_human_output_goes_to_stderr(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert main(MINIMAL["draft check"]) == 1
+    assert main(MINIMAL["draft new"]) == 1
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "not implemented" in captured.err
