@@ -1,0 +1,77 @@
+== auto_actor_named_like_a_mention
+-- input ({'actor': 'auto:@all'})
+{
+  "body": "ok",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+Posted automatically under policy `＠all` · no human review · 0123456789ab
+
+---
+
+ok
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Posted automatically under policy <code>＠all</code> · no human review · 0123456789ab</p>
+<hr />
+<p>ok</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== human_actor_with_dots
+-- input ({'actor': 'human:www.example.org'})
+{
+  "body": "ok",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `www.example.org` after review · 0123456789ab
+
+---
+
+ok
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>www.example.org</code> after review · 0123456789ab</p>
+<hr />
+<p>ok</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== no_human_footer_untrusted_text_first
+-- input ({'footer_human': False})
+{
+  "body": "@victim",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+＠victim
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>＠victim</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== footer_with_every_placeholder
+-- input ({'footer_human': 'Posted by {user} {policy} {sha} {decision_id} v{tool_version} {{braces}}', 'decision_id': 'd-1'})
+{
+  "body": "ok",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+Posted by `alice`  0123456789ab `d-1` v0.1.0 {braces}
+
+---
+
+ok
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Posted by <code>alice</code>  0123456789ab <code>d-1</code> v0.1.0 {braces}</p>
+<hr />
+<p>ok</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->

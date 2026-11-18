@@ -27,14 +27,20 @@ def pytest_configure(config: pytest.Config) -> None:
 
 @pytest.fixture(autouse=True)
 def private_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Every test runs with a private HOME and XDG_CONFIG_HOME and no PR_COMMENT_* variable, so
-    the developer's real config and environment never reach a test."""
+    """Every test runs with a private HOME, XDG_CONFIG_HOME and XDG_STATE_HOME and no PR_COMMENT_*
+    variable, so the developer's real config, state and environment never reach a test."""
     home = tmp_path / "private-home"
     home.mkdir(mode=0o700)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(home / ".local" / "state"))
     for name in [n for n in os.environ if n.startswith("PR_COMMENT_")]:
         monkeypatch.delenv(name)
+    # No test reaches the real forgectl (or any other tool on the developer's PATH) by accident:
+    # a test that runs a program sets its own PATH or passes its own environment.
+    nothing = tmp_path / "empty-path"
+    nothing.mkdir()
+    monkeypatch.setenv("PATH", str(nothing))
     return home
 
 

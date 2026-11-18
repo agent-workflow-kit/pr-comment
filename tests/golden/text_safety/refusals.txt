@@ -1,0 +1,58 @@
+== suggestion_fence_in_a_body
+-- input (default options)
+{
+  "body": "```suggestion\nx\n```",
+  "findings": []
+}
+-- refused: suggestion_fence /body
+
+== suggestion_fence_with_an_entity_info_string
+-- input (default options)
+{
+  "body": "```&#115;uggestion\nx\n```",
+  "findings": []
+}
+-- refused: suggestion_fence /body
+
+== suggestion_fence_in_a_quote
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "> ~~~ suggestion\n> x",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py"
+    }
+  ]
+}
+-- refused: suggestion_fence /findings/0/body
+
+== suggestion_fence_in_a_suggestion_line
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "~~~\nx",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "suggestion": {
+        "lines": [
+          "```suggestion"
+        ]
+      }
+    }
+  ]
+}
+-- refused: suggestion_fence /findings/0/suggestion/lines/0
+
+== control_character_in_a_body
+-- input (default options)
+{
+  "body": "x\u001b[31m",
+  "findings": []
+}
+-- refused: control_character /body

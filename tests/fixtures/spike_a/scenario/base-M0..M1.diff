@@ -1,0 +1,17 @@
+diff --git a/b.txt b/b.txt
+index b2abe5a..84cc2e8 100644
+--- a/b.txt
++++ b/b.txt
+@@ -3 +3 @@ b02
+-b03
++MAINb03
+diff --git a/f.txt b/f.txt
+index c6aa3e4..93e58d5 100644
+--- a/f.txt
++++ b/f.txt
+@@ -0,0 +1,2 @@
++top1
++top2
+@@ -18 +20 @@ line17
+-line18
++MAIN18

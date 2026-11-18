@@ -199,3 +199,8 @@ def test_non_json_file_under_schemas_fails(schema_dir: Path) -> None:
     (schema_dir / "stray.yaml").write_text("a: 1")
     with pytest.raises(ValueError, match="stray.yaml"):
         load_schemas()
+
+
+@pytest.mark.parametrize("reason", ["invisible_chars", "fence", "slash_line", "dedupe_text"])
+def test_degraded_entry_accepts_every_degrade_reason(reason: str) -> None:
+    validate("pr-comment/defs.json#/$defs/degraded", {"id": "f1", "reason": reason})
