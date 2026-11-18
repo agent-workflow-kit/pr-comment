@@ -10,8 +10,9 @@ byte, the pinned values and the hint of the pre-check).
 
 The actor, ``interactive`` and the human-only flag rules come from the CLI layer; this module takes
 them as given, and so are the state and temporary directory checks of step 1 (``Env.before_reads``).
-TODO(#31): the automatic approval guard beyond its usage check (``allow_auto_approve``, a decision
-id, ``auto_approve_reanchored``).
+The automatic approval guard (``approve.py``) runs here for ``approve`` and ``review --approve``,
+right after the head and base checks and before any compare, diff or pre-check call, so a refusal
+(also on a dry run) sends nothing.
 
 A failure ends the run with ``RunFailure`` (pr-comment's own refusals and usage errors) or
 ``LowerFailure`` (forgectl's, already lowered); both carry the ``Outcome``. ``ForgectlInterrupted``
@@ -28,7 +29,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, BinaryIO, Final
 
-from pr_comment import textpipe
+from pr_comment import approve, textpipe
 from pr_comment.config import ConfigError, LoadedConfig
 from pr_comment.diffmap import DiffMapper
 from pr_comment.draft import DraftError, load_draft, read_limited
@@ -259,6 +260,24 @@ def _stale_head(head: str, message: str) -> RunFailure:
     return _refused("stale_head", message, {"head_sha": head})
 
 
+def _guard(
+    req: Request, env: Env, show: Show, *, pinned_head: str, anchor_head: str | None
+) -> None:
+    """The automatic approval guard (``approve.py``) for an approving command: ``approve``, or
+    ``review --approve``. Raises ``RunFailure`` with its refusal."""
+    refusal = approve.check_auto_approve(
+        actor=req.actor,
+        approving=req.command == "approve" or req.approve,
+        allow=env.config.for_repo(show.repo).allow_auto_approve,
+        decision_ids=req.decision_ids,
+        expected_head=req.expected_head,
+        pinned_head=pinned_head,
+        anchor_head=anchor_head,
+    )
+    if refusal is not None:
+        raise RunFailure(refusal)
+
+
 def _prepare_review(req: Request, env: Env) -> Prepared:
     if req.draft_file is None:
         raise _usage("review needs --draft-file")
@@ -296,6 +315,8 @@ def _prepare_review(req: Request, env: Env) -> Prepared:
         )
     if req.expected_head is not None and req.expected_head != head_b:
         raise _stale_head(head_b, "the head is not the one expected")
+    # The automatic approval guard runs before any compare, diff or pre-check read.
+    _guard(req, env, show, pinned_head=head_b, anchor_head=head_a)
     base_ref = _pinned_base(anchor["base_ref"])
 
     has_left = any(f.get("side") == "left" and f.get("line") is not None for f in data["findings"])
@@ -371,6 +392,7 @@ def _prepare_text(req: Request, env: Env) -> Prepared:
         raise _refused(
             "stale_base", "the base branch is not the one expected", {"base_ref": show.base_ref}
         )
+    _guard(req, env, show, pinned_head=head, anchor_head=None)
     base_ref = _pinned_base(req.expected_base or show.base_ref)
 
     ctx = Context(
