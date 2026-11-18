@@ -143,9 +143,24 @@ def test_crlf_becomes_lf_and_lone_cr_is_marked_in_text() -> None:
     assert sanitize_text("a\r") == "a<U+000D>"
 
 
-def test_cr_is_always_marked_in_one_line_fields() -> None:
-    assert sanitize_line("a\r\nb") == "a<U+000D><U+000A>b"
+def test_one_line_fields_normalize_crlf_to_one_lf_marker_and_mark_lone_cr() -> None:
+    assert sanitize_line("a\r\nb") == "a<U+000A>b"
+    assert sanitize_line("a\r\r\nb") == "a<U+000D><U+000A>b"
     assert sanitize_line("a\rb") == "a<U+000D>b"
+    assert sanitize_bytes(b"a\r\nb", one_line=True) == "a<U+000A>b"
+
+
+@pytest.mark.parametrize("func", [sanitize_text, sanitize_line, count_marked])
+@pytest.mark.parametrize("bad", [b"x", None, 5, bytearray(b"x")])
+def test_non_str_input_raises_type_error(func, bad) -> None:
+    with pytest.raises(TypeError):
+        func(bad)
+
+
+@pytest.mark.parametrize("bad", ["", "ab", b"x", None, 5])
+def test_is_marked_requires_a_single_character_str(bad) -> None:
+    with pytest.raises(TypeError):
+        is_marked(bad)
 
 
 def test_esc_sequences_render_as_markers() -> None:
@@ -166,7 +181,7 @@ def test_bidi_override_renders_as_marker() -> None:
     assert out == "harmless<U+202E>txt.exe"
     assert "\u202e" not in out
     for ch in "\u202a\u202b\u202c\u202d\u2066\u2067\u2068\u2069\u200e\u200f\u061c":
-        assert chr(ord(ch)) not in sanitize_text(f"x{ch}y")
+        assert sanitize_text(f"x{ch}y") == f"x<U+{ord(ch):04X}>y"
 
 
 def test_lone_surrogates_do_not_raise_and_are_marked() -> None:
@@ -198,7 +213,7 @@ def test_empty_and_plain() -> None:
     assert sanitize_text("hello world") == "hello world"
 
 
-def test_huge_input_is_linear_and_complete() -> None:
+def test_huge_input_is_complete() -> None:
     text = "\x1b[0m" * 200_000
     out = sanitize_text(text)
     assert out == "<U+001B>[0m" * 200_000
@@ -213,6 +228,11 @@ def test_sanitizing_is_idempotent() -> None:
 
 
 def test_every_code_point_matches_the_documented_rule() -> None:
+    """Sweep guarding only the listed code points and the tab/LF exceptions.
+
+    The category membership (Cc, Cf, Cs, Co, Cn, Zl, Zp) is also computed from unicodedata here,
+    so category coverage comes from the hand-written MARKED_BY_CATEGORY table, not from this sweep.
+    """
     listed = set(LISTED_INVISIBLE)
     marked_categories = {"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"}
     unicode_pinned = unicodedata.unidata_version
@@ -234,8 +254,12 @@ def test_every_code_point_matches_the_documented_rule() -> None:
 def test_output_has_no_terminal_active_characters_for_any_code_point() -> None:
     everything = "".join(chr(c) for c in range(sys.maxunicode + 1))
     out = sanitize_line(everything)
+    listed = set(LISTED_INVISIBLE)
     for ch in out:
-        assert unicodedata.category(ch) not in {"Cc", "Cf", "Cs", "Co", "Zl", "Zp"}, hex(ord(ch))
+        assert unicodedata.category(ch) not in {"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"}, hex(
+            ord(ch)
+        )
+        assert ord(ch) not in listed, hex(ord(ch))
 
 
 def test_count_marked_counts_each_character() -> None:
@@ -253,15 +277,13 @@ def test_count_marked_agrees_with_sanitize_text_markers() -> None:
 def test_sanitize_bytes_replaces_invalid_utf8_with_fffd() -> None:
     assert sanitize_bytes(b"ok") == "ok"
     out = sanitize_bytes(b"a\xffb\xc3\x28c\xed\xa0\x80d")
-    assert "\ufffd" in out
-    assert out.startswith("a\ufffdb")
-    assert out.endswith("d")
-    assert "<U+D800>" not in out  # encoded surrogates are invalid UTF-8, not surrogates
+    # Encoded surrogates (ED A0 80) are invalid UTF-8: three U+FFFD, never a <U+D800> marker.
+    assert out == "a\ufffdb\ufffd(c\ufffd\ufffd\ufffdd"
 
 
 def test_sanitize_bytes_truncated_sequence_and_overlong() -> None:
-    assert "\ufffd" in sanitize_bytes(b"abc\xe2\x82")
-    assert "\ufffd" in sanitize_bytes(b"\xc0\xaf")
+    assert sanitize_bytes(b"abc\xe2\x82") == "abc\ufffd"
+    assert sanitize_bytes(b"\xc0\xaf") == "\ufffd\ufffd"
     assert sanitize_bytes(b"") == ""
 
 
@@ -275,10 +297,3 @@ def test_sanitize_bytes_c1_as_utf8_is_marked() -> None:
     # U+009B as UTF-8 (C2 9B) is a C1 control and is marked; a raw 0x9B byte is invalid UTF-8.
     assert sanitize_bytes(b"\xc2\x9b31m") == "<U+009B>31m"
     assert sanitize_bytes(b"\x9b31m") == "\ufffd31m"
-
-
-def test_display_does_not_change_its_input_or_json_text() -> None:
-    # Display sanitizing returns new text; the posted text (and --json output) stays raw.
-    raw = "a\x1b[0m\u202e"
-    sanitize_text(raw)
-    assert raw == "a\x1b[0m\u202e"

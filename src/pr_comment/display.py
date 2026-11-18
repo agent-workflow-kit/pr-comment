@@ -11,7 +11,8 @@ Rules (forgectl interface, Sanitizing):
 * So do all variation selectors, U+034F, U+17B4, U+17B5, U+180B to U+180F, U+115F, U+1160,
   U+3164, U+FFA0 and U+2800.
 * One-line fields also mark tab and LF.
-* In text fields CRLF becomes LF; a lone CR becomes ``<U+000D>``.
+* CRLF becomes one LF first (so a one-line field shows one ``<U+000A>``); a lone CR becomes
+  ``<U+000D>``.
 * Bytes that are not valid UTF-8 become U+FFFD.
 
 The Cn test depends on the Unicode database of the running Python, so a code point assigned in
@@ -45,6 +46,8 @@ def is_marked(ch: str) -> bool:
     Tab and LF are not marked here (one-line fields mark them on top of this predicate).
     This is the shared predicate for counts, suggestion degrading and path markers.
     """
+    if not isinstance(ch, str) or len(ch) != 1:
+        raise TypeError(f"is_marked needs a str of length 1, got {type(ch).__name__}")
     if ch in _TEXT_ONLY_PASS:
         return False
     code = ord(ch)
@@ -54,8 +57,18 @@ def is_marked(ch: str) -> bool:
 
 
 def count_marked(text: str) -> int:
-    """Number of characters in ``text`` that Sanitizing would mark (``counts.invisible``)."""
+    """Number of characters in ``text`` that Sanitizing would mark (``counts.invisible``).
+
+    ``text`` is pipeline-clean text: a CR was already refused upstream, so CRLF normalization
+    (which :func:`sanitize_text` applies) is not modelled here and a CR counts as marked.
+    """
+    _require_str(text)
     return sum(1 for ch in text if is_marked(ch))
+
+
+def _require_str(text: object) -> None:
+    if not isinstance(text, str):
+        raise TypeError(f"expected str, got {type(text).__name__}")
 
 
 def _mark(text: str, *, one_line: bool) -> str:
@@ -70,12 +83,15 @@ def _mark(text: str, *, one_line: bool) -> str:
 
 def sanitize_text(text: str) -> str:
     """Sanitize a multi-line text field: CRLF becomes LF, tab and LF stay, the rest as listed."""
+    _require_str(text)
     return _mark(text.replace("\r\n", "\n"), one_line=False)
 
 
 def sanitize_line(text: str) -> str:
-    """Sanitize a one-line field: like :func:`sanitize_text`, and tab, LF and CR are marked."""
-    return _mark(text, one_line=True)
+    """Sanitize a one-line field: like :func:`sanitize_text` (CRLF becomes one LF first), then
+    tab and LF are marked too; a lone CR is marked as in text fields."""
+    _require_str(text)
+    return _mark(text.replace("\r\n", "\n"), one_line=True)
 
 
 def sanitize_bytes(data: bytes, *, one_line: bool = False) -> str:
