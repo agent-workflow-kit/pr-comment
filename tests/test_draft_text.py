@@ -147,10 +147,38 @@ def test_a_fence_after_any_separator_is_refused(separator: str) -> None:
     assert refusal(doc).details == {"pointer": "/body", "kind": "suggestion_fence"}
 
 
-def test_a_suggestion_line_may_hold_a_fence_it_degrades_later() -> None:
+def test_a_suggestion_line_may_hold_a_plain_fence_it_degrades_later() -> None:
     doc = good()
-    doc["findings"][0]["suggestion"] = {"lines": ["```suggestion", "~~~~"]}
-    assert parse_draft(dumps(doc)).data["findings"][0]["suggestion"]["lines"][0] == "```suggestion"
+    doc["findings"][0]["suggestion"] = {"lines": ["```", "~~~~", "```python"]}
+    assert parse_draft(dumps(doc)).data["findings"][0]["suggestion"]["lines"][0] == "```"
+
+
+@pytest.mark.parametrize("line", ["```suggestion", "~~~suggestion:-1+0", "> ~~~~ Suggestion"])
+def test_a_suggestion_fence_in_a_suggestion_line_is_refused(line: str) -> None:
+    doc = good()
+    doc["findings"][0]["suggestion"] = {"lines": ["ok", line]}
+    error = refusal(doc)
+    assert error.code == "invalid_text"
+    assert error.details == {
+        "pointer": "/findings/0/suggestion/lines/1",
+        "kind": "suggestion_fence",
+    }
+
+
+def test_a_suggestion_fence_in_an_unanchored_suggestion_line_is_refused() -> None:
+    doc = with_unanchored(good())
+    doc["unanchored"][0]["finding"]["suggestion"] = {"lines": ["```suggestion"]}
+    assert refusal(doc).details == {
+        "pointer": "/unanchored/0/finding/suggestion/lines/0",
+        "kind": "suggestion_fence",
+    }
+
+
+def test_text_issues_reports_the_forging_suggestion_lines() -> None:
+    doc = {"findings": [{"body": "~~~~", "suggestion": {"lines": ["~~~~", "~~~suggestion", "x"]}}]}
+    assert text_issues(doc) == [
+        {"pointer": "/findings/0/suggestion/lines/1", "kind": "suggestion_fence"}
+    ]
 
 
 def test_a_title_and_path_are_not_multi_line_text() -> None:

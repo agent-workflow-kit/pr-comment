@@ -81,6 +81,7 @@ Still to verify, with conservative defaults in place:
 
 - GitLab: `＠` does not link; `＜` and `！` are not syntax; `@all` and group forms.
 - An applicable suggestion with a fence longer than three backticks on each host; if both apply it, the `fence` degrade can be dropped in a later minor release.
+- GitHub's and GitLab's own engines' fence length limit (cmark-gfm clamps it to 255; the hosts' engines are unverified offline; live test issue #39).
 - Whether host diffs keep CR and `\ No newline` markers (mapping is unaffected either way).
 - A GitHub suggestion with a degraded line (degraded by default).
 - GitHub and GitLab: a bare attachment URL on its own line rendering as media, diagram fences (`mermaid`, `geojson`, `stl`), `1@user` and `a@user` not linking, and no folding of fullwidth `＠`, `＜` and `！` to ASCII.
