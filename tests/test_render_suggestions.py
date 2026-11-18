@@ -14,6 +14,7 @@ from pr_comment.render import (
     Anchor,
     MovedFinding,
     SuggestionBlock,
+    _refuse_suggestion_fences,  # pyright: ignore[reportPrivateUsage]
     degrade_reason,
     render_finding_text,
     render_moved_entry,
@@ -144,6 +145,19 @@ SEPARATORS = ["\n", "\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u202
 def test_a_separator_in_a_line_is_refused(sep: str) -> None:
     with pytest.raises(ValueError):
         render_suggestion(sug(f"a{sep}b"), mn(), host="github")
+
+
+@pytest.mark.parametrize("line", ["```suggestion", "  ~~~ suggestion:-1+0"])
+def test_a_suggestion_line_with_a_suggestion_fence_is_refused_by_render(line: str) -> None:
+    """Defense in depth: draft validation refuses it first, and no render call emits one."""
+    with pytest.raises(ValueError, match="suggestion fence"):
+        render_suggestion(sug(line), mn(), host="github")
+    with pytest.raises(ValueError, match="suggestion fence"):
+        _refuse_suggestion_fences(["ok", line])
+
+
+def test_a_suggestion_line_without_a_suggestion_fence_is_not_refused() -> None:
+    _refuse_suggestion_fences(["ok", "```", "x"])
 
 
 # --- anchoring requirements ---------------------------------------------------------------

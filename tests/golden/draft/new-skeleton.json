@@ -1,0 +1,14 @@
+{
+  "anchor": {
+    "base_ref": "main",
+    "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "merge_base_sha": "cccccccccccccccccccccccccccccccccccccccc"
+  },
+  "body": "",
+  "draft_id": "01HF7YAT3V041061050R3GG28A",
+  "event": "comment",
+  "findings": [],
+  "pr": "github.com/acme/widgets#7",
+  "schema_version": 1
+}
