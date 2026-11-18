@@ -1,0 +1,14 @@
+[
+ {
+  "finding": {
+   "path": "s p/é.txt",
+   "side": "right",
+   "line": 2
+  },
+  "expected": {
+   "path": "s p/é.txt",
+   "line": 3,
+   "side": "right"
+  }
+ }
+]
