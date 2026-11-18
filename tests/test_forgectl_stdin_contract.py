@@ -64,7 +64,10 @@ POST_COMMANDS = ("review", "comment", "reply", "approve")
 # from the environment of a test. Set it in CI (or any run that must prove the contract) so a
 # missing or other-version forgectl fails the live tests instead of skipping them.
 REQUIRE_FORGECTL = bool(os.environ.get("PR_COMMENT_REQUIRE_FORGECTL"))
-PIPE_BUFFER = 1 << 20  # input larger than this (the pipe holds 64 KiB) must be read in full
+# A Linux pipe holds 64 KiB. The threshold is 1 MiB on purpose: it is conservative, because macOS
+# pipe buffers can differ, so inputs between 64 KiB and 1 MiB are not asserted. Input larger than
+# this must be read in full.
+PIPE_BUFFER = 1 << 20
 STDIN_RECORDED = load(STDIN_CASES_FILE)
 STDIN_CASES: list[dict[str, Any]] = STDIN_RECORDED["cases"]
 MAIN_CASES: list[dict[str, Any]] = [
