@@ -89,8 +89,10 @@ def _complete(base: list[str], flag: str) -> list[str]:
 
 @pytest.mark.parametrize(("base", "flag", "good", "bad"), FLAGS, ids=lambda v: str(v)[:24])
 def test_valid_values_parse_in_both_forms(
-    base: list[str], flag: str, good: str, bad: list[str]
+    monkeypatch: pytest.MonkeyPatch, base: list[str], flag: str, good: str, bad: list[str]
 ) -> None:
+    # --allow-mention needs an interactive run (docs/interface.md, Actors and interactive runs).
+    monkeypatch.setattr(cli, "stream_is_tty", lambda _stream: True)
     extra = _complete(base, flag)
     _parse([*base, *extra, flag, good])
     _parse([*base, *extra, f"{flag}={good}"])

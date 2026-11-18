@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any, NoReturn, cast
 
 from . import __version__, grammars
+from .actor import ActorError, resolve_run, stream_is_tty
 from .config import ConfigError, load_config
 from .errors import sanitize
 from .gateway import ForgectlInterrupted, ProcessGateway, ToolMissing
@@ -328,7 +329,7 @@ def _add_common_posting_flags(parser: argparse.ArgumentParser, *, base: bool = F
     )
     # The value grammar is checked here; the names are applied by the renderer (mentions.py),
     # which the review, comment, reply and approve orders build from the config and these values.
-    # TODO(#5): require a human actor and an interactive run for --allow-mention.
+    # The human-only, interactive-only rule for --allow-mention is enforced in actor.resolve_run.
     parser.add_argument(
         "--allow-mention",
         action=AppendAction,
@@ -404,9 +405,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def validate_args(args: argparse.Namespace) -> None:
     """Rules argparse cannot express. Raises ``UsageError``."""
-    # TODO(#5): resolve the actor, detect interactive runs, apply the human-only flag rules
-    # (--allow-mention, --override-escalation) and refuse `--body-file -` / `--draft-file -`
-    # when stdin is a TTY.
     # Value grammars live in grammars.py and run as argparse types, so argparse names the flag;
     # the PR argument is checked here because its error code differs (`invalid_pr`).
     pr = getattr(args, "pr", None)
@@ -415,6 +413,12 @@ def validate_args(args: argparse.Namespace) -> None:
             grammars.check_pr(pr)
         except grammars.GrammarError as exc:
             raise UsageError(str(exc), code="invalid_pr") from None
+    try:
+        args.run = resolve_run(
+            args, stdin_tty=stream_is_tty(sys.stdin), stderr_tty=stream_is_tty(sys.stderr)
+        )
+    except ActorError as exc:
+        raise UsageError(str(exc)) from exc
     if args.expect_plan is not None and args.command not in POSTING_COMMANDS:
         raise UsageError(f"--expect-plan is only valid with {', '.join(sorted(POSTING_COMMANDS))}")
     # The parse-time caps count per parser level; these count the merged total.
@@ -446,14 +450,10 @@ def _me_name(loaded: Any) -> str:
 
 
 def _actor(args: argparse.Namespace, me_name: str) -> str:
-    """The actor: ``--actor``, else ``human:<me.name>`` on a TTY and ``auto:unknown`` otherwise.
-
-    TODO(#5): ``actor_source`` and ``stdin_tty``, the interactive-run rule and the human-only flag
-    rules (``--allow-mention``, ``--override-escalation``) belong to the actor issue.
-    """
-    if args.actor is not None:
-        return str(args.actor)
-    return f"human:{me_name}" if sys.stdin.isatty() else "auto:unknown"
+    """The actor from the run context: ``--actor``, else ``human:<me.name>`` on a TTY stdin and
+    ``auto:unknown`` otherwise (``me.name`` from the config wins over the OS username)."""
+    run = args.run
+    return f"human:{me_name}" if run.actor_source == "tty" else str(run.actor)
 
 
 def _request(args: argparse.Namespace, actor: str) -> Request:
@@ -473,7 +473,7 @@ def _request(args: argparse.Namespace, actor: str) -> Request:
         allow_mentions=tuple(getattr(args, "allow_mention", ())),
         expect_plan=args.expect_plan,
         override_escalation=tuple(args.override_escalation),
-        interactive=False,  # TODO(#5): stdin and stderr TTYs, a human actor, no --yes, no `-`
+        interactive=bool(args.run.interactive),
     )
 
 
@@ -661,6 +661,7 @@ def _leading_dash_pr(argv: list[str]) -> bool:
 
 
 def _write(stream: Any, text: str) -> None:
+    # TODO(#4): tolerate None/closed stdout/stderr in _write
     """Write text that cannot fail on the stream's encoding."""
     if text:
         encoding = getattr(stream, "encoding", None) or "utf-8"
