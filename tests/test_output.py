@@ -208,7 +208,9 @@ def test_a_usage_error_honors_quiet_and_verbose(capsys: pytest.CaptureFixture[st
 def test_the_full_envelope_reaches_json_stdout_for_the_unimplemented_stub(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    code, out, _ = _run(capsys, ["draft", "new", "https://example.test/o/r/pull/1", "--json"])
+    code, out, _ = _run(
+        capsys, ["review", "https://example.test/o/r/pull/1", "--draft-file", "d.json", "--json"]
+    )
     document: dict[str, Any] = json.loads(out)
     assert code == 1
     assert len(document["error"]) == 13

@@ -795,9 +795,7 @@ def test_expect_plan_allowed_on_posting_commands(
     assert doc["error"]["code"] == "internal"
 
 
-@pytest.mark.parametrize(
-    "command", sorted(set(MINIMAL) - {"draft check", "export", "draft new"})
-)
+@pytest.mark.parametrize("command", sorted(set(MINIMAL) - {"draft check", "export", "draft new"}))
 def test_unimplemented_handlers_return_internal_envelope(
     capsys: pytest.CaptureFixture[str],
     golden_json: Callable[[str, Any], None],
@@ -813,7 +811,7 @@ def test_unimplemented_handlers_return_internal_envelope(
 def test_unimplemented_handler_human_output_goes_to_stderr(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert main(MINIMAL["draft new"]) == 1
+    assert main(MINIMAL["review"]) == 1
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "not implemented" in captured.err
