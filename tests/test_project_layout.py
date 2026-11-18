@@ -185,11 +185,51 @@ def test_runtime_dependencies_are_exactly_pyyaml_and_pydantic() -> None:
     assert names == {"pyyaml", "pydantic"}
 
 
+# Distribution names (as in pyproject), which differ from import names, e.g. markdown-it-py.
+FORBIDDEN_DISTRIBUTIONS = frozenset(
+    canonicalize_name(name)
+    for name in (
+        "cmarkgfm",
+        "jsonschema",
+        "referencing",
+        "requests",
+        "httpx",
+        "urllib3",
+        "aiohttp",
+        "httplib2",
+        "tornado",
+        "pycurl",
+        "httpcore",
+        "markdown",
+        "markdown2",
+        "mistune",
+        "commonmark",
+        "mistletoe",
+        "marko",
+        "markdown-it-py",
+        "mdit-py-plugins",
+    )
+)
+
+
+def _banned_optional_dependencies(pyproject: dict[str, Any]) -> list[str]:
+    extras = pyproject["project"].get("optional-dependencies", {})
+    return [
+        req.name
+        for entries in extras.values()
+        for req in _requirements(entries)
+        if _canonical(req) in FORBIDDEN_DISTRIBUTIONS
+    ]
+
+
 def test_optional_dependencies_are_absent_or_free_of_banned_packages() -> None:
-    extras = _pyproject()["project"].get("optional-dependencies", {})
-    for entries in extras.values():
-        for req in _requirements(entries):
-            assert not _is_forbidden(_canonical(req).replace("-", "_")), req
+    assert _banned_optional_dependencies(_pyproject()) == []
+
+
+@pytest.mark.parametrize("dist", ["tornado", "Markdown-It-Py", "mdit_py_plugins"])
+def test_optional_dependency_ban_catches_distribution_names(dist: str) -> None:
+    pyproject = {"project": {"optional-dependencies": {"extra": [f"{dist}>=1"]}}}
+    assert _banned_optional_dependencies(pyproject) == [dist]
 
 
 def test_requirement_parsing_handles_extras_markers_and_specifiers() -> None:

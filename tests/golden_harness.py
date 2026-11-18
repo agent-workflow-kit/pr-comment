@@ -77,16 +77,22 @@ _HOST_RE = re.compile(r"(?<![\w.-])((?:[a-z0-9-]+\.)+[a-z]{2,})(?![\w-])", re.IG
 _OWNER_RE = re.compile(r"^[/:]+([\w.-]+)")
 
 
+def _is_url_host(text: str, match: re.Match[str]) -> bool:
+    """True when the token is in host position: after ``://`` or ``@``, or before a ``/``."""
+    return text[: match.start(1)].endswith(("://", "@")) or text[match.end(1) :].startswith("/")
+
+
 def find_real_names(text: str) -> list[str]:
     """Hosts and owners in ``text`` that are not placeholders; empty when ``text`` is clean.
 
-    A dotted token is a host unless its last label is a common file extension. ``example`` hosts
+    A dotted token is a host unless its last label is a common file extension and it is not in
+    host position of a URL (after ``://`` or ``@``, or followed by ``/``). ``example`` hosts
     are always fine; ``github.com`` and ``gitlab.com`` only with a placeholder owner.
     """
     problems: list[str] = []
     for match in _HOST_RE.finditer(text):
         host = match.group(1).lower()
-        if host.rsplit(".", 1)[-1] in FILE_EXTENSIONS:
+        if host.rsplit(".", 1)[-1] in FILE_EXTENSIONS and not _is_url_host(text, match):
             continue
         if PLACEHOLDER_HOST_RE.match(host):
             continue

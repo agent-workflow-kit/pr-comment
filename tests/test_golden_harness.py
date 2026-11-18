@@ -92,6 +92,8 @@ def test_scanner_accepts_placeholders(text: str) -> None:
         "git@github.com:realowner/repo.git",
         "mail me at x@corp.internal",
         "https://example.com.evil.net/x",
+        "https://git.acmehost.sh/team/repo",
+        "git@build.acmehost.md:team/repo.git",
     ],
 )
 def test_scanner_flags_real_looking_names(text: str) -> None:
