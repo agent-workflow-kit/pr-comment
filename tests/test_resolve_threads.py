@@ -12,18 +12,22 @@ from __future__ import annotations
 import json
 import os
 import signal
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from pr_comment import audit as audit_module
 from pr_comment import cli as cli_module
+from pr_comment import hooks as hooks_module
 from pr_comment.display import sanitize_line
 from tests import forgectl_harness as h
 from tests.forgectl_harness import FakeForgectl, fail, ok, refuse
 from tests.posting import PR, show_of
 from tests.schema_harness import validate
 from tests.test_forge import a_comment, a_thread
+from tests.test_hooks import signal_self_when_started
 from tests.test_post_hooks import (  # noqa: F401  (hooks: fixture)
     Hooks,
     hooks,
@@ -33,6 +37,7 @@ from tests.test_review_post import (  # noqa: F401  (cli and state_home are fixt
     ACTOR,
     Run,
     _FailAt,
+    _stable,
     _start_cli,
     audit,
     calls_of,
@@ -523,6 +528,7 @@ def test_an_unknown_outcome_is_never_retried_and_keeps_its_pair(
     [
         h.resolve_doc("resolve", T2),  # another thread
         h.resolve_doc("unresolve", T1),  # another action
+        {**h.resolve_doc("resolve", T1), "action": "unresolve"},  # the action alone is wrong
         h.resolve_doc("resolve", T1, dry_run=True),  # a dry run's answer for a real call
         {**h.resolve_doc("resolve", T1), "resolved": False},  # not the state asked for
         {**h.resolve_doc("resolve", T1), "pr": "github.com/acme/other#7"},
@@ -698,6 +704,291 @@ def test_a_signal_before_any_write_exits_128_plus_n_and_writes_no_record(
     stdout, _ = proc.communicate(timeout=60)
     assert proc.returncode == 143 and stdout == b""
     assert audit(state_home) == []
+
+
+def _signal_after_hook(monkeypatch: pytest.MonkeyPatch, which: str, *, nth: int = 1) -> None:
+    """Send SIGTERM to this process right after the ``nth`` run of a ``which`` hook has ended
+    (the signal is then held by the run, not seen by the hook)."""
+    original = hooks_module.HookRunner.run_sync
+    seen: list[int] = []
+
+    def run_then_signal(self: Any, hook: str, index: int, *rest: Any) -> Any:
+        result = original(self, hook, index, *rest)
+        if hook == which:
+            seen.append(1)
+            if len(seen) == nth:
+                os.kill(os.getpid(), signal.SIGTERM)
+        return result
+
+    monkeypatch.setattr(hooks_module.HookRunner, "run_sync", run_then_signal)
+
+
+def _write_results(state_home: Path) -> list[tuple[str, str]]:
+    return [(w["thread_id"], w["result"]) for r in audit(state_home) for w in r.get("writes", [])]
+
+
+@pytest.mark.usefixtures("default_signals")
+def test_a_signal_during_a_post_post_hook_stops_the_run_after_that_write(
+    cli: Run, forgectl: FakeForgectl, hooks: Hooks, state_home: Path, pids: Path
+) -> None:
+    script_reads(forgectl, thread(T1), thread(T2))
+    forgectl.script(resolved("resolve", T1))
+    slow = hooks.script("cat >/dev/null; sleep 3")  # the first (and only started) post hook
+    with signal_self_when_started(pids, 1, signal.SIGTERM):
+        code, doc, _ = cli(*args("resolve", T1, T2, extra=("--hook", f"post-post={slow}")))
+    assert code == 128 + signal.SIGTERM and doc is None
+    assert [c.forwarded[1] for c in writes_of(forgectl)] == [f"--thread={T1}"]
+    assert [r["result"] for r in audit(state_home)] == ["attempted", "done"]
+    assert _write_results(state_home) == [(T1, "done")]
+
+
+@pytest.mark.usefixtures("default_signals")
+def test_a_signal_between_threads_ends_128_plus_n_after_one_write_and_its_record(
+    cli: Run,
+    forgectl: FakeForgectl,
+    hooks: Hooks,
+    state_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script_reads(forgectl, thread(T1), thread(T2))
+    forgectl.script(resolved("resolve", T1))
+    post = hooks.recorder("post")
+    _signal_after_hook(monkeypatch, "post-post")
+    code, doc, _ = cli(*args("resolve", T1, T2, extra=("--hook", f"post-post={post}")))
+    assert code == 128 + signal.SIGTERM and doc is None
+    assert len(writes_of(forgectl)) == 1
+    assert [r["result"] for r in audit(state_home)] == ["attempted", "done"]
+    assert _write_results(state_home) == [(T1, "done")]
+
+
+@pytest.mark.usefixtures("default_signals")
+def test_a_signal_held_after_the_last_write_still_ends_128_plus_n_after_the_record(
+    cli: Run,
+    forgectl: FakeForgectl,
+    hooks: Hooks,
+    state_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script_reads(forgectl, thread(T1))
+    forgectl.script(resolved("resolve", T1))
+    post = hooks.recorder("post")
+    _signal_after_hook(monkeypatch, "post-post")
+    code, doc, _ = cli(*args("resolve", T1, extra=("--hook", f"post-post={post}")))
+    assert code == 128 + signal.SIGTERM and doc is None
+    assert [r["result"] for r in audit(state_home)] == ["attempted", "done"]
+
+
+@pytest.mark.usefixtures("default_signals")
+def test_a_signal_held_while_every_thread_is_vetoed_ends_128_plus_n_not_exit_11(
+    cli: Run,
+    forgectl: FakeForgectl,
+    hooks: Hooks,
+    state_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script_reads(forgectl, thread(T1), thread(T2))
+    veto = hooks.script("cat >/dev/null; exit 3")
+    _signal_after_hook(monkeypatch, "pre-post")
+    code, doc, _ = cli(*args("resolve", T1, T2, extra=("--hook", f"pre-post={veto}")))
+    assert code == 128 + signal.SIGTERM and doc is None
+    assert writes_of(forgectl) == [] and audit(state_home) == []
+
+
+@pytest.mark.usefixtures("default_signals")
+def test_a_signal_during_the_attempted_append_sends_nothing_and_closes_the_pair_failed(
+    cli: Run, forgectl: FakeForgectl, state_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script_reads(forgectl, thread(T1), thread(T2))
+    original = audit_module.AuditTrail.attempted
+
+    def attempted_then_signal(self: Any, record: Any) -> None:
+        original(self, record)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    monkeypatch.setattr(audit_module.AuditTrail, "attempted", attempted_then_signal)
+    code, doc, _ = cli(*args("resolve", T1, T2))
+    assert code == 128 + signal.SIGTERM and doc is None
+    assert writes_of(forgectl) == []
+    records = audit(state_home)
+    assert [r["result"] for r in records] == ["attempted", "failed"]
+    assert _write_results(state_home) == [(T1, "failed")]
+
+
+@pytest.mark.usefixtures("default_signals")
+def test_a_signal_during_a_later_threads_pre_post_hook_ends_the_run_after_the_first_write(
+    cli: Run, forgectl: FakeForgectl, hooks: Hooks, state_home: Path, pids: Path
+) -> None:
+    script_reads(forgectl, thread(T1), thread(T2))
+    forgectl.script(resolved("resolve", T1))
+    marker = pids.parent / "seen"  # the hook is fast for T1 and slow for T2
+    pre = hooks.script(f"cat >/dev/null; if [ -e {marker} ]; then sleep 3; else touch {marker}; fi")
+    with signal_self_when_started(pids, 2, signal.SIGTERM):
+        code, doc, _ = cli(*args("resolve", T1, T2, extra=("--hook", f"pre-post={pre}")))
+    assert code == 128 + signal.SIGTERM and doc is None
+    assert len(writes_of(forgectl)) == 1
+    assert [r["result"] for r in audit(state_home)] == ["attempted", "done"]
+    assert _write_results(state_home) == [(T1, "done")]
+
+
+def test_a_signal_after_forgectl_finished_ok_is_still_outcome_unknown_and_stops_the_run(
+    forgectl: FakeForgectl, tmp_path: Path, state_home: Path
+) -> None:
+    script_reads(forgectl, thread(T1), thread(T2))
+    forgectl.script(
+        ok("resolve", h.resolve_doc("resolve", T1), hang={"phase": "after_outcome"}),
+    )
+    n = forgectl.next_call_number() + 4  # show, comments, whoami, --version, the write
+    proc = _start_cli(forgectl, tmp_path, state_home, *args("resolve", T1, T2))
+    forgectl.wait_ready(n)
+    os.kill(proc.pid, signal.SIGTERM)  # the exact pid this test started
+    stdout, _ = proc.communicate(timeout=60)
+    assert proc.returncode == 12
+    doc = json.loads(stdout)
+    validate("pr-comment/cli/resolve.json", doc)
+    assert doc["threads"][0]["error"]["code"] == "outcome_unknown"
+    assert doc["threads"][1] == {"thread_id": T2, "resolved": None, "changed": None, "error": None}
+    assert len(forgectl.writes()) == 1
+    assert [r["result"] for r in audit(state_home)][0] == "attempted"
+
+
+# --- hook edges: escalation, the id cap, the version read ---------------------------------------
+
+
+def test_a_blocked_thread_after_attempted_is_recorded_escalated_or_vetoed_as_it_ended(
+    cli: Run, forgectl: FakeForgectl, hooks: Hooks, state_home: Path
+) -> None:
+    script_reads(forgectl, thread(T1), thread(T2), thread(T3))
+    forgectl.script(resolved("resolve", T1))
+    pre = hooks.script(f'p=$(cat); case "$p" in *{T2}*) exit 13;; *{T3}*) exit 3;; esac; exit 0')
+    code, doc, _ = cli(*args("resolve", T1, T2, T3, extra=("--hook", f"pre-post={pre}")))
+    assert code == 13  # the first failing thread's code (T2 escalated)
+    assert [t["error"] and t["error"]["code"] for t in doc["threads"]] == [
+        None,
+        "escalated",
+        "vetoed",
+    ]
+    records = audit(state_home)
+    validate_audit(records)
+    assert _write_results(state_home) == [(T1, "done"), (T2, "escalated"), (T3, "vetoed")]
+    assert len(writes_of(forgectl)) == 1
+
+
+def test_the_override_for_pr_comment_is_never_forwarded_to_forgectl(
+    cli: Run, forgectl: FakeForgectl, hooks: Hooks
+) -> None:
+    script_reads(forgectl, thread(T1))
+    forgectl.script(resolved("resolve", T1))
+    esc = hooks.recorder("esc", exit_code=13)
+    code, _, _ = cli(
+        *args(
+            "resolve", T1, extra=("--hook", f"pre-post={esc}", "--override-escalation=pr-comment")
+        )
+    )
+    assert code == 0
+    assert all("--override-escalation" not in c.argv for c in writes_of(forgectl))
+
+
+def test_the_hook_decision_ids_of_a_run_are_capped_at_32_in_the_audit_outcome(
+    cli: Run, forgectl: FakeForgectl, hooks: Hooks, state_home: Path
+) -> None:
+    script_reads(forgectl, thread(T1), thread(T2))
+    forgectl.script(resolved("resolve", T1), resolved("resolve", T2))
+
+    def listing(prefix: str) -> str:
+        return json.dumps({"decision_id": [f"{prefix}{i}" for i in range(20)]})
+
+    first, rest = listing("a"), listing("b")
+    pre = hooks.script(f"p=$(cat); case \"$p\" in *{T1}*) echo '{first}';; *) echo '{rest}';; esac")
+    code, _, _ = cli(*args("resolve", T1, T2, extra=("--hook", f"pre-post={pre}")))
+    assert code == 0
+    kept = audit(state_home)[1]["hook_decision_id"]
+    assert len(kept) == 32 and kept[:20] == [f"a{i}" for i in range(20)]
+
+
+def test_the_forgectl_version_is_read_before_the_first_write(
+    cli: Run, forgectl: FakeForgectl
+) -> None:
+    script_reads(forgectl, thread(T1))
+    forgectl.script(resolved("resolve", T1))
+    code, _, _ = cli(*args("resolve", T1))
+    assert code == 0
+    names = [c.subcommand for c in forgectl.calls()]
+    assert "--version" in names and names.index("--version") < names.index("resolve")
+
+
+# --- goldens and the hostile dialog header ------------------------------------------------------
+
+
+def test_goldens_of_the_resolve_and_unresolve_results(
+    cli: Run,
+    forgectl: FakeForgectl,
+    state_home: Path,
+    golden_json: Callable[[str, Any], None],
+) -> None:
+    script_reads(forgectl, thread(T1), thread(T2, resolved=True), thread(T3, resolved=True))
+    forgectl.script(resolved("resolve", T1))
+    code, result, _ = cli(*args("resolve", T1, T2))
+    assert code == 0
+    validate("pr-comment/cli/resolve.json", result)
+    golden_json("resolve/result.json", _stable(result))
+    forgectl.script(show(), comments(thread(T2, resolved=True)), whoami())
+    forgectl.script(resolved("unresolve", T2))
+    code, result, _ = cli(*args("unresolve", T2))
+    assert code == 0
+    validate("pr-comment/cli/unresolve.json", result)
+    golden_json("resolve/unresolve-result.json", _stable(result))
+
+
+def test_goldens_of_the_dry_run_the_partial_run_and_the_exit_12_stop(
+    cli: Run,
+    forgectl: FakeForgectl,
+    state_home: Path,
+    golden_json: Callable[[str, Any], None],
+) -> None:
+    script_reads(forgectl, thread(T1), thread(T2, resolved=True), thread(T3))
+    code, result, _ = cli(*args("resolve", T1, T2, T3, extra=("--dry-run",), yes=False))
+    assert code == 0
+    validate("pr-comment/cli/resolve.json", result)
+    golden_json("resolve/dry-run.json", _stable(result))
+    forgectl.script(show(), comments(thread(T1), thread(T2), thread(T3)), whoami())
+    forgectl.script(
+        resolved("resolve", T1),
+        refuse("resolve", "not_resolvable", phase="read"),
+        resolved("resolve", T3),
+    )
+    code, result, _ = cli(*args("resolve", T1, T2, T3))
+    assert code == 20
+    validate("pr-comment/cli/resolve.json", result)
+    golden_json("resolve/partial.json", _stable(result))
+    forgectl.script(show(), comments(thread(T1), thread(T2), thread(T3)), whoami())
+    forgectl.script(resolved("resolve", T1), fail("resolve", "network_error", "down"))
+    code, result, _ = cli(*args("resolve", T1, T2, T3))
+    assert code == 12
+    validate("pr-comment/cli/resolve.json", result)
+    golden_json("resolve/stop-exit-12.json", _stable(result))
+
+
+def test_a_hostile_path_cannot_start_a_flush_left_line_that_looks_like_the_summary() -> None:
+    from pr_comment.hooks import ThreadTarget
+    from pr_comment.threads import Item, ThreadRequest, ThreadRun, dialog_text
+
+    request = ThreadRequest("resolve", PR, ACTOR, (T1,))
+    run = ThreadRun(request, show_of(), h.HEAD)
+    fake = "== summary == RESOLVE 1 thread on x"
+    head = f"--- {T1}, first comment by you at "
+    path = "a" * (80 - len(head)) + fake  # the terminal's own wrap would start a line with ``fake``
+    run.items = [Item(T1, ThreadTarget(T1, True, path, 3), True, "you", "me", "hi")]
+    login = "b" * 200 + fake
+    run.items.append(Item(T2, ThreadTarget(T2), True, "another account", login, "hi"))
+    text = dialog_text(run, 80)
+    shown = [x[i : i + 80] for x in text.splitlines() for i in range(0, max(len(x), 1), 80)]
+    assert [x for x in shown if x.startswith(("== summary", "RESOLVE", "Resolve?"))] == [
+        "== summary ==",
+        f"RESOLVE 2 threads on {PR}",
+    ]
+    own = ("== resolve ==", "== summary ==", f"RESOLVE 2 threads on {PR}")
+    assert all(x.startswith("  | ") for x in text.splitlines() if x not in own)
+    assert all(len(x) <= 80 for x in text.splitlines())
 
 
 # --- output ------------------------------------------------------------------------------------

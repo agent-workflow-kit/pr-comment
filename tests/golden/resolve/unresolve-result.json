@@ -1,0 +1,13 @@
+{
+  "action": "unresolve",
+  "dry_run": false,
+  "pr": "github.com/acme/widgets#7",
+  "threads": [
+    {
+      "changed": true,
+      "error": null,
+      "resolved": false,
+      "thread_id": "gh:rt:PRRT_2"
+    }
+  ]
+}

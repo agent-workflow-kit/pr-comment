@@ -36,7 +36,7 @@ Status: planned, 2026-11-03. Implements [interface.md](interface.md) (normative)
 | `confirm.py` | 3 | the TTY dialog and its summary |
 | `post.py` | 3 | Review, Approve, and Comment and reply orders; automatic approval guard; `--expect-plan` |
 | `hooks.py` | 4 | hook processes, payloads, outcomes, decision ids, override scopes |
-| `resolve.py` | 4 | Resolve order |
+| `threads.py` | 4 | Resolve order (`resolve` and `unresolve`) |
 | `gitlab_thread.py` | 4 | GitLab review body thread follow-up |
 
 ## Stage 0: Foundations

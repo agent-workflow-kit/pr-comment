@@ -1,0 +1,42 @@
+{
+  "action": "resolve",
+  "dry_run": false,
+  "pr": "github.com/acme/widgets#7",
+  "threads": [
+    {
+      "changed": true,
+      "error": null,
+      "resolved": true,
+      "thread_id": "gh:rt:PRRT_1"
+    },
+    {
+      "changed": null,
+      "error": {
+        "code": "network_error",
+        "decision_ids": [],
+        "details": null,
+        "escalated_by": null,
+        "escalated_hooks": null,
+        "hook": null,
+        "hook_stderr": null,
+        "landed": false,
+        "lower_error": {
+          "code": "network_error",
+          "message": "down"
+        },
+        "message": "down",
+        "reason": null,
+        "retry": "same_command",
+        "retry_after": null
+      },
+      "resolved": null,
+      "thread_id": "gh:rt:PRRT_2"
+    },
+    {
+      "changed": null,
+      "error": null,
+      "resolved": null,
+      "thread_id": "gh:rt:PRRT_3"
+    }
+  ]
+}

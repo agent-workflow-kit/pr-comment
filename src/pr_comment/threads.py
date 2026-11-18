@@ -330,7 +330,10 @@ def dialog_text(run: ThreadRun, width: int, encoding: str = "utf-8") -> str:
             where = f" at {_line(item.target.path)}"
             if item.target.line is not None:
                 where += f":{item.target.line}"
-        out.append(f"--- {_line(item.thread_id)}, first comment by {_who(item)}{where}")
+        # untrusted path and login: behind the gutter and hard-wrapped like an excerpt
+        out += _gutter(
+            f"--- {_line(item.thread_id)}, first comment by {_who(item)}{where}", width, encoding
+        )
         if item.excerpt is None:
             out.append(f"{GUTTER}(not in the listing: forgectl looks the thread up itself)")
         else:
@@ -534,12 +537,13 @@ class _Hooks:
         *,
         skip: bool,
         interrupted: Callable[[], bool],
-    ) -> None:
+    ) -> int | None:
+        """Run the ``post-post`` hooks; the number of a signal that ended one, else ``None``."""
         if not self.env.hooks.post:
-            return
+            return None
         if skip:
             self.runner.warn(POST, None, "hooks_skipped_after_signal")
-            return
+            return None
         lower, read = lowered.lower, lowered.read
         landed = lower.exit == 0
         result = {
@@ -555,7 +559,7 @@ class _Hooks:
             "changed": read.changed if read is not None else None,
             "warnings": [],
         }
-        run_post(
+        return run_post(
             self.runner,
             ids,
             lambda _entry, shown: self.payload(POST, item, index, shown, result),
@@ -611,13 +615,11 @@ def write_threads(run: ThreadRun, env: PostEnv) -> Outcome:
     hook_ids: list[str] = []
     attempted = False
     stopped = False
-    cut_short = False
     with _DeferredSignals() as held:
         for item in run.to_change():
             if stopped:
                 break
             if held.received:
-                cut_short = True
                 break
             index = len(writes)
             ids = DecisionIds(request.decision_ids)
@@ -627,7 +629,6 @@ def write_threads(run: ThreadRun, env: PostEnv) -> Outcome:
                 if not attempted:
                     raise
                 held.received.append(exc.signum)
-                cut_short = True
                 break
             _keep(hook_ids, ids)
             if blocked is not None:
@@ -671,7 +672,7 @@ def write_threads(run: ThreadRun, env: PostEnv) -> Outcome:
                     raise Interrupted(held.received[0])
             started = format_ts(now_utc())
             lowered, interrupted = _call(run, env, item, ids)
-            hooks.post(
+            hook_signal = hooks.post(
                 item,
                 index,
                 ids,
@@ -679,6 +680,9 @@ def write_threads(run: ThreadRun, env: PostEnv) -> Outcome:
                 skip=interrupted is not None or bool(held.received),
                 interrupted=lambda: bool(held.received),
             )
+            if hook_signal is not None:
+                # a signal ended a post-post hook: the run stops after this write, as for one held
+                held.received.append(hook_signal)
             _keep(hook_ids, ids)
             _apply(item, lowered, request)
             if interrupted is not None:
@@ -695,12 +699,14 @@ def write_threads(run: ThreadRun, env: PostEnv) -> Outcome:
                     stopped = True
         outcome = finish(run, dry_run=False)
         if not writes:
+            if held.received:  # held while every thread was blocked: no write, no record
+                raise Interrupted(held.received[0])
             return outcome  # every thread was vetoed, escalated, a no-op or failed before a write
         final = _record(env, writes, outcome, hook_ids)
         if final is not outcome:  # the audit failure replaced the outcome
             log_failure(env.log, env.trail.attempt_id, run.show.pr, final)
             return final
-        if cut_short and held.received:
+        if held.received:  # held at any point after the first write: 128 + signal, no document
             raise Interrupted(held.received[0])
         return final
 

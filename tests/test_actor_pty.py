@@ -35,13 +35,17 @@ def run_cli(
 ) -> tuple[int, dict[str, Any]]:
     """Run the CLI with --json; ``stdin`` and ``stderr`` are ``pty``, ``pipe`` or ``null``.
 
-    Returns the exit code and the parsed stdout envelope.
+    Returns the exit code and the parsed stdout envelope. The child's ``PATH`` is a private empty
+    directory plus the system's, so no forgectl is ever found: a run that gets past the actor and
+    flag rules ends in ``tool_missing`` and never reaches a real host.
     """
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
+    nobin = tmp_path / "nobin"
+    nobin.mkdir(exist_ok=True)
     (tmp_path / "b.md").write_text("body\n", encoding="utf-8")
     env = {
-        "PATH": os.environ.get("PATH", ""),
+        "PATH": os.pathsep.join([str(nobin), "/usr/bin", "/bin"]),
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(home / "xdg"),
     }

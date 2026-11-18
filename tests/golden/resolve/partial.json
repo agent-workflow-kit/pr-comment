@@ -1,0 +1,43 @@
+{
+  "action": "resolve",
+  "dry_run": false,
+  "pr": "github.com/acme/widgets#7",
+  "threads": [
+    {
+      "changed": true,
+      "error": null,
+      "resolved": true,
+      "thread_id": "gh:rt:PRRT_1"
+    },
+    {
+      "changed": null,
+      "error": {
+        "code": "refused",
+        "decision_ids": [],
+        "details": null,
+        "escalated_by": null,
+        "escalated_hooks": null,
+        "hook": null,
+        "hook_stderr": null,
+        "landed": null,
+        "lower_error": {
+          "code": "refused",
+          "message": "scripted refusal",
+          "reason": "not_resolvable"
+        },
+        "message": "scripted refusal",
+        "reason": "not_resolvable",
+        "retry": null,
+        "retry_after": null
+      },
+      "resolved": null,
+      "thread_id": "gh:rt:PRRT_2"
+    },
+    {
+      "changed": true,
+      "error": null,
+      "resolved": true,
+      "thread_id": "gh:rt:PRRT_3"
+    }
+  ]
+}
