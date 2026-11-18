@@ -9,37 +9,34 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import logging
-import re
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, NoReturn, cast
 
-from . import __version__
+from . import __version__, grammars
+from .actor import ActorError, resolve_run, stream_is_tty
 from .errors import sanitize
+from .grammars import MAX_DECISION_IDS, MAX_THREADS
 from .output import LOG, PROG, Outcome, check_outcome, error_outcome, internal_outcome, render
 
 DESCRIPTION = "Posts reviews, replies and comments to PRs, safely and with attribution."
 
-MAX_DECISION_IDS = 32
-MAX_THREADS = 100
 MAX_USAGE_MESSAGE = 200
 POSTING_COMMANDS = frozenset({"review", "comment", "reply", "approve"})
 
-_ACTOR_RE = re.compile(r"^(human|auto):[A-Za-z0-9._@-]{1,64}$")
-_DECISION_ID_RE = re.compile(r"^[A-Za-z0-9._:@/-]{1,128}$")
-_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-_HOOK_NAMES = ("pre-post", "post-post")
-_ESCALATION_SCOPES = ("pr-comment", "forgectl")
-
 
 class UsageError(Exception):
-    """A command line that does not match the frozen surface (exit 2, code ``usage``)."""
+    """A command line that does not match the frozen surface (exit 2, code ``usage``).
 
-    def __init__(self, message: str, usage: str = "") -> None:
+    ``code`` is ``invalid_pr`` for a PR argument that fails its check; both exit 2.
+    """
+
+    def __init__(self, message: str, usage: str = "", code: str = "usage") -> None:
         super().__init__(message)
         self.message = message
         self.usage = usage
+        self.code = code
 
 
 Handler = Callable[[argparse.Namespace], Outcome]
@@ -59,33 +56,33 @@ def _version() -> str:
 # --- value types -----------------------------------------------------------------------------
 
 
-def _matching(pattern: re.Pattern[str], what: str) -> Callable[[str], str]:
-    def check(value: str) -> str:
-        if not pattern.fullmatch(value):
-            raise argparse.ArgumentTypeError(f"invalid {what}")
-        return value
+def _checked(check: Callable[[str], str]) -> Callable[[str], str]:
+    """An argparse ``type`` that runs a shared grammar (grammars.py); argparse names the flag."""
 
-    return check
+    def convert(value: str) -> str:
+        try:
+            return check(value)
+        except grammars.GrammarError as exc:
+            raise argparse.ArgumentTypeError(str(exc)) from None
 
-
-def _escalation_scope(value: str) -> str:
-    if value not in _ESCALATION_SCOPES:
-        raise argparse.ArgumentTypeError(
-            f"invalid scope (expected one of: {', '.join(_ESCALATION_SCOPES)})"
-        )
-    return value
-
-
-def _hook(value: str) -> str:
-    name, sep, cmd = value.partition("=")
-    if not sep or name not in _HOOK_NAMES or not cmd:
-        raise argparse.ArgumentTypeError(
-            f"expected <name>=<cmd> with name one of: {', '.join(_HOOK_NAMES)}"
-        )
-    return value
+    return convert
 
 
 # --- parser ----------------------------------------------------------------------------------
+
+
+def _fixed_text(message: str) -> str:
+    """Drop the caller's value from an argparse message (argparse echoes unknown arguments,
+    invalid choices and explicit values given to a flag that takes none).
+
+    What remains names only parts of the parser's own definition.
+    """
+    for marker in ("invalid choice:", "ignored explicit argument"):
+        if marker in message:
+            return message[: message.index(marker)] + marker.removesuffix(":")
+    if message.startswith("unrecognized arguments:"):
+        return "unrecognized arguments"
+    return message
 
 
 class _Parser(argparse.ArgumentParser):
@@ -96,7 +93,7 @@ class _Parser(argparse.ArgumentParser):
         super().__init__(**kwargs)
 
     def error(self, message: str) -> NoReturn:
-        raise UsageError(message, self.format_usage())
+        raise UsageError(_fixed_text(message), self.format_usage())
 
 
 class AppendAction(argparse.Action):
@@ -138,7 +135,8 @@ class _StoreOnce(argparse.Action):
         values: str | Sequence[Any] | None,
         option_string: str | None = None,
     ) -> None:
-        if hasattr(namespace, self.dest) and getattr(namespace, self.dest) != values:
+        current = getattr(namespace, self.dest, None)
+        if current is not None and current != values:
             parser.error(f"{option_string} given more than once with different values")
         setattr(namespace, self.dest, values)
 
@@ -188,7 +186,7 @@ _GLOBAL_FLAGS = (
         {
             "action": _StoreOnce,
             "metavar": "SHA256",
-            "type": _matching(_SHA256_RE, "plan hash (64 lowercase hex digits)"),
+            "type": _checked(grammars.check_plan_hash),
             "help": "refuse unless the final plan hash matches (posting commands only)",
         },
         None,
@@ -199,7 +197,7 @@ _GLOBAL_FLAGS = (
         {
             "action": AppendAction,
             "metavar": "SCOPE",
-            "type": _escalation_scope,
+            "type": _checked(grammars.check_escalation_scope),
             "help": "human-only: allow escalations of this scope (pr-comment or forgectl)",
         },
         [],
@@ -210,7 +208,7 @@ _GLOBAL_FLAGS = (
         {
             "action": _StoreOnce,
             "metavar": "ACTOR",
-            "type": _matching(_ACTOR_RE, "actor (human:<name> or auto:<name>)"),
+            "type": _checked(grammars.check_actor),
             "help": "who acts",
         },
         None,
@@ -222,7 +220,7 @@ _GLOBAL_FLAGS = (
             "action": AppendAction,
             "max_count": MAX_DECISION_IDS,
             "metavar": "ID",
-            "type": _matching(_DECISION_ID_RE, "decision id"),
+            "type": _checked(grammars.check_decision_id),
             "help": f"repeatable, at most {MAX_DECISION_IDS}",
         },
         [],
@@ -233,7 +231,7 @@ _GLOBAL_FLAGS = (
         {
             "action": AppendAction,
             "metavar": "NAME=CMD",
-            "type": _hook,
+            "type": _checked(grammars.check_hook),
             "help": "per-invocation hook, run after configured hooks",
         },
         [],
@@ -301,14 +299,21 @@ def _leaf(
 
 
 def _add_common_posting_flags(parser: argparse.ArgumentParser, *, base: bool = False) -> None:
-    # TODO(#6): validate the forwarded value grammars of --expected-head, --expected-base and
-    # --dedupe-key (and of the PR argument, including `invalid_pr` and a leading dash) here.
-    parser.add_argument("--expected-head", metavar="SHA")
+    parser.add_argument(
+        "--expected-head", action=_StoreOnce, metavar="SHA", type=_checked(grammars.check_sha)
+    )
     if base:
-        parser.add_argument("--expected-base", metavar="REF")
-    parser.add_argument("--dedupe-key", metavar="KEY")
-    # TODO(#16): validate and apply the mention allowlist; TODO(#5): require a human actor and
-    # an interactive run for --allow-mention.
+        parser.add_argument(
+            "--expected-base",
+            action=_StoreOnce,
+            metavar="REF",
+            type=_checked(grammars.check_branch),
+        )
+    parser.add_argument(
+        "--dedupe-key", action=_StoreOnce, metavar="KEY", type=_checked(grammars.check_dedupe_key)
+    )
+    # TODO(#16): validate and apply the mention allowlist. The human-only, interactive-only rule
+    # for --allow-mention is enforced in actor.resolve_run.
     parser.add_argument("--allow-mention", action=AppendAction, default=[], metavar="NAME")
 
 
@@ -320,29 +325,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     review = _leaf(sub, "review", "review", "post one review from a draft")
-    review.add_argument("--draft-file", required=True, metavar="PATH|-")
+    review.add_argument("--draft-file", action=_StoreOnce, required=True, metavar="PATH|-")
     review.add_argument("--approve", action="store_true")
-    # TODO(#6): validate the --reanchor-to value grammar.
-    review.add_argument("--reanchor-to", metavar="SHA")
+    review.add_argument(
+        "--reanchor-to", action=_StoreOnce, metavar="SHA", type=_checked(grammars.check_sha)
+    )
     _add_common_posting_flags(review)
 
     comment = _leaf(sub, "comment", "comment", "post a general PR comment")
-    comment.add_argument("--body-file", required=True, metavar="PATH|-")
+    comment.add_argument("--body-file", action=_StoreOnce, required=True, metavar="PATH|-")
     _add_common_posting_flags(comment)
 
     reply = _leaf(sub, "reply", "reply", "reply to a comment, thread or review")
-    # TODO(#6): validate the --to id grammar.
-    reply.add_argument("--to", required=True, metavar="ID")
-    reply.add_argument("--body-file", required=True, metavar="PATH|-")
+    reply.add_argument(
+        "--to",
+        action=_StoreOnce,
+        required=True,
+        metavar="ID",
+        type=_checked(grammars.check_reply_target),
+    )
+    reply.add_argument("--body-file", action=_StoreOnce, required=True, metavar="PATH|-")
     _add_common_posting_flags(reply)
 
     approve = _leaf(sub, "approve", "approve", "approve a PR at a pinned head and base")
-    approve.add_argument("--body-file", metavar="PATH|-")
+    approve.add_argument("--body-file", action=_StoreOnce, metavar="PATH|-")
     _add_common_posting_flags(approve, base=True)
 
     for name, text in (("resolve", "resolve review threads"), ("unresolve", "reopen threads")):
         thread = _leaf(sub, name, name, text)
-        # TODO(#6): validate the --thread id grammar (gh:rt: or gl:d:).
         thread.add_argument(
             "--thread",
             action=AppendAction,
@@ -350,6 +360,7 @@ def build_parser() -> argparse.ArgumentParser:
             default=[],
             required=True,
             metavar="ID",
+            type=_checked(grammars.check_thread),
         )
 
     draft = sub.add_parser("draft", help="draft tools")
@@ -360,21 +371,32 @@ def build_parser() -> argparse.ArgumentParser:
     check = _leaf(draft_sub, "check", "draft check", "validate a draft offline", positional=())
     check.add_argument("path", metavar="PATH|-")
     new = _leaf(draft_sub, "new", "draft new", "write a new draft for a PR")
-    new.add_argument("--event", choices=("comment", "request_changes"))
-    new.add_argument("--from", dest="from_draft", metavar="PATH|-")
+    new.add_argument("--event", action=_StoreOnce, choices=("comment", "request_changes"))
+    new.add_argument("--from", action=_StoreOnce, dest="from_draft", metavar="PATH|-")
 
     export = _leaf(sub, "export", "export", "print audit or log records", positional=())
     # TODO(#38): validate --since (RFC 3339 or a duration such as 7d).
-    export.add_argument("--since", metavar="TIME")
+    export.add_argument("--since", action=_StoreOnce, metavar="TIME")
     export.add_argument("--log", action="store_true")
     return parser
 
 
 def validate_args(args: argparse.Namespace) -> None:
     """Rules argparse cannot express. Raises ``UsageError``."""
-    # TODO(#5): resolve the actor, detect interactive runs, apply the human-only flag rules
-    # (--allow-mention, --override-escalation) and refuse `--body-file -` / `--draft-file -`
-    # when stdin is a TTY.
+    # Value grammars live in grammars.py and run as argparse types, so argparse names the flag;
+    # the PR argument is checked here because its error code differs (`invalid_pr`).
+    pr = getattr(args, "pr", None)
+    if pr is not None:
+        try:
+            grammars.check_pr(pr)
+        except grammars.GrammarError as exc:
+            raise UsageError(str(exc), code="invalid_pr") from None
+    try:
+        args.run = resolve_run(
+            args, stdin_tty=stream_is_tty(sys.stdin), stderr_tty=stream_is_tty(sys.stderr)
+        )
+    except ActorError as exc:
+        raise UsageError(str(exc)) from exc
     # TODO(#6): the grammars enforced at parse time (--actor, --decision-id, --expect-plan,
     # --hook, --override-escalation and the thread cap) move into the shared validator.
     if args.expect_plan is not None and args.command not in POSTING_COMMANDS:
@@ -413,6 +435,38 @@ HANDLERS: dict[str, Handler] = {
 }
 
 _VALUE_FLAGS = frozenset(flag for spec in _GLOBAL_FLAGS if spec.takes_value for flag in spec.flags)
+_COMMAND_VALUE_FLAGS = frozenset(
+    {
+        "--allow-mention",
+        "--body-file",
+        "--dedupe-key",
+        "--draft-file",
+        "--event",
+        "--expected-base",
+        "--expected-head",
+        "--from",
+        "--reanchor-to",
+        "--since",
+        "--thread",
+        "--to",
+    }
+)
+VALUE_FLAGS = _VALUE_FLAGS | _COMMAND_VALUE_FLAGS
+_VALUELESS_FLAGS = frozenset(
+    {
+        "--approve",
+        "--dry-run",
+        "--help",
+        "--json",
+        "--log",
+        "--quiet",
+        "--verbose",
+        "--version",
+        "--yes",
+        "-h",
+    }
+)
+_COMMANDS_WITH_PR = frozenset({"review", "comment", "reply", "approve", "resolve", "unresolve"})
 
 
 def _wants_json(argv: list[str]) -> bool:
@@ -453,7 +507,63 @@ def _dash_dash_before_command(argv: list[str]) -> bool:
     return False
 
 
+def _command_path(argv: list[str]) -> tuple[list[str], int]:
+    """The command words (``["draft", "new"]``) and the index after them; empty when absent."""
+    words: list[str] = []
+    skip = False
+    for index, token in enumerate(argv):
+        if skip:
+            skip = False
+        elif token in _VALUE_FLAGS:
+            skip = True
+        elif token.startswith("-"):
+            continue
+        else:
+            words.append(token)
+            if token != "draft" or len(words) == 2:
+                return words, index + 1
+    return words, len(argv)
+
+
+def _leading_dash_pr(argv: list[str]) -> bool:
+    """True when the PR slot of a command holds a token starting with ``-``.
+
+    argparse reads such a token as an option, so the command would fail with a missing-argument
+    usage error instead of ``invalid_pr``. Scans the tokens after the command, skipping known
+    flags and their values. An unknown dash token is the PR argument only when no positional
+    follows it: with one (``comment --bogus a#1 ...``) the PR is present and argparse reports the
+    unknown flag as usage. A ``--`` ends the scan: the token after it is a positional and
+    ``validate_args`` checks it. ``-h``, ``--help`` and ``--version`` before ``--`` always reach
+    argparse.
+    """
+    head = argv[: argv.index("--")] if "--" in argv else argv
+    if any(token in ("-h", "--help", "--version") for token in head):
+        return False
+    words, start = _command_path(argv)
+    if not (words and words[-1] in _COMMANDS_WITH_PR) and words != ["draft", "new"]:
+        return False
+    unknown_dash = False
+    skip = False
+    for token in argv[start:]:
+        if skip:
+            skip = False
+            continue
+        if token == "--":
+            return False
+        if token == "-":
+            return True
+        if not token.startswith("-"):
+            return False  # the PR argument is present; validate_args checks it
+        name = token.partition("=")[0]
+        if name in VALUE_FLAGS:
+            skip = "=" not in token
+        elif name not in _VALUELESS_FLAGS:
+            unknown_dash = True
+    return unknown_dash
+
+
 def _write(stream: Any, text: str) -> None:
+    # TODO(#4): tolerate None/closed stdout/stderr in _write
     """Write text that cannot fail on the stream's encoding."""
     if text:
         encoding = getattr(stream, "encoding", None) or "utf-8"
@@ -461,8 +571,8 @@ def _write(stream: Any, text: str) -> None:
         stream.flush()
 
 
-def _fail_usage(argv: list[str], message: str, usage: str) -> int:
-    outcome = error_outcome("usage", _truncate(message))
+def _fail_usage(argv: list[str], message: str, usage: str, code: str = "usage") -> int:
+    outcome = error_outcome(code, _truncate(message))
     stdout, stderr = render(
         outcome,
         as_json=_wants_json(argv),
@@ -509,11 +619,15 @@ def _main(argv: list[str]) -> int:
         )
     if _dash_dash_before_command(argv):
         return _fail_usage(argv, "'--' is not allowed before the command", parser.format_usage())
+    if _leading_dash_pr(argv):
+        return _fail_usage(
+            argv, "invalid PR (a PR argument must not start with '-')", "", "invalid_pr"
+        )
     try:
         args = parser.parse_args(argv)
         validate_args(args)
     except UsageError as exc:
-        return _fail_usage(argv, exc.message, exc.usage)
+        return _fail_usage(argv, exc.message, exc.usage, exc.code)
     try:
         outcome = check_outcome(HANDLERS[args.command](args))
         stdout, stderr = render(outcome, as_json=args.json, quiet=args.quiet, verbose=args.verbose)
