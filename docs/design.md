@@ -20,7 +20,7 @@ pr-comment never calls `gh` or `glab` and holds no credentials. Consumers: revie
 |---|---|---|
 | D-1 | Stateless: no database, only audit, log and a temporary directory that holds only hook working directories, checked and swept by file descriptor on every run. The draft carries its anchor and `draft_id`; "already posted" is forgectl's answer on the real call. | [Files](interface.md#files) |
 | D-2 | The review draft is strict JSON with an integer `schema_version`; extra data only under `meta`. A draft carries the findings it could not anchor in `unanchored`, so storing a re-anchored draft loses nothing. | [Review draft](interface.md#review-draft) |
-| D-3 | Re-anchoring is exact hunk mapping through forgectl `compare`, with no fuzzy matching; anything unmappable moves to the body with a reason. File sections are read only from `---`/`+++` and rename lines; anything ambiguous moves (`diff_unavailable`). | [Re-anchoring](interface.md#re-anchoring) |
+| D-3 | Re-anchoring is exact hunk mapping through forgectl `compare`, with no fuzzy matching; anything unmappable moves to the body with a reason. File sections are read from `---`/`+++` and rename lines and, for sections that carry none (binary changes, headers-only added or deleted files), from a `Binary files` line or the `diff --git a/P b/P` line only when exactly one reading exists; anything ambiguous moves (`diff_unavailable`). | [Re-anchoring](interface.md#re-anchoring) |
 | D-4 | Left-side findings keep their lines only while the merge-base is unchanged (`anchor.merge_base_sha`), else move (`base_changed`); checked on every review that has left-side findings, not only on re-anchor. | [Re-anchoring](interface.md#re-anchoring) |
 | D-5 | Two attribution templates chosen by the actor, put at the top of the body; the marker is appended in code and cannot be configured away; every inline comment carries the bare marker on both hosts; detection is normative. | [Footers and marker](interface.md#footers-and-marker), [Marker detection](interface.md#marker-detection) |
 | D-6 | Mentions are neutralized by replacing `@` and its entity forms with `＠` in all untrusted text, except pr-comment's own applicable-suggestion lines; an allowlist and a human-only, interactive per-run override. | [Mentions](interface.md#mentions) |
@@ -102,7 +102,8 @@ Each becomes a `live` test in the plan.
 | `gateway.py` | the only subprocess boundary |
 | `hooks.py` | `pre-post` and `post-post` |
 | `audit.py` | audit and log records, `export` |
-| `confirm.py` | the TTY dialog, display sanitizing and the summary |
+| `display.py` | display sanitizing with forgectl's rules (`sanitize_text`, `sanitize_line`, `sanitize_bytes`) and the shared predicate `is_marked` / `count_marked` |
+| `confirm.py` | the TTY dialog and the summary (shows untrusted text through `display.py`) |
 
 ## Data model
 
@@ -133,5 +134,5 @@ Every failure before the first write sends nothing. forgectl's errors pass throu
 - Suggestions (D-13): golden cases for a suggestion fence written into a body (plain and entity-encoded info string, inside a quote) and for a suggestion line `~~~`.
 - Text pipeline inputs: `"x\n"` as a `title` and as a suggestion line, and a draft with `"\ud800"` (exit 2, `control_character`).
 - Pre-check (D-12): the fake forgectl returns `invalid_position` and `too_large` from `--dry-run`; a test that the bytes on the real call's stdin equal the confirmed plan; the fake forgectl's dry run reports `already_posted: true` with a pending GitLab approval and the real call completes it; `draft new` with the fake `diff` exiting 20 `too_large`.
-- `diffmap.py` table tests from spike A's cases (real `git diff` output at several context sizes), plus paths with spaces, a space followed by `b/`, quotes, newlines (as forgectl marks them) and non-ASCII, fixtures in forgectl's GitLab-assembled form once forgectl specifies it, and a property test against a reference mapper.
+- `diffmap.py` table tests from spike A's cases (real `git diff` output at several context sizes), plus paths with spaces, a space followed by `b/`, quotes, newlines (as forgectl marks them) and non-ASCII, fixtures in forgectl's GitLab-assembled form once forgectl specifies it, and a property test against a reference mapper. The parser also has negative tests for hollow or truncated sections, exact `\ No newline at end of file` placement, invalid UTF-8 in quoted paths, and a timing-bounded test that long `Binary files` lines are read in linear time.
 - `live` tests (deselected by default, never in CI), once forgectl is implemented: a review with inline comments, a re-anchor after a push, a GitLab body-thread resolve, mention neutralizing on both hosts, and the items under "Still to verify".

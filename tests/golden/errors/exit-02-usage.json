@@ -1,0 +1,17 @@
+{
+  "error": {
+    "code": "usage",
+    "decision_ids": [],
+    "details": null,
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": null,
+    "hook_stderr": null,
+    "landed": null,
+    "lower_error": null,
+    "message": "unrecognized arguments: --nope",
+    "reason": null,
+    "retry": null,
+    "retry_after": null
+  }
+}

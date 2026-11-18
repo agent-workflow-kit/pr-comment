@@ -1,0 +1,17 @@
+{
+  "error": {
+    "code": "outcome_partial",
+    "decision_ids": [],
+    "details": null,
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": null,
+    "hook_stderr": null,
+    "landed": false,
+    "lower_error": null,
+    "message": "partial",
+    "reason": null,
+    "retry": "new_key",
+    "retry_after": null
+  }
+}

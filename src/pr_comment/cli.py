@@ -8,21 +8,19 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
-import json
+import logging
 import sys
-import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, NoReturn, cast
 
 from . import __version__, grammars
+from .actor import ActorError, resolve_run, stream_is_tty
+from .errors import sanitize
 from .grammars import MAX_DECISION_IDS, MAX_THREADS
+from .output import LOG, PROG, Outcome, check_outcome, error_outcome, internal_outcome, render
 
-PROG = "pr-comment"
 DESCRIPTION = "Posts reviews, replies and comments to PRs, safely and with attribution."
-
-EXIT_INTERNAL = 1
-EXIT_USAGE = 2
 
 MAX_USAGE_MESSAGE = 200
 POSTING_COMMANDS = frozenset({"review", "comment", "reply", "approve"})
@@ -41,29 +39,7 @@ class UsageError(Exception):
         self.code = code
 
 
-@dataclass(frozen=True)
-class Outcome:
-    """What a handler returns: the exit code and the ``--json`` document (None prints nothing)."""
-
-    exit_code: int
-    document: dict[str, Any] | None = None
-
-
 Handler = Callable[[argparse.Namespace], Outcome]
-
-
-def error_envelope(code: str, message: str) -> dict[str, Any]:
-    """A minimal error envelope (schemas/cli/error.json: only ``code`` and ``message`` required)."""
-    # TODO(#4): replace with the result objects and the full envelope in errors.py and output.py.
-    return {"error": {"code": code, "message": _sanitize(message)}}
-
-
-def _sanitize(text: str) -> str:
-    """Replace control, format and surrogate characters (Cc, Cf, Cs) with ``<U+XXXX>``."""
-    return "".join(
-        f"<U+{ord(char):04X}>" if unicodedata.category(char) in ("Cc", "Cf", "Cs") else char
-        for char in text
-    )
 
 
 def _truncate(text: str, limit: int = MAX_USAGE_MESSAGE) -> str:
@@ -336,8 +312,8 @@ def _add_common_posting_flags(parser: argparse.ArgumentParser, *, base: bool = F
     parser.add_argument(
         "--dedupe-key", action=_StoreOnce, metavar="KEY", type=_checked(grammars.check_dedupe_key)
     )
-    # TODO(#16): validate and apply the mention allowlist; TODO(#5): require a human actor and
-    # an interactive run for --allow-mention.
+    # TODO(#16): validate and apply the mention allowlist. The human-only, interactive-only rule
+    # for --allow-mention is enforced in actor.resolve_run.
     parser.add_argument("--allow-mention", action=AppendAction, default=[], metavar="NAME")
 
 
@@ -407,9 +383,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def validate_args(args: argparse.Namespace) -> None:
     """Rules argparse cannot express. Raises ``UsageError``."""
-    # TODO(#5): resolve the actor, detect interactive runs, apply the human-only flag rules
-    # (--allow-mention, --override-escalation) and refuse `--body-file -` / `--draft-file -`
-    # when stdin is a TTY.
     # Value grammars live in grammars.py and run as argparse types, so argparse names the flag;
     # the PR argument is checked here because its error code differs (`invalid_pr`).
     pr = getattr(args, "pr", None)
@@ -418,6 +391,14 @@ def validate_args(args: argparse.Namespace) -> None:
             grammars.check_pr(pr)
         except grammars.GrammarError as exc:
             raise UsageError(str(exc), code="invalid_pr") from None
+    try:
+        args.run = resolve_run(
+            args, stdin_tty=stream_is_tty(sys.stdin), stderr_tty=stream_is_tty(sys.stderr)
+        )
+    except ActorError as exc:
+        raise UsageError(str(exc)) from exc
+    # TODO(#6): the grammars enforced at parse time (--actor, --decision-id, --expect-plan,
+    # --hook, --override-escalation and the thread cap) move into the shared validator.
     if args.expect_plan is not None and args.command not in POSTING_COMMANDS:
         raise UsageError(f"--expect-plan is only valid with {', '.join(sorted(POSTING_COMMANDS))}")
     # The parse-time caps count per parser level; these count the merged total.
@@ -431,9 +412,7 @@ def validate_args(args: argparse.Namespace) -> None:
 
 
 def _not_implemented(args: argparse.Namespace) -> Outcome:
-    return Outcome(
-        EXIT_INTERNAL, error_envelope("internal", f"{args.command} is not implemented yet")
-    )
+    return error_outcome("internal", f"{args.command} is not implemented yet")
 
 
 # One handler per command path. Later issues replace the entries with real handlers.
@@ -497,6 +476,12 @@ def _wants_json(argv: list[str]) -> bool:
 
 
 MAX_ARGV_TOKENS = 1024
+
+
+def _has_flag(argv: list[str], flag: str) -> bool:
+    """True when ``flag`` appears as a token before ``--`` (used when parsing itself failed)."""
+    head = argv[: argv.index("--")] if "--" in argv else argv
+    return flag in head
 
 
 def _dash_dash_before_command(argv: list[str]) -> bool:
@@ -577,31 +562,8 @@ def _leading_dash_pr(argv: list[str]) -> bool:
     return unknown_dash
 
 
-def _render(outcome: Outcome, *, as_json: bool) -> tuple[str, str]:
-    """The stdout and stderr text of an outcome, built before anything is written."""
-    if as_json:
-        if outcome.document is None:
-            return "", ""
-        return json.dumps(outcome.document, ensure_ascii=True) + "\n", ""
-    if outcome.exit_code != 0 and outcome.document is not None:
-        error = outcome.document.get("error")
-        if isinstance(error, dict):
-            message = _sanitize(str(error.get("message", error.get("code"))))
-            return "", f"{PROG}: {message}\n"
-    return "", ""
-
-
-def _check_outcome(result: object) -> Outcome:
-    if not isinstance(result, Outcome):
-        raise TypeError("handler did not return an Outcome")
-    if type(result.exit_code) is not int:
-        raise TypeError("handler exit code is not an integer")
-    if result.document is not None and not isinstance(result.document, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
-        raise TypeError("handler document is not a dict")
-    return result
-
-
 def _write(stream: Any, text: str) -> None:
+    # TODO(#4): tolerate None/closed stdout/stderr in _write
     """Write text that cannot fail on the stream's encoding."""
     if text:
         encoding = getattr(stream, "encoding", None) or "utf-8"
@@ -610,17 +572,46 @@ def _write(stream: Any, text: str) -> None:
 
 
 def _fail_usage(argv: list[str], message: str, usage: str, code: str = "usage") -> int:
-    message = _truncate(_sanitize(message))
-    outcome = Outcome(EXIT_USAGE, error_envelope(code, message))
-    stdout, stderr = _render(outcome, as_json=_wants_json(argv))
+    outcome = error_outcome(code, _truncate(message))
+    stdout, stderr = render(
+        outcome,
+        as_json=_wants_json(argv),
+        quiet=_has_flag(argv, "--quiet"),
+        verbose=_has_flag(argv, "--verbose"),
+    )
     _write(sys.stderr, usage)
     _write(sys.stderr, stderr)
     _write(sys.stdout, stdout)
     return outcome.exit_code
 
 
+class _StderrLogHandler(logging.Handler):
+    """Prints log records (tracebacks included) to stderr with every untrusted character marked.
+
+    Without it an uncaught exception's traceback would reach stderr raw through Python's
+    last-resort handler, and the exception text may hold untrusted data.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            _write(sys.stderr, sanitize(self.format(record), one_line=False) + "\n")
+        except Exception:
+            self.handleError(record)
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    handler: logging.Handler = (
+        logging.NullHandler() if _has_flag(argv, "--quiet") else _StderrLogHandler()
+    )
+    LOG.addHandler(handler)
+    try:
+        return _main(argv)
+    finally:
+        LOG.removeHandler(handler)
+
+
+def _main(argv: list[str]) -> int:
     parser = build_parser()
     if len(argv) > MAX_ARGV_TOKENS:  # argparse is quadratic in repeated flags
         return _fail_usage(
@@ -638,13 +629,11 @@ def main(argv: list[str] | None = None) -> int:
     except UsageError as exc:
         return _fail_usage(argv, exc.message, exc.usage, exc.code)
     try:
-        outcome = _check_outcome(HANDLERS[args.command](args))
-        stdout, stderr = _render(outcome, as_json=args.json)
+        outcome = check_outcome(HANDLERS[args.command](args))
+        stdout, stderr = render(outcome, as_json=args.json, quiet=args.quiet, verbose=args.verbose)
     except Exception as exc:  # a handler bug must still honor the exit-code and envelope contract
-        outcome = Outcome(
-            EXIT_INTERNAL, error_envelope("internal", f"unexpected {type(exc).__name__}")
-        )
-        stdout, stderr = _render(outcome, as_json=args.json)
+        outcome = internal_outcome(exc)
+        stdout, stderr = render(outcome, as_json=args.json, quiet=args.quiet, verbose=args.verbose)
     _write(sys.stderr, stderr)
     _write(sys.stdout, stdout)
     return outcome.exit_code

@@ -1,0 +1,19 @@
+{
+  "error": {
+    "code": "host_rejected",
+    "decision_ids": [],
+    "details": {
+      "leftover_drafts": 1
+    },
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": null,
+    "hook_stderr": null,
+    "landed": false,
+    "lower_error": null,
+    "message": "host rejected the review",
+    "reason": null,
+    "retry": "none",
+    "retry_after": null
+  }
+}

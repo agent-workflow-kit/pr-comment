@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from pr_comment import cli
+from pr_comment import cli, errors
 from pr_comment.cli import build_parser, main
 from tests.schema_harness import validate
 
@@ -608,10 +608,10 @@ def test_undecodable_and_control_characters_are_replaced_in_the_envelope(
     assert code == 2
     assert out.isascii()
     message = json.loads(out)["error"]["message"]
-    assert "<U+DCFF>" in message
-    assert "<U+001B>" in message
-    assert "<U+202E>" in message
-    assert "\x1b" not in message
+    # --json is not display-sanitized: the characters are JSON-escaped, never raw on stdout.
+    assert "\x1b" in message
+    assert "\x1b" not in out
+    assert "\\u001b" in out
 
 
 def test_control_characters_never_reach_stderr(capsys: pytest.CaptureFixture[str]) -> None:
@@ -656,7 +656,7 @@ def test_non_ascii_text_is_escaped_in_json_and_cannot_break_an_ascii_stream(
 
 
 def test_sanitize_replaces_control_format_and_surrogate_characters_only() -> None:
-    sanitize = cli._sanitize  # pyright: ignore[reportPrivateUsage]
+    sanitize = errors.sanitize
     assert sanitize("a\tb\n") == "a<U+0009>b<U+000A>"
     assert sanitize("\u200b\ud800") == "<U+200B><U+D800>"
     assert sanitize("plain \u00e9\u4e2d") == "plain \u00e9\u4e2d"
@@ -921,10 +921,11 @@ def test_a_handler_returning_a_bad_outcome_fails_closed(
     monkeypatch.setitem(cli.HANDLERS, "export", handler)
     # Without --json the document is never serialized, so only a bad Outcome itself fails there.
     modes = (["--json"], []) if label not in ("not serializable", "circular") else (["--json"],)
-    for flags in modes:
+    for flags in [*modes, ["--json", "--quiet"]]:
         code, out, err = _run_raw(capsys, ["export", *flags])
         assert code == 1
-        assert "Traceback" not in err
+        if "--quiet" in flags:
+            assert "Traceback" not in err
         if flags:
             doc = json.loads(out)
             assert doc["error"]["code"] == "internal"

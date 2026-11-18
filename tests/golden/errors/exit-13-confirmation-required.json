@@ -1,0 +1,17 @@
+{
+  "error": {
+    "code": "confirmation_required",
+    "decision_ids": [],
+    "details": null,
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": null,
+    "hook_stderr": null,
+    "landed": null,
+    "lower_error": null,
+    "message": "pass --yes",
+    "reason": null,
+    "retry": null,
+    "retry_after": null
+  }
+}
