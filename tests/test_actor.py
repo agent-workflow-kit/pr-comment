@@ -253,11 +253,7 @@ def test_main_dash_body_with_tty_stdin_exits_usage(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     code, doc = _main(
-        monkeypatch,
-        capsys,
-        ["comment", "o/r#1", "--body-file", "-"],
-        stdin_tty=True,
-        stderr_tty=True,
+        monkeypatch, capsys, ["comment", "a#1", "--body-file", "-"], stdin_tty=True, stderr_tty=True
     )
     assert code == 2
     assert doc is not None and doc["error"]["code"] == "usage"
@@ -266,7 +262,7 @@ def test_main_dash_body_with_tty_stdin_exits_usage(
 def test_main_allow_mention_with_yes_exits_usage(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    argv = ["comment", "o/r#1", "--body-file", "b", "--allow-mention", "bob", "--yes"]
+    argv = ["comment", "a#1", "--body-file", "b", "--allow-mention", "bob", "--yes"]
     code, doc = _main(monkeypatch, capsys, argv, stdin_tty=True, stderr_tty=True)
     assert code == 2
     assert doc is not None and doc["error"]["code"] == "usage"
@@ -275,10 +271,10 @@ def test_main_allow_mention_with_yes_exits_usage(
 @pytest.mark.parametrize(
     "argv",
     [
-        ["review", "o/r#1", "--draft-file", "d.json", "--allow-mention", "bob"],
-        ["comment", "o/r#1", "--body-file", "b", "--allow-mention", "bob"],
-        ["reply", "o/r#1", "--to", "gh:ic:abc", "--body-file", "b", "--allow-mention", "bob"],
-        ["approve", "o/r#1", "--body-file", "b", "--allow-mention", "bob"],
+        ["review", "a#1", "--draft-file", "d.json", "--allow-mention", "bob"],
+        ["comment", "a#1", "--body-file", "b", "--allow-mention", "bob"],
+        ["reply", "a#1", "--to", "gh:ic:abc", "--body-file", "b", "--allow-mention", "bob"],
+        ["approve", "a#1", "--body-file", "b", "--allow-mention", "bob"],
     ],
 )
 def test_main_allow_mention_without_tty_exits_usage(
@@ -293,19 +289,19 @@ def test_main_allow_mention_without_tty_exits_usage(
 def test_main_override_escalation_yes_human_actor_is_accepted(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    argv = ["comment", "o/r#1", "--body-file", "b", "--override-escalation=forgectl", "--yes"]
+    argv = ["comment", "a#1", "--body-file", "b", "--override-escalation=forgectl", "--yes"]
     argv += ["--actor", "human:x"]
     code, doc = _main(monkeypatch, capsys, argv, stdin_tty=False, stderr_tty=False)
-    # passes the actor and flag rules; the missing body file is a later, different usage error
+    # Passes validation; the posting handler then fails on the body file, which does not exist.
     assert code == 2
-    assert doc is not None and "--override-escalation" not in doc["error"]["message"]
+    assert doc is not None and doc["error"]["message"] == "the body file cannot be opened"
 
 
 def test_main_hostile_actor_claims_still_fail_grammar(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     for claim in ("human:", "human:a b", "Human:x", "human:x\n", "admin:x", "human:" + "x" * 65):
-        argv = ["comment", "o/r#1", "--body-file", "b", "--actor", claim]
+        argv = ["comment", "a#1", "--body-file", "b", "--actor", claim]
         code, _ = _main(monkeypatch, capsys, argv, stdin_tty=True, stderr_tty=True)
         assert code == 2, claim
 
@@ -314,7 +310,7 @@ def test_main_stdin_without_isatty_is_not_a_tty(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(sys, "stdin", None)
-    code = main(["comment", "o/r#1", "--body-file", "b", "--allow-mention", "x", "--json"])
+    code = main(["comment", "a#1", "--body-file", "b", "--allow-mention", "x", "--json"])
     assert code == 2
     assert json.loads(capsys.readouterr().out)["error"]["code"] == "usage"
 
@@ -325,7 +321,7 @@ def test_main_closed_stdin_is_not_a_tty(
     closed = io.StringIO()
     closed.close()
     monkeypatch.setattr(sys, "stdin", closed)
-    code = main(["comment", "o/r#1", "--body-file", "b", "--allow-mention", "x", "--json"])
+    code = main(["comment", "a#1", "--body-file", "b", "--allow-mention", "x", "--json"])
     assert code == 2
 
 
@@ -333,20 +329,73 @@ def test_parser_still_builds() -> None:
     assert build_parser() is not None
 
 
-def test_the_tty_default_actor_takes_me_name_from_the_config_in_the_run_context() -> None:
-    import argparse
-    import dataclasses
+# --- the config seam (#5 + #7): `me.name` takes precedence over the OS username ----------------
+
+
+def test_me_name_replaces_the_os_username_for_a_tty_default() -> None:
+    ctx = run(ns(), stdin_tty=True, stderr_tty=True, user="osuser")
+    updated = actor_mod.with_me_name(ctx, "alice")
+    assert (updated.actor, updated.actor_source) == ("human:alice", "tty")
+    assert (updated.stdin_tty, updated.interactive) == (ctx.stdin_tty, ctx.interactive)
+
+
+def test_without_me_name_the_os_username_stays() -> None:
+    ctx = run(ns(), stdin_tty=True, stderr_tty=True, user="osuser")
+    assert actor_mod.with_me_name(ctx, None) == ctx
+
+
+def test_me_name_does_not_touch_a_flag_or_the_auto_default() -> None:
+    flagged = run(ns(actor="human:bob"), stdin_tty=True, stderr_tty=True)
+    assert actor_mod.with_me_name(flagged, "alice") == flagged
+    auto = run(ns(), stdin_tty=False, stderr_tty=False)
+    assert actor_mod.with_me_name(auto, "alice") == auto
+
+
+@pytest.mark.parametrize("bad", ["bad name", "x" * 65, "", "a\nb", "a\ud800"])
+def test_me_name_outside_the_grammar_is_ignored(bad: str) -> None:
+    ctx = run(ns(), stdin_tty=True, stderr_tty=True, user="osuser")
+    assert actor_mod.with_me_name(ctx, bad) == ctx
+
+
+def test_main_uses_the_config_me_name_as_the_tty_actor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text("me:\n  name: alice\n", encoding="utf-8")
+    config.chmod(0o600)
+    seen: list[RunContext] = []
+
+    def handler(args: argparse.Namespace) -> Any:
+        seen.append(args.run)
+        raise RuntimeError("stop")
 
     from pr_comment import cli
-    from pr_comment.actor import RunContext
 
-    run = RunContext("human:os-user", "tty", True, True)
-    args = argparse.Namespace(run=run)
-    cli._use_me_name(args, "carol")  # pyright: ignore[reportPrivateUsage]
-    assert args.run == dataclasses.replace(run, actor="human:carol")
-    assert args.run.audit_fields()["actor"] == "human:carol"
-    assert cli._actor(args) == "human:carol"  # pyright: ignore[reportPrivateUsage]
-    flagged = RunContext("human:x", "flag", True, True)
-    kept = argparse.Namespace(run=flagged)
-    cli._use_me_name(kept, "carol")  # pyright: ignore[reportPrivateUsage]
-    assert kept.run is flagged
+    monkeypatch.setitem(cli.HANDLERS, "comment", handler)
+    monkeypatch.setattr(sys, "stdin", _Stream(True))
+    monkeypatch.setattr(sys, "stderr", _Stream(True))
+    main(["--config", str(config), "comment", "o/r#1", "--body-file", "b", "--json"])
+    assert [(r.actor, r.actor_source) for r in seen] == [("human:alice", "tty")]
+
+
+def test_main_without_me_name_keeps_the_os_username(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    from pr_comment import cli
+
+    seen: list[RunContext] = []
+
+    def handler(args: argparse.Namespace) -> Any:
+        seen.append(args.run)
+        raise RuntimeError("stop")
+
+    monkeypatch.setitem(cli.HANDLERS, "comment", handler)
+    monkeypatch.setattr(cli, "resolve_run", _resolve_with_fake_os_user)
+    monkeypatch.setattr(sys, "stdin", _Stream(True))
+    monkeypatch.setattr(sys, "stderr", _Stream(True))
+    main(["comment", "o/r#1", "--body-file", "b", "--json"])
+    assert [r.actor for r in seen] == ["human:osuser"]
+
+
+def _resolve_with_fake_os_user(args: argparse.Namespace, **kw: Any) -> RunContext:
+    return resolve_run(args, os_user=lambda: "osuser", **kw)

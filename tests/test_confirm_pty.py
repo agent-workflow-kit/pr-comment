@@ -150,7 +150,9 @@ def run_cli(
                 time.sleep(1.0)  # the child is blocked writing a dialog bigger than the pty holds
                 os.write(master, typeahead_midway)
                 typeahead_midway = b""
-            if not acted and PROMPT.encode() in terminal:
+            # The prompt is the last thing written, on a line of its own; a hostile body line that
+            # contains the prompt text (shown as "| Post? [y/N] y") must not trigger the answer.
+            if not acted and terminal.replace(b"\r\n", b"\n").endswith(b"\n" + PROMPT.encode()):
                 acted = True
                 if send is not None:
                     os.kill(pid, send)

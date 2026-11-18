@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 import re
 import unicodedata
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from fractions import Fraction
 
@@ -60,6 +61,19 @@ _MAX_DURATION_LENGTH = 400
 _BRANCH_FORBIDDEN_RE = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]")
 _BRANCH_FORBIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 _SURROGATE_RE = re.compile("[\ud800-\udfff]")
+
+
+# `export --since`: RFC 3339 with an offset (or Z), or a whole number with one unit.
+_RFC3339_RE = re.compile(
+    r"([0-9]{4}-[0-9]{2}-[0-9]{2})[Tt]([0-9]{2}:[0-9]{2}:[0-9]{2})"
+    r"(?:\.([0-9]+))?([Zz]|[+-][0-9]{2}:[0-9]{2})"
+)
+_SINCE_DURATION_RE = re.compile(r"([0-9]{1,12})([smhd])")
+_SINCE_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+_SINCE_MESSAGE = (
+    "invalid --since (RFC 3339 with an offset or Z, such as 2026-01-31T09:00:00Z, "
+    "or a duration of at most 100 years such as 90m, 36h or 7d)"
+)
 
 
 class GrammarError(ValueError):
@@ -232,3 +246,61 @@ def check_forgectl_config(value: object) -> str:
             "invalid forgectl config path (non-empty, no leading '-', no NUL or surrogate)"
         )
     return text
+
+
+def parse_rfc3339(value: object) -> datetime | None:
+    """A strict RFC 3339 time as an aware UTC ``datetime``, or ``None``.
+
+    The offset (or ``Z``) is required, the fraction has one or more digits (kept to microseconds),
+    and ASCII digits only. A leap second, an impossible date or an offset of 24 hours or more is
+    refused (the narrower reading), and so is a time that falls outside years 1 to 9999 in UTC.
+    """
+    if type(value) is not str:
+        return None
+    match = _RFC3339_RE.fullmatch(value)
+    if match is None:
+        return None
+    day, clock, fraction, offset = match.groups()
+    offset = "+00:00" if offset in ("Z", "z") else offset
+    micro = f".{fraction[:6].ljust(6, '0')}" if fraction else ""
+    try:
+        moment = datetime.fromisoformat(f"{day}T{clock}{micro}{offset}")
+        return moment.astimezone(UTC)
+    except (ValueError, OverflowError):
+        return None
+
+
+def _since_seconds(value: object) -> int | None:
+    if type(value) is not str:
+        return None
+    match = _SINCE_DURATION_RE.fullmatch(value)
+    if match is None:
+        return None
+    seconds = int(match[1]) * _SINCE_UNIT_SECONDS[match[2]]
+    return seconds if 0 < seconds <= MAX_TIMEOUT_SECONDS else None
+
+
+def check_since(value: object) -> str:
+    """``export --since``: RFC 3339 with an offset or ``Z``, or ``<n>s|m|h|d`` (at most 100 years).
+
+    A zoneless time, a bare number, a zero duration, decimals, other units and anything with
+    surrounding space are refused. The value comes back unchanged.
+    """
+    if parse_rfc3339(value) is None and _since_seconds(value) is None:
+        raise GrammarError(_SINCE_MESSAGE)
+    assert type(value) is str
+    return value
+
+
+def since_cutoff(value: str, now: datetime) -> datetime:
+    """The UTC instant ``--since`` names: the time itself, or ``now`` minus the duration.
+
+    ``now`` must be aware. A time in the future is allowed (it selects nothing).
+    """
+    moment = parse_rfc3339(value)
+    if moment is not None:
+        return moment
+    seconds = _since_seconds(value)
+    if seconds is None:
+        raise GrammarError(_SINCE_MESSAGE)
+    return now.astimezone(UTC) - timedelta(seconds=seconds)

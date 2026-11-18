@@ -1,0 +1,1538 @@
+== open_fence/draft_body
+-- input (default options)
+{
+  "body": "```\nopen",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+```
+open
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<pre><code>open
+
+&lt;!-- pr-comment:v1 --&gt;
+&lt;!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV --&gt;
+</code></pre>
+
+== open_fence/inline_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "```\nopen",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "severity": "minor",
+      "suggestion": {
+        "lines": [
+          "x = 1"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+**minor**
+
+```
+open
+
+```suggestion
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p><strong>minor</strong></p>
+<pre><code>open
+
+```suggestion
+x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== open_fence/moved_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "```\nopen",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py",
+        "suggestion": {
+          "lines": [
+            "x = 1"
+          ]
+        }
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+```
+open
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>Findings that could not be anchored</h3>
+<p><code>src/a.py:10</code> (at 89abcdef0123) — the commented line changed after this review was drafted</p>
+<pre><code>open
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== html_comment/draft_body
+-- input (default options)
+{
+  "body": "<!-- hidden",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+＜!-- hidden
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<p>＜!-- hidden</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== html_comment/inline_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "<!-- hidden",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "severity": "minor",
+      "suggestion": {
+        "lines": [
+          "x = 1"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+**minor**
+
+＜!-- hidden
+
+```suggestion
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p><strong>minor</strong></p>
+<p>＜!-- hidden</p>
+<pre lang="suggestion"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== html_comment/moved_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "<!-- hidden",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py",
+        "suggestion": {
+          "lines": [
+            "x = 1"
+          ]
+        }
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+＜!-- hidden
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>Findings that could not be anchored</h3>
+<p><code>src/a.py:10</code> (at 89abcdef0123) — the commented line changed after this review was drafted</p>
+<p>＜!-- hidden</p>
+<p><em>Suggestion shown as code: this finding could not be posted inline.</em></p>
+<pre lang="text"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== details/draft_body
+-- input (default options)
+{
+  "body": "<details><summary>s</summary>hidden",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+＜details>＜summary>s＜/summary>hidden
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<p>＜details&gt;＜summary&gt;s＜/summary&gt;hidden</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== details/inline_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "<details><summary>s</summary>hidden",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "severity": "minor",
+      "suggestion": {
+        "lines": [
+          "x = 1"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+**minor**
+
+＜details>＜summary>s＜/summary>hidden
+
+```suggestion
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p><strong>minor</strong></p>
+<p>＜details&gt;＜summary&gt;s＜/summary&gt;hidden</p>
+<pre lang="suggestion"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== details/moved_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "<details><summary>s</summary>hidden",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py",
+        "suggestion": {
+          "lines": [
+            "x = 1"
+          ]
+        }
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+＜details>＜summary>s＜/summary>hidden
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>Findings that could not be anchored</h3>
+<p><code>src/a.py:10</code> (at 89abcdef0123) — the commented line changed after this review was drafted</p>
+<p>＜details&gt;＜summary&gt;s＜/summary&gt;hidden</p>
+<p><em>Suggestion shown as code: this finding could not be posted inline.</em></p>
+<pre lang="text"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== image/draft_body
+-- input (default options)
+{
+  "body": "![](https://t.example/pic)",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+！[](https://t.example/pic)
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<p>！<a href="https://t.example/pic"></a></p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== image/inline_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "![](https://t.example/pic)",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "severity": "minor",
+      "suggestion": {
+        "lines": [
+          "x = 1"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+**minor**
+
+！[](https://t.example/pic)
+
+```suggestion
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p><strong>minor</strong></p>
+<p>！<a href="https://t.example/pic"></a></p>
+<pre lang="suggestion"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== image/moved_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "![](https://t.example/pic)",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py",
+        "suggestion": {
+          "lines": [
+            "x = 1"
+          ]
+        }
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+！[](https://t.example/pic)
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>Findings that could not be anchored</h3>
+<p><code>src/a.py:10</code> (at 89abcdef0123) — the commented line changed after this review was drafted</p>
+<p>！<a href="https://t.example/pic"></a></p>
+<p><em>Suggestion shown as code: this finding could not be posted inline.</em></p>
+<pre lang="text"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== open_mermaid_fence/draft_body
+-- input (default options)
+{
+  "body": "```mermaid\ngraph TD; A-->B",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+```mermaid
+graph TD; A-->B
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<pre lang="mermaid"><code>graph TD; A--&gt;B
+
+&lt;!-- pr-comment:v1 --&gt;
+&lt;!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV --&gt;
+</code></pre>
+
+== open_mermaid_fence/inline_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "```mermaid\ngraph TD; A-->B",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "severity": "minor",
+      "suggestion": {
+        "lines": [
+          "x = 1"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+**minor**
+
+```mermaid
+graph TD; A-->B
+
+```suggestion
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p><strong>minor</strong></p>
+<pre lang="mermaid"><code>graph TD; A--&gt;B
+
+```suggestion
+x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== open_mermaid_fence/moved_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "```mermaid\ngraph TD; A-->B",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py",
+        "suggestion": {
+          "lines": [
+            "x = 1"
+          ]
+        }
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+```mermaid
+graph TD; A-->B
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>Findings that could not be anchored</h3>
+<p><code>src/a.py:10</code> (at 89abcdef0123) — the commented line changed after this review was drafted</p>
+<pre lang="mermaid"><code>graph TD; A--&gt;B
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== open_tilde_mermaid_fence/draft_body
+-- input (default options)
+{
+  "body": "~~~mermaid\ngraph TD; A-->B",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+~~~mermaid
+graph TD; A-->B
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<pre lang="mermaid"><code>graph TD; A--&gt;B
+
+&lt;!-- pr-comment:v1 --&gt;
+&lt;!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV --&gt;
+</code></pre>
+
+== open_tilde_mermaid_fence/inline_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "~~~mermaid\ngraph TD; A-->B",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "severity": "minor",
+      "suggestion": {
+        "lines": [
+          "x = 1"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+**minor**
+
+~~~mermaid
+graph TD; A-->B
+
+```suggestion
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p><strong>minor</strong></p>
+<pre lang="mermaid"><code>graph TD; A--&gt;B
+
+```suggestion
+x = 1
+```
+
+&lt;!-- pr-comment:v1 --&gt;
+&lt;!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV --&gt;
+</code></pre>
+
+== open_tilde_mermaid_fence/moved_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "~~~mermaid\ngraph TD; A-->B",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py",
+        "suggestion": {
+          "lines": [
+            "x = 1"
+          ]
+        }
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+~~~mermaid
+graph TD; A-->B
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>Findings that could not be anchored</h3>
+<p><code>src/a.py:10</code> (at 89abcdef0123) — the commented line changed after this review was drafted</p>
+<pre lang="mermaid"><code>graph TD; A--&gt;B
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+&lt;!-- pr-comment:v1 --&gt;
+&lt;!-- forgectl:dedupe:prc:rv:01ARZ3NDEKTSV4RRFFQ69G5FAV --&gt;
+</code></pre>
+
+== open_quote_and_list/draft_body
+-- input (default options)
+{
+  "body": "> - ```\n>   open",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+> - ```
+>   open
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<blockquote>
+<ul>
+<li>
+<pre><code>open
+</code></pre>
+</li>
+</ul>
+</blockquote>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== open_quote_and_list/inline_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "> - ```\n>   open",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "severity": "minor",
+      "suggestion": {
+        "lines": [
+          "x = 1"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+**minor**
+
+> - ```
+>   open
+
+```suggestion
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p><strong>minor</strong></p>
+<blockquote>
+<ul>
+<li>
+<pre><code>open
+</code></pre>
+</li>
+</ul>
+</blockquote>
+<pre lang="suggestion"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== open_quote_and_list/moved_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "> - ```\n>   open",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py",
+        "suggestion": {
+          "lines": [
+            "x = 1"
+          ]
+        }
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+> - ```
+>   open
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>Findings that could not be anchored</h3>
+<p><code>src/a.py:10</code> (at 89abcdef0123) — the commented line changed after this review was drafted</p>
+<blockquote>
+<ul>
+<li>
+<pre><code>open
+</code></pre>
+</li>
+</ul>
+</blockquote>
+<p><em>Suggestion shown as code: this finding could not be posted inline.</em></p>
+<pre lang="text"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== indented_tag_after_definition/draft_body
+-- input (default options)
+{
+  "body": "[r]: /u\n  <details>x\n  <img src=x>",
+  "findings": []
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+[r]: /u
+  ＜details>x
+  ＜img src=x>
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<p>＜details&gt;x
+＜img src=x&gt;</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== indented_tag_after_definition/inline_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "[r]: /u\n  <details>x\n  <img src=x>",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "severity": "minor",
+      "suggestion": {
+        "lines": [
+          "x = 1"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+**minor**
+
+[r]: /u
+  ＜details>x
+  ＜img src=x>
+
+```suggestion
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p><strong>minor</strong></p>
+<p>＜details&gt;x
+＜img src=x&gt;</p>
+<pre lang="suggestion"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== indented_tag_after_definition/moved_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "[r]: /u\n  <details>x\n  <img src=x>",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py",
+        "suggestion": {
+          "lines": [
+            "x = 1"
+          ]
+        }
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+[r]: /u
+  ＜details>x
+  ＜img src=x>
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>Findings that could not be anchored</h3>
+<p><code>src/a.py:10</code> (at 89abcdef0123) — the commented line changed after this review was drafted</p>
+<p>＜details&gt;x
+＜img src=x&gt;</p>
+<p><em>Suggestion shown as code: this finding could not be posted inline.</em></p>
+<pre lang="text"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== reference_image_split_across_findings
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "[r]: https://t.example/pic",
+      "id": "f1",
+      "line": null,
+      "path": "src/a.py"
+    },
+    {
+      "body": "![t][r]",
+      "id": "f2",
+      "line": null,
+      "path": "src/a.py"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### File-level findings
+
+` src/a.py `
+
+[r]: https://t.example/pic
+
+` src/a.py `
+
+！[t][r]
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>File-level findings</h3>
+<p><code>src/a.py</code></p>
+<p><code>src/a.py</code></p>
+<p>！<a href="https://t.example/pic">t</a></p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== reference_image_split_across_body_and_moved_finding
+-- input (default options)
+{
+  "body": "![t][r]",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "[r]: https://t.example/pic",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py"
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+！[t][r]
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+[r]: https://t.example/pic
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<p>！<a href="https://t.example/pic">t</a></p>
+<h3>Findings that could not be anchored</h3>
+<p><code>src/a.py:10</code> (at 89abcdef0123) — the commented line changed after this review was drafted</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== definition_then_tags_in_two_findings
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "[r]: /u\n  <details>x",
+      "id": "f1",
+      "line": null,
+      "path": "src/a.py"
+    },
+    {
+      "body": "<img src=x>",
+      "id": "f2",
+      "line": null,
+      "path": "src/a.py"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### File-level findings
+
+` src/a.py `
+
+[r]: /u
+  ＜details>x
+
+` src/a.py `
+
+＜img src=x>
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>File-level findings</h3>
+<p><code>src/a.py</code></p>
+<p>＜details&gt;x</p>
+<p><code>src/a.py</code></p>
+<p>＜img src=x&gt;</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== path_with_backticks_and_a_link
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "x",
+      "id": "f1",
+      "line": null,
+      "path": "a`b``c [x](u).py"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### File-level findings
+
+``` a`b``c [x](u).py ```
+
+x
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>File-level findings</h3>
+<p><code>a`b``c [x](u).py</code></p>
+<p>x</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== path_with_bidi_and_zero_width_markers
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "x",
+      "id": "f1",
+      "line": null,
+      "path": "src/\u202ea\u200bb.py"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### File-level findings
+
+` src/<U+202E>a<U+200B>b.py `
+
+x
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>File-level findings</h3>
+<p><code>src/&lt;U+202E&gt;a&lt;U+200B&gt;b.py</code></p>
+<p>x</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== title_with_bold_and_backslash_n
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "Body.",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "severity": "major",
+      "title": "x** \\n *y* [z](u) <b>"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+**major · x\*\* \\n \*y\* \[z\]\(u\) ＜b\>**
+
+Body.
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p><strong>major · x** \n *y* [z](u) ＜b&gt;</strong></p>
+<p>Body.</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== suggestion_stays_applicable_after_a_closed_body
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "```\ncode\n```\n\ntext",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "severity": "minor",
+      "suggestion": {
+        "lines": [
+          "x = 1"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+**minor**
+
+```
+code
+```
+
+text
+
+```suggestion
+x = 1
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p><strong>minor</strong></p>
+<pre><code>code
+</code></pre>
+<p>text</p>
+<pre lang="suggestion"><code>x = 1
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== suggestion_on_gitlab_with_a_range
+-- input ({'host': 'gitlab'})
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "Body.",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "start_line": 8,
+      "suggestion": {
+        "lines": [
+          "a",
+          "@b"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+Body.
+
+```suggestion:-2+0
+a
+@b
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Body.</p>
+<pre lang="suggestion:-2+0"><code>a
+@b
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== degraded_suggestion_kinds
+-- input (default options)
+{
+  "body": "",
+  "findings": [
+    {
+      "body": "a",
+      "id": "f1",
+      "line": 10,
+      "path": "src/a.py",
+      "suggestion": {
+        "lines": [
+          "x\u202ey"
+        ]
+      }
+    },
+    {
+      "body": "b",
+      "id": "f2",
+      "line": 10,
+      "path": "src/a.py",
+      "suggestion": {
+        "lines": [
+          "```",
+          "<img src=x>"
+        ]
+      }
+    },
+    {
+      "body": "c",
+      "id": "f3",
+      "line": 10,
+      "path": "src/a.py",
+      "suggestion": {
+        "lines": [
+          "/ping"
+        ]
+      }
+    },
+    {
+      "body": "d",
+      "id": "f4",
+      "line": 10,
+      "path": "src/a.py",
+      "suggestion": {
+        "lines": [
+          "forgectl:dedupe:x"
+        ]
+      }
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f1 (neutralized_lines=0)
+a
+
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
+x<U+202E>y
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>a</p>
+<p><em>Suggestion shown as code: it cannot be posted as an applicable suggestion safely.</em></p>
+<pre lang="text"><code>x&lt;U+202E&gt;y
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f2 (neutralized_lines=0)
+b
+
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+````text
+```
+＜img src=x>
+````
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>b</p>
+<p><em>Suggestion shown as code: it cannot be posted as an applicable suggestion safely.</em></p>
+<pre lang="text"><code>```
+＜img src=x&gt;
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f3 (neutralized_lines=1)
+c
+
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
+ /ping
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>c</p>
+<p><em>Suggestion shown as code: it cannot be posted as an applicable suggestion safely.</em></p>
+<pre lang="text"><code> /ping
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+-- inline f4 (neutralized_lines=0)
+d
+
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
+forgectl:dedupe-x
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>d</p>
+<p><em>Suggestion shown as code: it cannot be posted as an applicable suggestion safely.</em></p>
+<pre lang="text"><code>forgectl:dedupe-x
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+
+== moved_suggestion_with_a_long_fence
+-- input (default options)
+{
+  "body": "",
+  "findings": [],
+  "unanchored": [
+    {
+      "finding": {
+        "body": "```\nopen",
+        "id": "f1",
+        "line": 10,
+        "path": "src/a.py",
+        "suggestion": {
+          "lines": [
+            "````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````"
+          ]
+        }
+      },
+      "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "reason": "changed"
+    }
+  ]
+}
+-- review (neutralized_lines=0)
+Drafted with AI assistance · posted by `alice` after review · 0123456789ab
+
+---
+
+### Findings that could not be anchored
+
+` src/a.py:10 ` (at 89abcdef0123) — the commented line changed after this review was drafted
+
+```
+open
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``<run split>``
+```
+
+<!-- pr-comment:v1 -->
+-- cmark-gfm
+<p>Drafted with AI assistance · posted by <code>alice</code> after review · 0123456789ab</p>
+<hr />
+<h3>Findings that could not be anchored</h3>
+<p><code>src/a.py:10</code> (at 89abcdef0123) — the commented line changed after this review was drafted</p>
+<pre><code>open
+
+_Suggestion shown as code: this finding could not be posted inline._
+
+```text
+``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``&lt;run split&gt;``
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
