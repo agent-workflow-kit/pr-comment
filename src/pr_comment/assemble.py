@@ -14,10 +14,9 @@ own recomputation agree, and forgectl's ``neutralized_lines`` and ``markers_remo
 comment's finding text with its suggestion and reports why the suggestion was degraded, if it was.
 
 Not here: the dedupe key and the plan hash (``keys.py``; keys hash the step-1 text, not these
-bodies), the log event ``suggestion_degraded`` and
-the ``suggestions_degraded`` list of the plan, which the posting commands write from
-``InlineFinding.degraded`` (TODO(#27)), and the choice of ``host`` per review, which comes from
-forgectl's ``show`` (TODO(#29)).
+bodies), the log event ``suggestion_degraded`` (TODO(#11)) and, in ``plan.py``, the
+``suggestions_degraded`` list of the plan, which is written from ``InlineFinding.degraded``, and
+the choice of ``host`` per review, which is forgectl's ``show`` ``backend``.
 """
 
 from __future__ import annotations

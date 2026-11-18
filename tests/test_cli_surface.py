@@ -790,12 +790,15 @@ def test_expect_plan_allowed_on_posting_commands(
 ) -> None:
     argv = [*MINIMAL[command], "--expect-plan", SHA, "--json"]
     code, doc, _ = _run_json(capsys, argv)
-    # Dispatch reached the (unimplemented) handler: internal, not usage.
-    assert code == 1
-    assert doc["error"]["code"] == "internal"
+    # Dispatch reached the posting handler, which fails on its own inputs (the draft or body
+    # file named here does not exist, or approve lacks its pins): never as an --expect-plan usage
+    # error, and not as an internal error.
+    assert code == 2
+    assert "--expect-plan" not in doc["error"]["message"]
+    assert doc["error"]["code"] in ("usage", "invalid_draft")
 
 
-@pytest.mark.parametrize("command", sorted(MINIMAL))
+@pytest.mark.parametrize("command", NON_POSTING)
 def test_unimplemented_handlers_return_internal_envelope(
     capsys: pytest.CaptureFixture[str],
     golden_json: Callable[[str, Any], None],

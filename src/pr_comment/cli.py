@@ -7,9 +7,11 @@ errors exit 2 ``usage``; a command whose handler is not written yet exits 1 ``in
 from __future__ import annotations
 
 import argparse
+import getpass
 import importlib.metadata
 import logging
 import os
+import re
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -18,9 +20,19 @@ from typing import Any, NoReturn, cast
 from . import __version__, grammars
 from .config import ConfigError, load_config
 from .errors import sanitize
-from .gateway import ForgectlInterrupted
+from .gateway import ForgectlInterrupted, ProcessGateway, ToolMissing
 from .grammars import MAX_DECISION_IDS, MAX_THREADS
+from .lower import LowerFailure, tool_missing_outcome
 from .output import LOG, PROG, Outcome, check_outcome, error_outcome, internal_outcome, render
+from .prepare import (
+    Env,
+    Prepared,
+    Request,
+    RunFailure,
+    check_binding,
+    dry_run_outcome,
+    prepare,
+)
 
 DESCRIPTION = "Posts reviews, replies and comments to PRs, safely and with attribution."
 
@@ -419,23 +431,105 @@ def _not_implemented(args: argparse.Namespace) -> Outcome:
     return error_outcome("internal", f"{args.command} is not implemented yet")
 
 
+_ME_NAME = re.compile(r"[A-Za-z0-9._@-]{1,64}")
+
+
+def _me_name(loaded: Any) -> str:
+    """``me.name`` or the OS user name; ``unknown`` when it does not match the name grammar."""
+    name: str | None = loaded.config.me.name
+    if name is None:
+        try:
+            name = getpass.getuser()
+        except (KeyError, OSError):
+            name = None
+    return name if name is not None and _ME_NAME.fullmatch(name) else "unknown"
+
+
+def _actor(args: argparse.Namespace, me_name: str) -> str:
+    """The actor: ``--actor``, else ``human:<me.name>`` on a TTY and ``auto:unknown`` otherwise.
+
+    TODO(#5): ``actor_source`` and ``stdin_tty``, the interactive-run rule and the human-only flag
+    rules (``--allow-mention``, ``--override-escalation``) belong to the actor issue.
+    """
+    if args.actor is not None:
+        return str(args.actor)
+    return f"human:{me_name}" if sys.stdin.isatty() else "auto:unknown"
+
+
+def _request(args: argparse.Namespace, actor: str) -> Request:
+    return Request(
+        command=args.command,
+        pr=args.pr,
+        actor=actor,
+        decision_ids=tuple(args.decision_id),
+        draft_file=getattr(args, "draft_file", None),
+        body_file=getattr(args, "body_file", None),
+        to=getattr(args, "to", None),
+        approve=bool(getattr(args, "approve", False)),
+        reanchor_to=getattr(args, "reanchor_to", None),
+        expected_head=getattr(args, "expected_head", None),
+        expected_base=getattr(args, "expected_base", None),
+        dedupe_key=getattr(args, "dedupe_key", None),
+        allow_mentions=tuple(getattr(args, "allow_mention", ())),
+        expect_plan=args.expect_plan,
+        override_escalation=tuple(args.override_escalation),
+        interactive=False,  # TODO(#5): stdin and stderr TTYs, a human actor, no --yes, no `-`
+    )
+
+
+def _log_round(record: dict[str, Any]) -> None:
+    """A pre-check round (the ``precheck`` log event). TODO(#11): write it to ``log.jsonl``."""
+    LOG.info("precheck round %s: %s", record["round"], record["result"])
+
+
+def _confirm_and_post(args: argparse.Namespace, prepared: Prepared) -> Outcome:
+    """The seam after the plan: the dialog and the writes. Nothing is sent from here yet.
+
+    TODO(#28): the confirmation dialog and ``confirmation_required``. TODO(#29): the review order's
+    writes. TODO(#30): comment and reply. TODO(#31): approve and ``review --approve``.
+    """
+    del args, prepared
+    return error_outcome(
+        "internal", "posting is not implemented yet: the plan passed its pre-check"
+    )
+
+
+def _posting(args: argparse.Namespace) -> Outcome:
+    """``review``, ``comment``, ``reply`` and ``approve`` up to the plan: usage, reads, the plan,
+    the pre-check rounds, ``--expect-plan`` and ``--dry-run`` (docs/interface.md, Review order
+    steps 1 to 7)."""
+    loaded = args.loaded_config
+    gateway = ProcessGateway.from_config(loaded)
+    me_name = _me_name(loaded)
+    env = Env(
+        gateway=gateway,
+        config=loaded,
+        me_name=me_name,
+        tool_version=_version(),
+        on_round=_log_round,
+    )
+    try:
+        prepared = prepare(_request(args, _actor(args, me_name)), env)
+    except (RunFailure, LowerFailure) as failure:
+        return failure.outcome
+    except ToolMissing as exc:
+        return tool_missing_outcome(exc)
+    refused = check_binding(prepared)
+    if refused is not None:
+        return refused
+    if args.dry_run:
+        return dry_run_outcome(prepared)
+    return _confirm_and_post(args, prepared)
+
+
 # One handler per command path. Later issues replace the entries with real handlers.
-# TODO(#29): review; TODO(#30): comment and reply; TODO(#31): approve and review --approve;
 # TODO(#35): resolve and unresolve; TODO(#15): draft check; TODO(#37): draft new;
 # TODO(#38): export.
 HANDLERS: dict[str, Handler] = {
-    key: _not_implemented
-    for key in (
-        "review",
-        "comment",
-        "reply",
-        "approve",
-        "resolve",
-        "unresolve",
-        "draft check",
-        "draft new",
-        "export",
-    )
+    **dict.fromkeys(("review", "comment", "reply", "approve"), _posting),
+    **dict.fromkeys(
+        ("resolve", "unresolve", "draft check", "draft new", "export"), _not_implemented
+    ),
 }
 
 _VALUE_FLAGS = frozenset(flag for spec in _GLOBAL_FLAGS if spec.takes_value for flag in spec.flags)
@@ -621,7 +715,7 @@ def _load_config_into(args: argparse.Namespace) -> Outcome | None:
     broken config never blocks reading the audit trail (interface.md, Commands).
     TODO(#5): the actor resolution passes ``loaded_config.config.me.name`` to ``_human_default``.
     TODO(#11): write ``loaded_config.warnings`` as ``config_warning`` log lines.
-    TODO(#26) and TODO(#29): callers pass the canonical repo id to ``loaded_config.for_repo``.
+    The posting commands pass the canonical repo id from ``show`` to ``loaded_config.for_repo``.
     TODO(#33): merge ``loaded_config.hooks_for(name, args.hook)`` when running hooks.
     """
     if args.command in ("draft check", "export"):
