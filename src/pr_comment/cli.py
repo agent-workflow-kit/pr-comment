@@ -20,6 +20,7 @@ from .actor import ActorError, resolve_run, stream_is_tty, with_me_name
 from .config import ConfigError, load_config
 from .draft import run_check
 from .errors import sanitize
+from .export import handle_export
 from .files import StateUnsafeError, open_state_dirs
 from .gateway import ForgectlInterrupted
 from .grammars import MAX_DECISION_IDS, MAX_THREADS
@@ -388,8 +389,9 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("--from", action=_StoreOnce, dest="from_draft", metavar="PATH|-")
 
     export = _leaf(sub, "export", "export", "print audit or log records", positional=())
-    # TODO(#38): validate --since (RFC 3339 or a duration such as 7d).
-    export.add_argument("--since", action=_StoreOnce, metavar="TIME")
+    export.add_argument(
+        "--since", action=_StoreOnce, metavar="TIME", type=_checked(grammars.check_since)
+    )
     export.add_argument("--log", action="store_true")
     return parser
 
@@ -430,7 +432,7 @@ def _not_implemented(args: argparse.Namespace) -> Outcome:
 
 # One handler per command path. Later issues replace the entries with real handlers.
 # TODO(#29): review; TODO(#30): comment and reply; TODO(#31): approve and review --approve;
-# TODO(#35): resolve and unresolve; TODO(#37): draft new; TODO(#38): export.
+# TODO(#35): resolve and unresolve; TODO(#37): draft new.
 def _draft_check(args: argparse.Namespace) -> Outcome:
     # TODO(#5): `-` with a TTY stdin exits 2 usage (the TTY rule is not in this base).
     return run_check(args.path)
@@ -447,10 +449,10 @@ HANDLERS: dict[str, Handler] = {
             "resolve",
             "unresolve",
             "draft new",
-            "export",
         )
     },
     "draft check": _draft_check,
+    "export": handle_export,
 }
 
 _VALUE_FLAGS = frozenset(flag for spec in _GLOBAL_FLAGS if spec.takes_value for flag in spec.flags)
@@ -680,6 +682,54 @@ def _load_config_into(args: argparse.Namespace) -> Outcome | None:
     return None
 
 
+def _silence_stdout() -> None:
+    """Point stdout at the null device, so the buffered data Python flushes again at exit does
+    not fail on a closed pipe or a full disk (the Python docs' recipe for ``BrokenPipeError``)."""
+    try:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+    except (AttributeError, OSError, ValueError):  # no real stdout (a test's capture, or closed)
+        pass
+
+
+def _run_stream(stream: Callable[[Callable[[str], None]], None], args: argparse.Namespace) -> int:
+    """Run an outcome's stream to stdout. A reader that stops early (a closed pipe) ends it
+    quietly; any other failure is an ``internal`` error without a traceback for a failed write
+    or read, and with one for anything else. Before the first write, ``--json`` gets the error
+    envelope on stdout like any other failure."""
+    started = False
+
+    def write(text: str) -> None:
+        nonlocal started
+        started = True
+        _write(sys.stdout, text)
+
+    try:
+        stream(write)
+    except BrokenPipeError:
+        _silence_stdout()
+        return 0
+    except Exception as exc:
+        if isinstance(exc, OSError):
+            if started:
+                _silence_stdout()
+            outcome = error_outcome(
+                "internal", f"unexpected {type(exc).__name__}: {exc.strerror or 'I/O error'}"
+            )
+        else:
+            outcome = internal_outcome(exc)
+        stdout, stderr = render(
+            outcome,
+            as_json=bool(args.json) and not started,
+            quiet=args.quiet,
+            verbose=args.verbose,
+        )
+        _write(sys.stderr, stderr)
+        if not started:
+            _write(sys.stdout, stdout)
+        return 1
+    return 0
+
+
 def _main(argv: list[str]) -> int:
     parser = build_parser()
     if len(argv) > MAX_ARGV_TOKENS:  # argparse is quadratic in repeated flags
@@ -697,14 +747,21 @@ def _main(argv: list[str]) -> int:
         validate_args(args)
     except UsageError as exc:
         return _fail_usage(argv, exc.message, exc.usage, exc.code)
+    raw: Outcome | None = None
     try:
-        outcome = _load_config_into(args) or check_outcome(HANDLERS[args.command](args))
+        raw = _load_config_into(args) or HANDLERS[args.command](args)
+        outcome = check_outcome(raw)
         stdout, stderr = render(outcome, as_json=args.json, quiet=args.quiet, verbose=args.verbose)
     except ForgectlInterrupted as exc:  # a read, or a run before any write: no envelope
         return 128 + exc.signum
     except Exception as exc:  # a handler bug must still honor the exit-code and envelope contract
+        close = getattr(raw, "close", None)
+        if callable(close):
+            close()
         outcome = internal_outcome(exc)
         stdout, stderr = render(outcome, as_json=args.json, quiet=args.quiet, verbose=args.verbose)
     _write(sys.stderr, stderr)
     _write(sys.stdout, stdout)
+    if outcome.stream is not None:
+        return _run_stream(outcome.stream, args)
     return outcome.exit_code

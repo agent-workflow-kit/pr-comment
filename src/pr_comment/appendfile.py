@@ -60,7 +60,9 @@ class AppendError(Exception):
         self.written = partial if written is None else written
 
 
-def _refuse_unsafe(fd: int, path: object) -> None:
+def refuse_unsafe(fd: int, path: object) -> None:
+    """Raise ``AppendError`` unless ``fd`` is a regular file owned by the user with one hard link
+    that group and others cannot write. Readers (``export``) use it too."""
     st = os.fstat(fd)
     if not stat.S_ISREG(st.st_mode):
         raise AppendError("not a regular file", path)
@@ -117,7 +119,7 @@ class AppendFile:
         try:
             if created:
                 os.fchmod(fd, 0o600)  # a umask can only narrow the mode; make it exact
-            _refuse_unsafe(fd, path)
+            refuse_unsafe(fd, path)
             dir_fd = os.dup(state_fd)
         except BaseException as exc:
             os.close(fd)
