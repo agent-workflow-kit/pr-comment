@@ -14,6 +14,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,7 @@ from tests.forgectl_harness import (
 )
 
 THREAD = "gh:rt:PRRT_1"
+BAD_POSITION = {"index": 0, "path": "a.py", "line": 3, "side": "right", "start_line": None}
 PINS = [f"--expected-head={HEAD}", "--expected-base=main"]
 
 
@@ -467,7 +469,7 @@ def test_each_error_is_printed_as_forgectls_envelope_with_its_exit_code(
         ("approve", fail("approve", "escalated", "m", hook="h", hook_stderr=""), "escalated_hooks"),
         (
             "comment",
-            fail("comment", "invalid_position", "m", details={"invalid": []}),
+            fail("comment", "invalid_position", "m", details={"invalid": [BAD_POSITION]}),
             "cannot fail",
         ),
         ("comment", fail("comment", "not_found", "bad\x1b[31m"), "marker"),
@@ -583,6 +585,7 @@ def test_a_write_without_yes_exits_thirteen_and_a_dry_run_needs_none(
         ok("comment", post_doc("comment", ids=["gh:ic:IC_1"])),
         ok("comment", post_doc("comment", dry_run=True)),
     )
+    forgectl.allow_confirmation_blocked = True
     blocked = forgectl.run(argv("comment", "--body-file", "-"), stdin=b"hello")
     assert blocked.returncode == 13
     assert out(blocked)["error"]["code"] == "confirmation_required"
@@ -599,6 +602,7 @@ def test_a_thread_already_in_the_requested_state_needs_no_confirmation(
         ok("resolve", resolve_doc("resolve", THREAD, changed=False)),
         ok("resolve", resolve_doc("resolve", THREAD)),
     )
+    forgectl.allow_confirmation_blocked = True
     assert forgectl.run(argv("resolve", f"--thread={THREAD}")).returncode == 0
     assert forgectl.run(argv("resolve", f"--thread={THREAD}")).returncode == 13
 
@@ -612,9 +616,399 @@ def test_a_refusal_before_confirmation_wins_over_confirmation(forgectl: FakeForg
 def test_a_veto_without_yes_is_confirmation_required_because_hooks_follow_confirmation(
     forgectl: FakeForgectl,
 ) -> None:
+    forgectl.allow_confirmation_blocked = True
     forgectl.script(fail("comment", "vetoed", "m", hook="pre-post", hook_stderr=""))
     proc = forgectl.run(argv("comment", "--body-file", "-"), stdin=b"x")
     assert proc.returncode == 13 and out(proc)["error"]["code"] == "confirmation_required"
+
+
+# --- when in the post order an error happens ------------------------------------------------------
+
+REVIEW_CALL = argv("review", "--file", "-", *PINS)
+REVIEW_STDIN = b'{"event":"comment","body":"hello"}'
+GITLAB_REVIEW = argv("review", "--file", "-", *PINS, pr=GITLAB_PR)
+COMMENT_CALL = argv("comment", "--body-file", "-")
+LANDED = {"landed": {"ids": ["gh:ic:X"], "thread_ids": []}, "failed": "approve"}
+
+WRITE_TIME = [
+    (REVIEW_CALL, REVIEW_STDIN, refuse("review", "pending_review_exists")),
+    (
+        REVIEW_CALL,
+        REVIEW_STDIN,
+        refuse("review", "stale_head", details={"head_sha": OTHER_HEAD}, phase="write"),
+    ),
+    (
+        GITLAB_REVIEW,
+        REVIEW_STDIN,
+        refuse("review", "drafts_present", details={"count": 1}, phase="write"),
+    ),
+    (COMMENT_CALL, b"x", fail("comment", "host_rejected", details={"status": 422})),
+    (COMMENT_CALL, b"x", fail("comment", "permission_denied")),
+    (COMMENT_CALL, b"x", fail("comment", "rate_limited", retry_after=3)),
+    (COMMENT_CALL, b"x", fail("comment", "auth_required")),
+    (COMMENT_CALL, b"x", fail("comment", "network_error")),
+    (COMMENT_CALL, b"x", fail("comment", "upstream_error")),
+    (COMMENT_CALL, b"x", fail("comment", "audit_unavailable")),
+    (COMMENT_CALL, b"x", fail("comment", "quick_action_ran", details={"ids": ["gh:ic:X"]})),
+    (REVIEW_CALL, REVIEW_STDIN, fail("review", "outcome_partial", details=LANDED)),
+    (REVIEW_CALL, REVIEW_STDIN, fail("review", "approved_stale_head", details={"ids": ["gh:r:R"]})),
+    (argv("resolve", f"--thread={THREAD}"), b"", fail("resolve", "network_error")),
+]
+
+
+@pytest.mark.parametrize(
+    ("call", "stdin", "step"),
+    WRITE_TIME,
+    ids=[
+        f"{s['outcome']['error'].get('reason') or s['outcome']['error']['code']}-{i}"
+        for i, (_, _, s) in enumerate(WRITE_TIME)
+    ],
+)
+def test_an_error_that_happens_after_confirmation_is_exit_thirteen_without_yes(
+    forgectl: FakeForgectl, call: list[str], stdin: bytes, step: dict[str, Any]
+) -> None:
+    forgectl.allow_confirmation_blocked = True
+    forgectl.script(step)
+    proc = forgectl.run(call, stdin=stdin)
+    assert proc.returncode == 13 and out(proc)["error"]["code"] == "confirmation_required"
+    assert forgectl.calls()[0].confirmation_blocked
+    # with --yes the scripted error is what the run ends in
+    forgectl.script(step)
+    forgectl.allow_unused_steps = False
+    yes = forgectl.run([*call, "--yes"], stdin=stdin)
+    assert yes.returncode == ff.EXIT_BY_CODE[step["outcome"]["error"]["code"]], yes.stderr
+
+
+@pytest.mark.parametrize(
+    ("call", "stdin", "step"),
+    [
+        (REVIEW_CALL, REVIEW_STDIN, refuse("review", "not_open", details={"state": "closed"})),
+        (
+            REVIEW_CALL,
+            REVIEW_STDIN,
+            refuse("review", "stale_head", details={"head_sha": OTHER_HEAD}),
+        ),
+        (
+            REVIEW_CALL,
+            REVIEW_STDIN,
+            refuse("review", "self_approval", details={"basis": "authenticated"}),
+        ),
+        (REVIEW_CALL, REVIEW_STDIN, refuse("review", "stale_base", details={"base_ref": "dev"})),
+        (
+            REVIEW_CALL,
+            REVIEW_STDIN,
+            fail("review", "invalid_position", details={"invalid": [BAD_POSITION]}),
+        ),
+        (GITLAB_REVIEW, REVIEW_STDIN, refuse("review", "drafts_present", details={"count": 2})),
+        (
+            REVIEW_CALL,
+            REVIEW_STDIN,
+            fail("review", "outcome_partial", details=LANDED, phase="read"),
+        ),
+        (COMMENT_CALL, b"x", fail("comment", "not_found")),
+        (COMMENT_CALL, b"x", fail("comment", "rate_limited", phase="read")),
+    ],
+)
+def test_an_error_before_confirmation_is_the_exit_of_that_error_without_yes(
+    forgectl: FakeForgectl, call: list[str], stdin: bytes, step: dict[str, Any]
+) -> None:
+    forgectl.script(step)
+    proc = forgectl.run(call, stdin=stdin)
+    assert proc.returncode == ff.EXIT_BY_CODE[step["outcome"]["error"]["code"]], proc.stderr
+    assert not forgectl.calls()[0].confirmation_blocked
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        refuse("review", "pending_review_exists"),
+        fail("review", "host_rejected", details={"status": 422}, phase="write"),
+        fail("review", "not_found", phase="write"),  # a read-only code has no write phase
+        fail("review", "outcome_unknown", phase="read"),  # a write-only code has no read phase
+    ],
+)
+def test_a_write_time_error_cannot_happen_in_a_dry_run(
+    forgectl: FakeForgectl, step: dict[str, Any]
+) -> None:
+    forgectl.script(step)
+    proc = forgectl.run([*REVIEW_CALL, "--dry-run"], stdin=REVIEW_STDIN)
+    assert proc.returncode == ff.FAKE_ERROR_EXIT, proc.stderr
+    forgectl.allow_fake_errors = True
+
+
+def test_a_host_failure_in_a_dry_run_is_a_read_failure(forgectl: FakeForgectl) -> None:
+    forgectl.script(fail("review", "host_rejected", details={"status": 422}))
+    proc = forgectl.run([*REVIEW_CALL, "--dry-run"], stdin=REVIEW_STDIN)
+    assert proc.returncode == 12
+
+
+def test_what_a_blocked_write_would_have_said_or_waited_for_is_not_printed(
+    forgectl: FakeForgectl,
+) -> None:
+    forgectl.allow_confirmation_blocked = True
+    step = fail(
+        "comment",
+        "host_rejected",
+        details={"status": 422},
+        stderr_lines=["forgectl: warning: slow host"],
+        delay=5,
+    )
+    forgectl.script(step)
+    started = time.monotonic()
+    proc = forgectl.run(COMMENT_CALL, stdin=b"x")
+    assert proc.returncode == 13 and b"warning" not in proc.stderr
+    assert time.monotonic() - started < 4
+
+
+@pytest.mark.parametrize("phase", ["after_write_attempt", "after_outcome"])
+def test_a_hang_after_the_write_cannot_follow_an_outcome_before_confirmation(
+    forgectl: FakeForgectl, phase: str
+) -> None:
+    forgectl.script(fail("comment", "not_found", hang={"phase": phase, "seconds": 0.05}))
+    proc = forgectl.run([*COMMENT_CALL, "--yes"], stdin=b"x")
+    assert proc.returncode == ff.FAKE_ERROR_EXIT and b"before confirmation" in proc.stderr
+    forgectl.script(
+        ok(
+            "comment",
+            post_doc("comment", already_posted=True, ids=["gh:ic:IC_9"]),
+            hang={"phase": phase, "seconds": 0.05},
+        )
+    )
+    proc = forgectl.run([*COMMENT_CALL, "--dedupe-key=k", "--yes"], stdin=b"x")
+    assert proc.returncode == ff.FAKE_ERROR_EXIT and b"before confirmation" in proc.stderr
+    forgectl.allow_fake_errors = True
+
+
+def test_the_error_phases_are_the_post_orders(forgectl: FakeForgectl) -> None:
+    assert ff.error_phases("show", "rate_limited", None) == {"read"}
+    assert ff.error_phases("comment", "vetoed", None) == {"write"}
+    assert ff.error_phases("review", "refused", "pending_review_exists") == {"write"}
+    assert ff.error_phases("review", "refused", "not_open") == {"read"}
+    assert ff.error_phases("review", "refused", "stale_head") == {"read", "write"}
+    assert ff.error_phases("review", "host_rejected", None) == {"read", "write"}
+
+
+# --- a resolve of something that is not a thread -------------------------------------------------
+
+
+@pytest.mark.parametrize("flags", [["--yes"], []])
+@pytest.mark.parametrize("thread", ["gh:ic:abc", "gh:rc:abc", "gh:r:abc", "gl:n:12"])
+def test_resolving_what_is_not_a_review_thread_is_refused_before_any_host_read(
+    forgectl: FakeForgectl, thread: str, flags: list[str]
+) -> None:
+    proc = forgectl.run(argv("unresolve", f"--thread={thread}", *flags))
+    assert proc.returncode == 20
+    error = out(proc)["error"]
+    assert (error["reason"], error["message"]) == (
+        "not_resolvable",
+        "only review threads (gh:rt: and gl:d: ids) can be unresolved",
+    )
+    assert forgectl.calls()[0].step is None  # no scripted host answer was taken
+
+
+def test_a_dry_run_of_resolving_what_is_not_a_thread_says_would_refuse(
+    forgectl: FakeForgectl,
+) -> None:
+    proc = forgectl.run(argv("resolve", "--thread=gh:ic:abc", "--dry-run"))
+    printed = out(proc)
+    assert proc.returncode == 20 and printed["resolved"] is None and printed["changed"] is False
+    assert printed["would_refuse"]["reason"] == "not_resolvable"
+    assert ff.schema_errors("cli/resolve.json", printed) == []
+
+
+def test_a_review_thread_and_a_gitlab_discussion_are_resolvable(forgectl: FakeForgectl) -> None:
+    gl = "gl:d:" + "0f" * 20
+    forgectl.script(
+        ok("resolve", resolve_doc("resolve", THREAD)),
+        ok("unresolve", resolve_doc("unresolve", gl, GITLAB_PR)),
+    )
+    assert forgectl.run(argv("resolve", f"--thread={THREAD}", "--yes")).returncode == 0
+    call = argv("unresolve", f"--thread={gl}", "--yes", pr=GITLAB_PR)
+    assert forgectl.run(call).returncode == 0
+
+
+# --- the errors a command can end in --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("call", "stdin", "step", "why"),
+    [
+        (["whoami", "--json"], b"", fail("whoami", "auth_required"), "cannot fail with code"),
+        (["whoami", "--json"], b"", fail("whoami", "not_found"), "cannot fail with code"),
+        (COMMENT_CALL, b"x", fail("comment", "outcome_partial", details=LANDED), "cannot fail"),
+        (
+            argv("resolve", f"--thread={THREAD}"),
+            b"",
+            fail("resolve", "quick_action_ran", details={"ids": []}),
+            "cannot fail",
+        ),
+        (
+            argv("resolve", f"--thread={THREAD}"),
+            b"",
+            fail("resolve", "approved_stale_head", details={"ids": []}),
+            "cannot fail",
+        ),
+        (
+            argv("approve", *PINS),
+            b"",
+            fail("approve", "invalid_position", details={"invalid": [BAD_POSITION]}),
+            "cannot fail",
+        ),
+        (
+            REVIEW_CALL,
+            REVIEW_STDIN,
+            refuse("review", "drafts_present", details={"count": 1}),
+            "only a gitlab refusal",
+        ),
+        (
+            GITLAB_REVIEW,
+            REVIEW_STDIN,
+            refuse("review", "pending_review_exists"),
+            "only a github refusal",
+        ),
+        (
+            argv("approve", *PINS),
+            b"",
+            refuse("approve", "drafts_present", details={"count": 1}),
+            "cannot refuse",
+        ),
+    ],
+)
+def test_an_error_a_command_cannot_end_in_is_a_fake_error(
+    forgectl: FakeForgectl, call: list[str], stdin: bytes, step: dict[str, Any], why: str
+) -> None:
+    forgectl.script(step)
+    proc = forgectl.run([*call, "--yes"] if call[0] != "whoami" else call, stdin=stdin)
+    assert proc.returncode == ff.FAKE_ERROR_EXIT and why in proc.stderr.decode(), proc.stderr
+    forgectl.allow_fake_errors = True
+
+
+def test_the_errors_a_command_can_end_in_are_accepted(forgectl: FakeForgectl) -> None:
+    forgectl.script(
+        refuse("review", "drafts_present", details={"count": 1}),
+        refuse("review", "pending_review_exists"),
+        fail("approve", "outcome_partial", details=LANDED),
+        fail("review", "invalid_position", details={"invalid": [BAD_POSITION]}),
+        fail("comment", "quick_action_ran", details={"ids": ["gh:ic:X"]}),
+    )
+    assert forgectl.run([*GITLAB_REVIEW, "--yes"], stdin=REVIEW_STDIN).returncode == 20
+    assert forgectl.run([*REVIEW_CALL, "--yes"], stdin=REVIEW_STDIN).returncode == 20
+    assert forgectl.run(argv("approve", "--yes", *PINS)).returncode == 12
+    assert forgectl.run([*REVIEW_CALL, "--yes"], stdin=REVIEW_STDIN).returncode == 12
+    assert forgectl.run([*COMMENT_CALL, "--yes"], stdin=b"x").returncode == 12
+
+
+# --- what a result reports ------------------------------------------------------------------------
+
+
+def _bad_resolve(**changes: Any) -> dict[str, Any]:
+    return {**resolve_doc("resolve", THREAD), **changes}
+
+
+@pytest.mark.parametrize(
+    ("command", "call", "stdin", "document"),
+    [
+        ("comment", COMMENT_CALL, b"x", post_doc("comment", ids=["gh:ic:A", "gh:ic:B"])),
+        ("comment", COMMENT_CALL, b"x", post_doc("comment")),
+        (
+            "comment",
+            COMMENT_CALL,
+            b"x",
+            post_doc("comment", ids=["gh:ic:A"], thread_ids=["gh:rt:T"]),
+        ),
+        ("comment", COMMENT_CALL, b"x", post_doc("comment", ids=["gh:ic:A"], review_id="gh:r:R")),
+        (
+            "reply",
+            argv("reply", "--to=gh:rt:T_1", "--body-file", "-"),
+            b"x",
+            post_doc("reply", ids=["gh:rc:A"], review_id="gh:r:R"),
+        ),
+        (
+            "reply",
+            argv("reply", "--to=gh:rt:T_1", "--body-file", "-"),
+            b"x",
+            post_doc("reply", ids=["gh:rc:A", "gh:rc:B"]),
+        ),
+        (
+            "comment",
+            [*COMMENT_CALL, "--dry-run"],
+            b"x",
+            post_doc("comment", dry_run=True, ids=["gh:ic:A"]),
+        ),
+        (
+            "review",
+            [*REVIEW_CALL, "--dry-run"],
+            REVIEW_STDIN,
+            post_doc("review", dry_run=True, review_id="gh:r:R"),
+        ),
+        ("resolve", argv("resolve", f"--thread={THREAD}"), b"", _bad_resolve(resolved=False)),
+        ("resolve", argv("resolve", f"--thread={THREAD}"), b"", _bad_resolve(resolved=None)),
+        (
+            "resolve",
+            argv("resolve", f"--thread={THREAD}"),
+            b"",
+            _bad_resolve(
+                would_refuse={"reason": "not_resolvable", "message": "m", "details": None}
+            ),
+        ),
+        ("show", argv("show"), b"", show_doc(number=8)),
+        ("show", argv("show"), b"", show_doc(repo="github.com/acme/other")),
+        ("files", argv("files"), b"", {**files_doc(), "changed_files": 2}),
+        ("files", argv("files"), b"", {**files_doc(), "files_complete": False}),
+    ],
+    ids=[
+        "comment-two-ids",
+        "comment-no-id",
+        "comment-thread",
+        "comment-review-id",
+        "reply-review-id",
+        "reply-two-ids",
+        "dry-comment-ids",
+        "dry-review-id",
+        "resolve-wrong-state",
+        "resolve-null-state",
+        "resolve-would-refuse-on-success",
+        "show-number",
+        "show-repo",
+        "files-count",
+        "files-complete",
+    ],
+)
+def test_a_result_that_breaks_what_the_command_reports_is_a_fake_error(
+    forgectl: FakeForgectl, command: str, call: list[str], stdin: bytes, document: dict[str, Any]
+) -> None:
+    forgectl.script(ok(command, document))
+    if command in ff.WRITE_COMMANDS and "--dry-run" not in call:
+        call = [*call, "--yes"]
+    proc = forgectl.run(call, stdin=stdin)
+    assert proc.returncode == ff.FAKE_ERROR_EXIT, proc.stderr
+    forgectl.allow_fake_errors = True
+
+
+def test_a_gitlab_files_list_may_be_complete_with_an_unknown_count(forgectl: FakeForgectl) -> None:
+    pr = GITLAB_PR
+    forgectl.script(ok("files", {**files_doc(pr), "changed_files": None}))
+    assert forgectl.run(argv("files", pr=pr)).returncode == 0
+
+
+def test_a_dry_run_refusal_after_the_pr_read_reports_the_head_it_read(
+    forgectl: FakeForgectl,
+) -> None:
+    forgectl.script(
+        refuse("approve", "not_open", details={"state": "closed"}),
+        refuse("approve", "stale_head", details={"head_sha": OTHER_HEAD}),
+        refuse("approve", "self_approval", details={"basis": "authenticated"}),
+        refuse("approve", "stale_base", details={"base_ref": "dev"}),
+        refuse("approve", "not_open", details={"state": "closed"}, fields={"head_sha": OTHER_HEAD}),
+    )
+    heads = [out(forgectl.run(argv("approve", "--dry-run", *PINS)))["head_sha"] for _ in range(5)]
+    assert heads == [HEAD, OTHER_HEAD, HEAD, HEAD, OTHER_HEAD]
+
+
+def test_a_gitlab_dry_run_drafts_refusal_reports_the_pinned_head(forgectl: FakeForgectl) -> None:
+    forgectl.script(refuse("review", "drafts_present", details={"count": 1}))
+    proc = forgectl.run([*GITLAB_REVIEW, "--dry-run"], stdin=REVIEW_STDIN)
+    assert out(proc)["head_sha"] == HEAD
 
 
 # --- the post input, as forgectl reads it --------------------------------------------------------
@@ -914,6 +1308,15 @@ def test_the_launcher_needs_the_interpreter_variable() -> None:
     )
     assert proc.returncode != 0 and b"FAKE_FORGECTL_PYTHON" in proc.stderr
     assert sys.executable  # the harness sets it from the interpreter that runs the tests
+
+
+def test_the_launcher_needs_the_scenario_directory_variable() -> None:
+    env = {"FAKE_FORGECTL_PYTHON": sys.executable, "PATH": str(FAKEBIN)}
+    proc = subprocess.run(
+        [str(FAKEBIN / "forgectl"), "--version"], capture_output=True, env=env, check=False
+    )
+    assert proc.returncode != 0 and b"FAKE_FORGECTL_DIR" in proc.stderr
+    assert b"Traceback" not in proc.stderr and b"KeyError" not in proc.stderr
 
 
 def test_base_sha_is_not_a_head() -> None:

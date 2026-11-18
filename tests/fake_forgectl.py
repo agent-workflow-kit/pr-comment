@@ -50,6 +50,7 @@ import signal
 import stat
 import sys
 import time
+import traceback
 import unicodedata
 from argparse import Namespace
 from collections.abc import Mapping
@@ -220,16 +221,9 @@ _HOST_READ_CODES = frozenset(
         "internal",
     }
 )
-_POST_CODES = frozenset(
-    {
-        "vetoed",
-        "escalated",
-        "outcome_unknown",
-        "outcome_partial",
-        "quick_action_ran",
-        "audit_unavailable",
-        "audit_failed",
-    }
+# hooks, the audit file and a signal after the write was attempted (review.py, post.py, resolve.py)
+_WRITE_CODES = frozenset(
+    {"vetoed", "escalated", "outcome_unknown", "audit_unavailable", "audit_failed"}
 )
 ALLOWED_CODES: dict[str, frozenset[str]] = {
     "show": _HOST_READ_CODES,
@@ -237,15 +231,23 @@ ALLOWED_CODES: dict[str, frozenset[str]] = {
     "comments": _HOST_READ_CODES,
     "diff": _HOST_READ_CODES,
     "compare": _HOST_READ_CODES,
-    "whoami": _HOST_READ_CODES,  # partial_results is a `partial` outcome, not an error
-    "comment": _HOST_READ_CODES | _POST_CODES,
-    "reply": _HOST_READ_CODES | _POST_CODES,
-    "resolve": _HOST_READ_CODES | _POST_CODES,
-    "unresolve": _HOST_READ_CODES | _POST_CODES,
-    "review": _HOST_READ_CODES | _POST_CODES | {"invalid_position", "approved_stale_head"},
-    "approve": _HOST_READ_CODES | _POST_CODES | {"approved_stale_head"},
+    # a failing host is an entry of `errors` under exit 12 partial_results, never a bare envelope
+    # (listing.py `whoami`, hosts.py `identity`); only an unexpected failure is `internal`
+    "whoami": frozenset({"internal"}),
+    # quick_action_ran: post.py (`_outcome`) and review.py (`_post_note`, `_send_gitlab`) only
+    "comment": _HOST_READ_CODES | _WRITE_CODES | {"quick_action_ran"},
+    "reply": _HOST_READ_CODES | _WRITE_CODES | {"quick_action_ran"},
+    "resolve": _HOST_READ_CODES | _WRITE_CODES,
+    "unresolve": _HOST_READ_CODES | _WRITE_CODES,
+    # outcome_partial, invalid_position and approved_stale_head: review.py only (`approve` is the
+    # same run); positions.py raises invalid_position, which only inline comments (review) have
+    "review": _HOST_READ_CODES
+    | _WRITE_CODES
+    | {"quick_action_ran", "outcome_partial", "invalid_position", "approved_stale_head"},
+    "approve": _HOST_READ_CODES
+    | _WRITE_CODES
+    | {"quick_action_ran", "outcome_partial", "approved_stale_head"},
 }
-_NOT_REVIEW = {"comment", "reply", "resolve", "unresolve", "show", "files", "comments", "whoami"}
 ALLOWED_REASONS: dict[str, frozenset[str]] = {
     "show": frozenset(),
     "files": frozenset(),
@@ -257,6 +259,8 @@ ALLOWED_REASONS: dict[str, frozenset[str]] = {
     "reply": frozenset(),
     "resolve": frozenset({"not_resolvable"}),
     "unresolve": frozenset({"not_resolvable"}),
+    # drafts_present is GitLab review only and pending_review_exists GitHub review and approve
+    # only (see BACKEND_REASONS); the rest are the read-time checks of review.py `_read`
     "review": frozenset(
         {
             "stale_head",
@@ -272,8 +276,22 @@ ALLOWED_REASONS: dict[str, frozenset[str]] = {
         {"stale_head", "stale_base", "not_open", "self_approval", "pending_review_exists"}
     ),
 }
-# These happen only after confirmation: a hook, or the write itself.
-POST_CONFIRMATION_CODES = frozenset(
+# (backend, commands) a reason is tied to: review.py (drafts are GitLab's: step 5 and
+# `_post_drafts`)
+# and backends/github_review.py (`pending_review_exists` is a 422 of the review POST).
+BACKEND_REASONS: dict[str, tuple[str, frozenset[str]]] = {
+    "drafts_present": ("gitlab", frozenset({"review"})),
+    "pending_review_exists": ("github", frozenset({"review", "approve"})),
+}
+
+# When an error of a write command happens relative to confirmation (forgectl interface, Post
+# order: ... 4 dedupe, 6 confirmation, 7 hooks, 9 the write). A read or a refusal of the checks
+# before step 6 is "read": without --yes the run still ends with it. Anything after confirmation is
+# "write": without --yes the run ends at exit 13 first, and a dry run never gets there.
+_READ_ONLY_CODES = frozenset(
+    {"not_found", "tool_missing", "unsupported_host_version", "invalid_position"}
+)
+_WRITE_ONLY_CODES = frozenset(
     {
         "vetoed",
         "escalated",
@@ -283,6 +301,42 @@ POST_CONFIRMATION_CODES = frozenset(
         "outcome_unknown",
     }
 )
+_READ_ONLY_REASONS = frozenset(
+    {"stale_base", "not_open", "self_approval", "too_large", "not_resolvable", "no_head_match"}
+)
+_WRITE_ONLY_REASONS = frozenset({"pending_review_exists"})  # the 422 of the review POST
+# either, default read: stale_head and drafts_present happen at the read (the 409 of the
+# approval and a draft that appeared during the publish are the write-time ones). Every other
+# code that is not listed above (a host failure, audit_unavailable, outcome_partial) is either,
+# default write: a read before confirmation can fail the same way, and so can the write (the
+# audit file is checked first and appended to again at `attempted`; outcome_partial is a GitHub
+# dedupe hit whose state step is missing, at step 4 of review.py, or a state step that failed after
+# the text landed).
+_EITHER_READ_FIRST = frozenset({"stale_head", "drafts_present", "wrong_host_response", "internal"})
+_BOTH = frozenset({"read", "write"})
+
+
+def error_phases(command: str, code: str, reason: str | None) -> frozenset[str]:
+    """The phases ("read": before confirmation, "write": after it) an error of ``command`` can
+    happen in."""
+    if command not in WRITE_COMMANDS:
+        return frozenset({"read"})
+    if code == "refused":
+        if reason in _READ_ONLY_REASONS:
+            return frozenset({"read"})
+        if reason in _WRITE_ONLY_REASONS:
+            return frozenset({"write"})
+        return _BOTH
+    if code in _READ_ONLY_CODES:
+        return frozenset({"read"})
+    if code in _WRITE_ONLY_CODES:
+        return frozenset({"write"})
+    return _BOTH
+
+
+def _default_phase(code: str, reason: str | None) -> str:
+    key = reason if code == "refused" else code
+    return "read" if key in _EITHER_READ_FIRST else "write"
 
 
 class Fail(Exception):
@@ -298,6 +352,7 @@ class Fail(Exception):
         extra: dict[str, Any] | None = None,
         plan: dict[str, Any] | None = None,
         fields: dict[str, Any] | None = None,
+        phase: str | None = None,
     ) -> None:
         super().__init__(message)
         if code not in EXIT_BY_CODE:
@@ -309,6 +364,7 @@ class Fail(Exception):
         self.extra = extra or {}
         self.plan = plan
         self.fields = fields
+        self.phase = phase  # a scripted error's phase: "read" or "write" (see error_phases)
         self.namespace: Namespace | None = None  # the parsed command line, when it got that far
 
     @property
@@ -1135,6 +1191,11 @@ class Context:
     confirmed: bool  # a write that may proceed past confirmation (--yes), or a dry run
     dry_run: bool
 
+    @property
+    def needs_confirmation(self) -> bool:
+        """A real write with no ``--yes``: it ends at exit 13 unless it ended earlier."""
+        return self.command in WRITE_COMMANDS and not self.dry_run and not self.confirmed
+
 
 def _would_refuse_result(ctx: Context, err: Fail) -> dict[str, Any]:
     """The ``--dry-run`` result for an exit 20 (forgectl: Global flags): the command's output with
@@ -1182,19 +1243,45 @@ def _would_refuse_result(ctx: Context, err: Fail) -> dict[str, Any]:
             result["plan"] = ctx.prep.plan()
     if err.plan and "plan" in result:
         result["plan"].update(err.plan)
+    head = _head_read(ctx, err)
+    if head is not None and "head_sha" in result:
+        result["head_sha"] = head
     if err.fields:
         result.update(err.fields)
     return result
 
 
+# the refusals that come after the PR was read: forgectl's `err.fields` then holds the head it read
+# (review.py `run`, post.py `run`: ``head_sha`` is ``self.head_sha``, set by ``_read``)
+_AFTER_PR_READ = frozenset(
+    {"stale_head", "not_open", "self_approval", "stale_base", "drafts_present"}
+)
+
+
+def _head_read(ctx: Context, err: Fail) -> str | None:
+    """The head a refusal after the PR read knew: ``stale_head`` names it in ``details``; the
+    others follow the stale_head check (``not_open`` precedes it, and a test that needs another
+    head says so in ``fields``), so it is the pinned one."""
+    if err.reason not in _AFTER_PR_READ:
+        return None
+    if err.reason == "stale_head":
+        head = (err.details or {}).get("head_sha")
+        return head if isinstance(head, str) else None
+    return getattr(ctx.args, "expected_head", None)
+
+
 def check_error(ctx: Context, err: Fail, *, scripted: bool = True) -> None:
     """An error must be one forgectl can emit for this command, in its exact shape. A scripted one
     (``scripted``) also names only what the host or a hook decides: the fake itself answers for
-    the command line, the input, the closed host list and confirmation."""
+    the command line, the input, the closed host list and confirmation. An unscripted one (an
+    answer a caller received, see ``judge``) may be any error the call could have ended in: the
+    fake knows the call's argv and input, so an error it computes itself (usage, invalid_pr,
+    body_too_large, unknown_host, confirmation_required with --yes, a dry run or a read) cannot be
+    the answer of a call it accepted."""
     command = ctx.command
-    own = ("usage", "config_invalid", "invalid_pr", "body_too_large", "confirmation_required")
+    own = ("usage", "config_invalid", "invalid_pr", "body_too_large")
     if scripted:
-        if err.code in own[:4]:
+        if err.code in own:
             raise FakeError(
                 f"{err.code} comes from the command line or the input, which the fake checks "
                 "itself; script a host or hook outcome"
@@ -1205,14 +1292,32 @@ def check_error(ctx: Context, err: Fail, *, scripted: bool = True) -> None:
             raise FakeError("partial_results is a `partial` outcome (whoami)")
         if err.reason == "unknown_host":
             raise FakeError("unknown_host is made by the fake from the closed host list")
-    if err.code == "refused":
-        if err.reason not in ALLOWED_REASONS[command] | (
-            frozenset() if scripted else frozenset({"unknown_host"})
-        ):
+    else:
+        refuses = (
+            f"{err.code} is what forgectl answers for a call it refuses; this call passed every "
+            "check that needs no host"
+        )
+        if err.code == "confirmation_required":
+            if not ctx.needs_confirmation:
+                raise FakeError(
+                    "confirmation_required is for a write that is not a dry run and has no --yes"
+                )
+        elif err.code == "config_invalid":
+            if getattr(ctx.args, "config", None) is None:
+                raise FakeError(f"{err.code} needs a --config: " + refuses)
+        elif err.code in own or err.reason == "unknown_host":
+            raise FakeError(refuses)
+    if err.code == "confirmation_required":
+        pass
+    elif err.code == "refused":
+        if err.reason not in ALLOWED_REASONS[command]:
             raise FakeError(f"forgectl {command} cannot refuse with reason {err.reason!r}")
+        _check_backend_reason(ctx, err)
     elif err.code == "partial_results" and command == "whoami" and not scripted:
         pass
-    elif err.code not in ALLOWED_CODES[command] | (frozenset() if scripted else frozenset(own)):
+    elif err.code == "config_invalid" and not scripted:
+        pass
+    elif err.code not in ALLOWED_CODES[command]:
         raise FakeError(f"forgectl {command} cannot fail with code {err.code!r}")
     if err.reason is not None and err.code != "refused":
         raise FakeError("reason is only for code 'refused'")
@@ -1233,7 +1338,11 @@ def check_error(ctx: Context, err: Fail, *, scripted: bool = True) -> None:
         "upstream_error",
         "network_error",
     ):
-        # a read's last retryable failure carries the wait the host asked for, when known
+        # Looser than the 0.55.2 source and tighter than the schema. Source: only rate_limited
+        # carries it (gateway.py `_retry_after`; `TODO(#7)` there for the retried 5xx reads).
+        # Interface (Reliability): every read that failed after its retries (429, 5xx, a network
+        # error) gets "retry_after when known". Schema (cli/error.json): any error may carry it.
+        # The fake allows what the interface says, which the schema also allows.
         raise FakeError("retry_after is only on rate_limited, upstream_error and network_error")
     required = REQUIRED_DETAILS_BY_CODE.get(err.code, ()) + REQUIRED_DETAILS_BY_REASON.get(
         err.reason or "", ()
@@ -1253,13 +1362,57 @@ def check_error(ctx: Context, err: Fail, *, scripted: bool = True) -> None:
     problems = schema_errors("cli/error.json", err.envelope())
     if problems:
         raise FakeError("scripted error violates the pinned error schema: " + "; ".join(problems))
-    # a stale_head refusal in a dry run is a read-time refusal, so is any reason of the table
-    if err.code in POST_CONFIRMATION_CODES and ctx.dry_run:
+    if err.code != "confirmation_required":
+        _check_phase(ctx, err, scripted=scripted)
+
+
+def _check_backend_reason(ctx: Context, err: Fail) -> None:
+    tied = BACKEND_REASONS.get(err.reason or "")
+    if tied is None:
+        return
+    backend, commands = tied
+    if ctx.backend != backend or ctx.command not in commands:
+        raise FakeError(
+            f"{err.reason} is only a {backend} refusal of {' and '.join(sorted(commands))}"
+        )
+
+
+def _check_phase(ctx: Context, err: Fail, *, scripted: bool) -> None:
+    """Where in the post order the error happens must be a place the call reaches: a dry run stops
+    at confirmation, and a real write without ``--yes`` ends there at exit 13 (a scripted error
+    that happens after it is replaced by that exit, an answer a caller received cannot be one)."""
+    phases = error_phases(ctx.command, err.code, err.reason)
+    if scripted and err.phase is not None and err.phase not in phases:
+        raise FakeError(f"{err.reason or err.code} cannot happen in phase {err.phase!r}")
+    if ctx.dry_run and "read" not in phases:
         raise FakeError(f"{err.code} cannot happen in a dry run (no hook runs, nothing is written)")
+    if scripted and err.phase == "write" and ctx.dry_run:
+        raise FakeError("a write-time error cannot happen in a dry run (nothing is written)")
+    if not scripted and ctx.needs_confirmation and "read" not in phases:
+        raise FakeError(
+            f"{err.reason or err.code} happens after confirmation, but this write has no --yes "
+            "and is not a dry run: forgectl ends it at exit 13 (confirmation_required) first"
+        )
+
+
+def error_phase(ctx: Context, err: Fail) -> str:
+    """The phase a scripted error happens in: the only one it can, else the one the script named,
+    else the usual one (a dry run never leaves "read")."""
+    phases = error_phases(ctx.command, err.code, err.reason)
+    if len(phases) == 1:
+        return next(iter(phases))
+    if err.phase is not None:
+        return err.phase
+    return "read" if ctx.dry_run else _default_phase(err.code, err.reason)
 
 
 def check_document(
-    ctx: Context, doc: dict[str, Any], *, partial: bool = False, fill: bool = True
+    ctx: Context,
+    doc: dict[str, Any],
+    *,
+    partial: bool = False,
+    fill: bool = True,
+    refused: bool = False,
 ) -> dict[str, Any]:
     """A result must be one forgectl prints: valid against the pinned schema and consistent with
     the argv and the input. With ``fill``, missing derived fields of a post (the counts and a dry
@@ -1299,6 +1452,8 @@ def check_document(
             raise FakeError(
                 f"scripted text holds U+{ord(bad):04X}, which forgectl prints as a <U+XXXX> marker"
             )
+    if doc.get("would_refuse") is not None and not refused:
+        raise FakeError("would_refuse is printed with exit 20, not with a result that exits 0")
     _check_consistency(ctx, doc, args, partial=partial)
     return doc
 
@@ -1329,6 +1484,11 @@ def _check_consistency(
         want = ctx.backend
         if doc["backend"] != want:
             raise FakeError(f"show: backend is {doc['backend']!r}, the host's is {want!r}")
+        # forgectl builds both from the PR it read (show: ``pr_id = f"{pr.repo}#{pr.number}"``)
+        if doc["pr"] != f"{doc['repo']}#{doc['number']}":
+            raise FakeError(f"show: repo and number are {doc['repo']!r}#{doc['number']}, not pr")
+    if command == "files":
+        _check_files(ctx, doc)
     if command == "compare":
         if doc["from_sha"] != args.from_sha or doc["to_sha"] != args.to_sha:
             raise FakeError("compare: from_sha and to_sha are the ones asked for")
@@ -1342,8 +1502,12 @@ def _check_consistency(
         if doc["dry_run"] and doc["changed"]:
             raise FakeError("a dry run changes nothing: changed is false")
         want = command == "resolve"
-        if doc["resolved"] not in (want, None):
-            raise FakeError(f"{command}: resolved is {doc['resolved']!r}")
+        if doc.get("would_refuse") is not None:
+            # a refusal comes before the thread's state is known (resolve.py `_run`)
+            if doc["resolved"] is not None:
+                raise FakeError(f"{command}: a refusal leaves resolved null")
+        elif doc["resolved"] is not want:
+            raise FakeError(f"{command}: resolved is {doc['resolved']!r}, the state asked for")
         if doc["dry_run"] != ctx.dry_run:
             raise FakeError("dry_run does not match --dry-run")
         return
@@ -1351,10 +1515,36 @@ def _check_consistency(
         _check_post(ctx, doc, args)
 
 
+def _check_files(ctx: Context, doc: dict[str, Any]) -> None:
+    """``files_complete`` and ``changed_files`` agree with the list (schemas/cli/files.json)."""
+    listed, changed = len(doc["files"]), doc["changed_files"]
+    if ctx.backend == "github":
+        # github_diff.py: complete = ended and the list's length equals changed_files
+        if doc["files_complete"] is not (changed is not None and listed == changed):
+            raise FakeError("files: files_complete is true exactly when the list is changed_files")
+    elif doc["files_complete"] and changed is not None and changed != listed:
+        raise FakeError("files: a complete GitLab list is changed_files long, or the count unknown")
+
+
 def _check_post(ctx: Context, doc: dict[str, Any], args: Namespace) -> None:
     command = ctx.command
     if doc["dry_run"] != ctx.dry_run:
         raise FakeError("dry_run does not match --dry-run")
+    # what each command reports (post.py `_out`, review.py `_out`): a comment or reply posts one
+    # note, never a review; a dry run writes nothing, so a dedupe hit's ids are all it can have
+    if (
+        ctx.dry_run
+        and not doc["already_posted"]
+        and (doc["ids"] or doc["thread_ids"] or doc["review_id"] is not None)
+    ):
+        raise FakeError("a dry run writes nothing: ids, thread_ids and review_id are empty")
+    if command in ("comment", "reply"):
+        if doc["review_id"] is not None:
+            raise FakeError(f"{command} posts no review: review_id is null")
+        if not ctx.dry_run and not doc["already_posted"] and len(doc["ids"]) != 1:
+            raise FakeError(f"{command} posts one note: ids has one id")
+        if command == "comment" and doc["thread_ids"]:
+            raise FakeError("comment joins no thread: thread_ids is empty")
     key = getattr(args, "dedupe_key", None)
     prep = ctx.prep
     would_refuse = doc.get("would_refuse")
@@ -1364,8 +1554,13 @@ def _check_post(ctx: Context, doc: dict[str, Any], args: Namespace) -> None:
     for ident in doc["ids"] + doc["thread_ids"] + ([doc["review_id"]] if doc["review_id"] else []):
         if not ident.startswith(prefix):
             raise FakeError(f"id {ident!r} is not a {ctx.backend} id ({prefix}...)")
+    # stricter than interface.md, which does not say it: review.py `_out` sets review_id from the
+    # submitted GitHub review (`outcome.review`) or from a `gh:r:` dedupe hit; the GitLab path
+    # (`_send_gitlab`) submits no review object and no hit starts with `gh:r:`
     if ctx.backend == "gitlab" and doc["review_id"] is not None:
         raise FakeError("a GitLab post has no review_id")
+    # stricter than the interface: GitHub's `_send_github` leaves `Outcome.thread_ids` empty (only
+    # GitLab's `_send_gitlab` fills it from the discussions it read back)
     if ctx.backend == "github" and command in ("review", "approve") and doc["thread_ids"]:
         raise FakeError("a GitHub review reports no thread_ids (a read of `comments` gives them)")
     head = doc["head_sha"]
@@ -1381,11 +1576,17 @@ def _check_post(ctx: Context, doc: dict[str, Any], args: Namespace) -> None:
     if command == "reply" and ctx.backend == "github":
         # GitHub has no thread under a general comment or a review: a reply to `gh:ic:` or `gh:r:`
         # is a new general comment and reports threaded: false; a reply to a review comment or
-        # thread joins its thread
+        # thread joins its thread. Source: backends/github_post.py `find_anchor` (an Anchor that
+        # is not threaded for kinds ic and r, threaded for rt and rc) and post.py `_out`.
         want = args.to.kind in ("rc", "rt")
         if doc["threaded"] is not want:
             raise FakeError(f"reply to {args.to}: threaded is {want} on GitHub")
     if doc["already_posted"]:
+        # stricter than the interface's prose, from review.py `_run` step 4: ``already`` is a
+        # dedupe hit (which needs the key) or a run with no text whose state is already in effect
+        # (``not prep.has_text and not self.state.needed``: an approval with no body, `approve`
+        # without --body-file, or a `review` approve with no body and no comments). post.py has
+        # only the dedupe hit.
         text = prep is not None and prep.sha256 is not None
         stateless = (
             command == "approve"
@@ -1395,6 +1596,10 @@ def _check_post(ctx: Context, doc: dict[str, Any], args: Namespace) -> None:
         if key is None and not stateless:
             raise FakeError("already_posted needs a --dedupe-key (or no text and an approval)")
     if doc["follow_up_done"]:
+        # stricter than the interface's prose, from review.py `_send_gitlab`: only the GitLab path
+        # sets ``follow_up_done = bool(self.hits)``, after the state step (``approve`` or
+        # ``request_changes``) that a dedupe hit left to do; GitHub's missing state step is
+        # `outcome_partial` with nothing sent (`_run`), never a success
         if key is None or ctx.backend != "gitlab" or event not in ("approve", "request_changes"):
             raise FakeError(
                 "follow_up_done: only a GitLab dedupe hit whose approve or request_changes "
@@ -1456,6 +1661,11 @@ def judge(
     try:
         if exit_code == 0:
             check_document(ctx, document, fill=False)
+            if ctx.needs_confirmation and not _nothing_to_write(ctx, document):
+                return [
+                    "a write that is not a dry run and has no --yes ends at exit 13 "
+                    "(confirmation_required), unless there is nothing to write"
+                ]
         elif (
             isinstance(document, dict)
             and "error" in document
@@ -1483,9 +1693,20 @@ def judge(
             if err.code == "refused" and ctx.dry_run and ctx.command in WRITE_COMMANDS:
                 return ["a refusal on a dry run prints the plan with would_refuse, not an envelope"]
         elif exit_code == 20 and ctx.dry_run and ctx.command in WRITE_COMMANDS:
-            check_document(ctx, document, fill=False)
-            if not document.get("would_refuse"):
+            check_document(ctx, document, fill=False, refused=True)
+            refusal = document.get("would_refuse")
+            if not refusal:
                 return ["exit 20 on a dry run carries would_refuse"]
+            check_error(
+                ctx,
+                Fail(
+                    "refused",
+                    refusal.get("message", ""),
+                    reason=refusal.get("reason"),
+                    details=refusal.get("details"),
+                ),
+                scripted=False,
+            )
         elif exit_code == 12 and ctx.command == "whoami":
             check_document(ctx, document, partial=True, fill=False)
         else:
@@ -1698,7 +1919,7 @@ def install_signal_handlers() -> None:
         signal.signal(sig, _on_signal)
 
 
-def _hang(hang: dict[str, Any], rec: Recorder, ctx: Context) -> None:
+def _hang(hang: dict[str, Any], rec: Recorder, ctx: Context, pre_confirmation: bool) -> None:
     """Wait as forgectl does while a host answers slowly. A signal ends the wait as ``Interrupted``;
     a wait that runs out just returns."""
     phase = hang.get("phase", "before_write")
@@ -1712,6 +1933,11 @@ def _hang(hang: dict[str, Any], rec: Recorder, ctx: Context) -> None:
             )
     if phase == "after_outcome" and not (ctx.command in WRITE_COMMANDS and not ctx.dry_run):
         raise FakeError("after_outcome: this call records no outcome")
+    if phase != "before_write" and pre_confirmation and ctx.command in WRITE_COMMANDS:
+        raise FakeError(
+            f"{phase}: the scripted outcome ends before confirmation, so no write was attempted "
+            "and no outcome recorded"
+        )
     if float(hang.get("term_delay", 0)) > 2.0:
         raise FakeError("forgectl ends its children within 2 s of a signal: term_delay <= 2")
     rec.event("hang", phase=phase)
@@ -1812,6 +2038,13 @@ def _prepare(args: Namespace, backend: str, stdin: Any) -> Prepared:
         limit = GITLAB_LIMIT if backend == "gitlab" else GITHUB_COMMENT_LIMIT
         return prepare_body(args.body_file, limit=limit, key=key, stdin=stdin)
     if command in ("resolve", "unresolve"):
+        # resolve.py `_run`: the first check, before the audit file, a host or confirmation; so
+        # it is exit 20 not_resolvable with or without --yes, and a dry run's would_refuse
+        if args.thread.kind not in ("rt", "d"):
+            raise refused(
+                "not_resolvable",
+                f"only review threads (gh:rt: and gl:d: ids) can be {command}d",
+            )
         return Prepared(None, None, 0, None, 0, 0, 0)
     to = args.to if command == "reply" else None
     return prepare_body(args.body_file, limit=limit_for(backend, to), key=key, stdin=stdin)
@@ -1889,6 +2122,7 @@ def _answer(ctx: Context, directory: Path, rec: Recorder, json_mode: bool) -> in
             extra=extra,
             plan=outcome.get("plan"),
             fields=outcome.get("fields"),
+            phase=outcome.get("phase"),
         )
         check_error(ctx, err)
     elif kind in ("ok", "partial"):
@@ -1906,7 +2140,10 @@ def _answer(ctx: Context, directory: Path, rec: Recorder, json_mode: bool) -> in
 
     # confirmation: a write with no --yes and no dry run stops at exit 13, unless it ended earlier
     pre_confirmation = _is_pre_confirmation(ctx, err, document)
-    if command in WRITE_COMMANDS and not ctx.dry_run and not ctx.confirmed and not pre_confirmation:
+    blocked = ctx.needs_confirmation and not pre_confirmation
+    if blocked:
+        # what the scripted run would have said or waited for comes after confirmation
+        stderr_lines = []
         rec.event("confirmation_blocked", scripted=kind)
         err = Fail(
             "confirmation_required",
@@ -1919,7 +2156,7 @@ def _answer(ctx: Context, directory: Path, rec: Recorder, json_mode: bool) -> in
     if hang is not None:
         phase = hang.get("phase", "before_write")
         try:
-            _hang(hang, rec, ctx)
+            _hang(hang, rec, ctx, pre_confirmation)
         except Interrupted as sig:
             delay = float(hang.get("term_delay", 0))
             if delay:
@@ -1936,7 +2173,7 @@ def _answer(ctx: Context, directory: Path, rec: Recorder, json_mode: bool) -> in
                 )
                 document = None
             # after_outcome: the outcome is already recorded; it is printed and is the exit
-    elif "delay" in outcome:
+    elif "delay" in outcome and not blocked:
         time.sleep(float(outcome["delay"]))
     for line in stderr_lines:
         write_line(sys.stderr, line)
@@ -1965,18 +2202,24 @@ def _answer(ctx: Context, directory: Path, rec: Recorder, json_mode: bool) -> in
     return 0
 
 
-def _is_pre_confirmation(ctx: Context, err: Fail | None, doc: dict[str, Any] | None) -> bool:
-    """Whether the scripted outcome happens before forgectl's confirmation step: every refusal
-    and read failure does; a success does only when there is nothing to write (a dedupe hit with
-    no state step left, a thread already in the requested state)."""
-    if ctx.command not in WRITE_COMMANDS:
-        return True
-    if err is not None:
-        return err.code not in POST_CONFIRMATION_CODES
-    assert doc is not None
+def _nothing_to_write(ctx: Context, doc: dict[str, Any]) -> bool:
+    """A success that happens before forgectl's confirmation step: there is nothing to write (a
+    dedupe hit with no state step left, a thread already in the requested state)."""
     if ctx.command in ("resolve", "unresolve"):
         return not doc["changed"]
     return bool(doc["already_posted"]) and not doc["follow_up_done"]
+
+
+def _is_pre_confirmation(ctx: Context, err: Fail | None, doc: dict[str, Any] | None) -> bool:
+    """Whether the scripted outcome happens before forgectl's confirmation step (see
+    ``error_phases``): a read command always; an error in the phase it happens in; a success only
+    when there is nothing to write."""
+    if ctx.command not in WRITE_COMMANDS:
+        return True
+    if err is not None:
+        return error_phase(ctx, err) == "read"
+    assert doc is not None
+    return _nothing_to_write(ctx, doc)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1989,11 +2232,9 @@ def main(argv: list[str] | None = None) -> int:
         argv=argv,
         cwd=os.getcwd(),
         stdin_kind=_stdin_kind(),
-        env={
-            k: v
-            for k, v in os.environ.items()
-            if k in ("HOME", "XDG_CONFIG_HOME", "PATH", "TMPDIR") or k.startswith("PR_COMMENT_")
-        },
+        # the whole child environment, minus the harness's own variables, so a test can check every
+        # value (a body in it, a HOME that is the real one)
+        env={k: v for k, v in os.environ.items() if not k.startswith("FAKE_FORGECTL_")},
         pid=os.getpid(),
     )
     # the handlers forgectl installs: a signal before a write attempt exits 128+N, no envelope
@@ -2009,6 +2250,12 @@ def main(argv: list[str] | None = None) -> int:
         write_line(sys.stderr, f"FAKE-FORGECTL ERROR: {err}")
         rec.event("end", exit=FAKE_ERROR_EXIT, kind="fake_error")
         return FAKE_ERROR_EXIT
+    except Exception:  # a bug of the fake or a malformed scenario: logged, so the fixture fails
+        trace = traceback.format_exc()
+        rec.event("crash", traceback=trace)
+        write_line(sys.stderr, f"FAKE-FORGECTL CRASH: {trace}")
+        rec.event("end", exit=1, kind="crash")
+        return 1
     return code
 
 

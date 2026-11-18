@@ -1719,6 +1719,161 @@
    }
   },
   {
+   "name": "resolve-an-issue-comment-is-not-a-thread",
+   "argv": [
+    "resolve",
+    "--json",
+    "github.com/o/r#1",
+    "--thread=gh:ic:abc",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "only review threads (gh:rt: and gl:d: ids) can be resolved",
+      "reason": "not_resolvable"
+     }
+    },
+    "stderr": "forgectl: error: refused (not_resolvable): only review threads (gh:rt: and gl:d: ids) can be resolved\n"
+   }
+  },
+  {
+   "name": "resolve-an-issue-comment-is-not-a-thread-dry-run",
+   "argv": [
+    "resolve",
+    "--json",
+    "github.com/o/r#1",
+    "--thread=gh:ic:abc",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "pr": "github.com/o/r#1",
+     "action": "resolve",
+     "thread_id": "gh:ic:abc",
+     "resolved": null,
+     "changed": false,
+     "dry_run": true,
+     "would_refuse": {
+      "reason": "not_resolvable",
+      "message": "only review threads (gh:rt: and gl:d: ids) can be resolved",
+      "details": null
+     }
+    },
+    "stderr": "forgectl: error: refused (not_resolvable): only review threads (gh:rt: and gl:d: ids) can be resolved\n"
+   }
+  },
+  {
+   "name": "resolve-a-review-comment-is-not-a-thread-without-yes",
+   "argv": [
+    "resolve",
+    "--json",
+    "github.com/o/r#1",
+    "--thread=gh:rc:abc"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "only review threads (gh:rt: and gl:d: ids) can be resolved",
+      "reason": "not_resolvable"
+     }
+    },
+    "stderr": "forgectl: error: refused (not_resolvable): only review threads (gh:rt: and gl:d: ids) can be resolved\n"
+   }
+  },
+  {
+   "name": "resolve-a-review-is-not-a-thread",
+   "argv": [
+    "resolve",
+    "--json",
+    "github.com/o/r#1",
+    "--thread=gh:r:abc",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "only review threads (gh:rt: and gl:d: ids) can be resolved",
+      "reason": "not_resolvable"
+     }
+    },
+    "stderr": "forgectl: error: refused (not_resolvable): only review threads (gh:rt: and gl:d: ids) can be resolved\n"
+   }
+  },
+  {
+   "name": "unresolve-a-gitlab-note-is-not-a-thread",
+   "argv": [
+    "unresolve",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--thread=gl:n:12",
+    "--yes"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "error": {
+      "code": "refused",
+      "message": "only review threads (gh:rt: and gl:d: ids) can be unresolved",
+      "reason": "not_resolvable"
+     }
+    },
+    "stderr": "forgectl: error: refused (not_resolvable): only review threads (gh:rt: and gl:d: ids) can be unresolved\n"
+   }
+  },
+  {
+   "name": "unresolve-a-gitlab-note-is-not-a-thread-dry-run",
+   "argv": [
+    "unresolve",
+    "--json",
+    "gitlab.com/g/s/r#1",
+    "--thread=gl:n:12",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": ""
+   },
+   "expect": {
+    "exit": 20,
+    "stdout": {
+     "pr": "gitlab.com/g/s/r#1",
+     "action": "unresolve",
+     "thread_id": "gl:n:12",
+     "resolved": null,
+     "changed": false,
+     "dry_run": true,
+     "would_refuse": {
+      "reason": "not_resolvable",
+      "message": "only review threads (gh:rt: and gl:d: ids) can be unresolved",
+      "details": null
+     }
+    },
+    "stderr": "forgectl: error: refused (not_resolvable): only review threads (gh:rt: and gl:d: ids) can be unresolved\n"
+   }
+  },
+  {
    "name": "unknown-host-compare",
    "argv": [
     "compare",

@@ -67,11 +67,6 @@ def _start_of(pid: int) -> str | None:
     return data.rpartition(b")")[2].split()[19].decode()
 
 
-def start_time(pid: int) -> str | None:
-    """The start time (field 22 of ``/proc/<pid>/stat``) of ``pid``, or None when it is gone."""
-    return _start_of(pid)
-
-
 def record(directory: Path, pid: int) -> None:
     """Add a process this test started, a session leader, to ``directory/pids`` right away, so the
     tracker ends exactly it even if the test fails before the process records itself."""

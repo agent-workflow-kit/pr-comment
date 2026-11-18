@@ -76,8 +76,12 @@ def fail(
 ) -> dict[str, Any]:
     """A step: the error envelope of ``code`` (or, for a ``refused`` on a dry run, the plan with
     ``would_refuse``). ``extra`` takes ``retry_after``, ``hook``, ``hook_stderr``, ``decision_ids``,
-    ``escalated_hooks`` and the outcome options ``hang``, ``delay`` and ``stderr_lines``."""
-    options = {k: extra.pop(k) for k in ("hang", "delay", "stderr_lines") if k in extra}
+    ``escalated_hooks`` and the outcome options ``hang``, ``delay``, ``stderr_lines`` and
+    ``phase``. ``phase`` ("read": before confirmation, "write": after it) says when in the post
+    order an error that can happen in both does; most errors have one place (see
+    ``fake_forgectl.error_phases``), and the rest default to "write" for a real write ("read" in a
+    dry run). Without ``--yes`` a write-phase error is replaced by exit 13."""
+    options = {k: extra.pop(k) for k in ("hang", "delay", "stderr_lines", "phase") if k in extra}
     error: dict[str, Any] = {"code": code, "message": message, **extra}
     if reason is not None:
         error["reason"] = reason
@@ -98,10 +102,6 @@ def refuse(
 
 
 # --- builders: documents the pinned schemas accept -----------------------------------------------
-
-
-def _prefix(backend: str) -> str:
-    return "gh" if backend == "github" else "gl"
 
 
 def _repo_of(pr: str) -> str:
@@ -314,6 +314,7 @@ class ProcessCall:
     reason: str | None = None
     fake_error: str | None = None
     confirmation_blocked: bool = False
+    crash: str | None = None  # the traceback of a crash of the fake itself
     hung_phase: str | None = None
     step: int | None = None
 
@@ -336,10 +337,6 @@ class ProcessCall:
     @property
     def is_dry_run(self) -> bool:
         return self.subcommand in ff.WRITE_COMMANDS and "--dry-run" in self.argv
-
-    @property
-    def stdin_text(self) -> str:
-        return (self.stdin or b"").decode("utf-8")
 
 
 def read_calls(directory: Path) -> list[ProcessCall]:
@@ -369,6 +366,8 @@ def read_calls(directory: Path) -> list[ProcessCall]:
             call.reason = row.get("reason")
         elif event == "fake_error":
             call.fake_error = row["message"]
+        elif event == "crash":
+            call.crash = row["traceback"]
         elif event == "confirmation_blocked":
             call.confirmation_blocked = True
         elif event == "hang":
@@ -382,9 +381,10 @@ def read_calls(directory: Path) -> list[ProcessCall]:
 class FakeForgectl:
     """The fake forgectl of one test. ``environ()`` puts it first on ``PATH``; ``script`` and
     ``add`` set what the host answers; ``calls()`` is what ran. At the end of the test the
-    fixture calls ``check()``: a fake error, an argv forgectl would refuse, or a scripted step
-    nobody asked for fails the test, so a scenario cannot drift from what the code under test
-    does."""
+    fixture calls ``assert_clean()``, which fails the test on ``check()``'s problems: a fake error
+    or crash, a call that never ended, an argv forgectl would refuse, a write that stopped at
+    confirmation (exit 13), a child environment that is not private, or a scripted step nobody
+    asked for. So a scenario cannot drift from what the code under test does."""
 
     def __init__(self, directory: Path, tracker: Tracker) -> None:
         self.directory = directory
@@ -395,7 +395,8 @@ class FakeForgectl:
         self.version: str | None = None
         self.allow_usage_errors = False
         self.allow_unused_steps = False
-        self.allow_fake_errors = False
+        self.allow_fake_errors = False  # also covers a crash of the fake and a call with no end
+        self.allow_confirmation_blocked = False  # a test of what happens on exit 13 says so
         self._write()
 
     # scenario -------------------------------------------------------------------------------
@@ -516,6 +517,16 @@ class FakeForgectl:
         for call in self.calls():
             if call.fake_error and not self.allow_fake_errors:
                 problems.append(f"call {call.n} {call.argv[:3]}: fake error: {call.fake_error}")
+            if call.crash and not self.allow_fake_errors:
+                problems.append(f"call {call.n} {call.argv[:3]}: the fake crashed: {call.crash}")
+            if call.exit_code is None and not self.allow_fake_errors:
+                problems.append(f"call {call.n} {call.argv[:3]}: no end event (it did not finish)")
+            if call.confirmation_blocked and not self.allow_confirmation_blocked:
+                problems.append(
+                    f"call {call.n} {call.argv[:3]}: a write without --yes stopped at "
+                    "confirmation (exit 13); the code under test never confirmed it"
+                )
+            problems += home_violations(call, self.directory.parent)
             if call.kind == "usage" and not self.allow_usage_errors:
                 problems.append(
                     f"call {call.n}: forgectl would refuse this argv (exit {call.exit_code} "
@@ -587,7 +598,9 @@ def form_violations(call: ProcessCall) -> list[str]:
 
 
 def text_violations(call: ProcessCall, texts: Iterable[str]) -> list[str]:
-    """Untrusted text (a body, a finding, a review's JSON) is never in argv or the environment."""
+    """Untrusted text (a body, a finding, a review's JSON) is never in argv or the environment:
+    the call log holds the child's whole environment (but the harness's own FAKE_FORGECTL_*
+    variables), and every value and name is checked."""
     out: list[str] = []
     for text in texts:
         if not text:
@@ -601,11 +614,27 @@ def text_violations(call: ProcessCall, texts: Iterable[str]) -> list[str]:
     return out
 
 
-def environment_violations(call: ProcessCall) -> list[str]:
+def home_violations(call: ProcessCall, root: Path) -> list[str]:
+    """``HOME`` and every ``XDG_*`` variable of the child lie under ``root`` (the test's own
+    directory), so the developer's real configuration never reaches forgectl."""
+    out: list[str] = []
+    base = os.path.realpath(root)
+    for key, value in call.env.items():
+        if key != "HOME" and not key.startswith("XDG_"):
+            continue
+        path = os.path.realpath(value)
+        if path != base and not path.startswith(base + os.sep):
+            out.append(f"call {call.n}: {key}={value!r} is not under the test directory {root}")
+    return out
+
+
+def environment_violations(call: ProcessCall, root: Path | None = None) -> list[str]:
     """forgectl runs with a private child environment: no ``PR_COMMENT_*`` variable, a ``PATH`` of
     absolute entries only, working directory ``/``, stdin ``/dev/null`` for a read and a pipe for a
-    call that carries input."""
+    call that carries input. With ``root``, ``HOME`` and ``XDG_*`` must be under it too."""
     out: list[str] = []
+    if root is not None:
+        out += home_violations(call, root)
     for key in call.env:
         if key.startswith("PR_COMMENT_"):
             out.append(f"call {call.n}: {key} reached forgectl")
@@ -677,8 +706,10 @@ def edge_violations(
     head: str | None = None,
     base: str | None = None,
     confirmed_input: bytes | None = None,
+    root: Path | None = None,
 ) -> list[str]:
-    """Every edge rule over ``calls``; empty when pr-comment kept them all."""
+    """Every edge rule over ``calls``; empty when pr-comment kept them all. ``root``: the test's
+    directory, which ``HOME`` and ``XDG_*`` must be under."""
     out: list[str] = []
     texts = list(texts)
     for call in calls:
@@ -686,7 +717,7 @@ def edge_violations(
             continue
         out += form_violations(call)
         out += text_violations(call, texts)
-        out += environment_violations(call)
+        out += environment_violations(call, root)
         out += pin_violations(call, head=head, base=base)
     out += yes_violations([c for c in calls if c.subcommand in ff.MODELED], confirmed=confirmed)
     if confirmed_input is not None:

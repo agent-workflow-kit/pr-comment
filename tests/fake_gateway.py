@@ -99,6 +99,8 @@ class PinnedGateway(FakeGateway):
         *,
         missing: ToolMissing | None = None,
         hosts: dict[str, str] | None = None,
+        timeout: str = "120s",
+        config_path: str | None = None,
     ) -> None:
         super().__init__(
             replies,
@@ -106,11 +108,16 @@ class PinnedGateway(FakeGateway):
             missing=missing,
         )
         self.hosts = hosts or {}
+        self.timeout = timeout  # the real gateway's default (``ProcessGateway``: 120s)
+        self.config_path = config_path
 
     def call(
         self, subcommand: str, args: Sequence[str] = (), *, stdin: bytes | None = None
     ) -> ForgectlResult:
-        argv = [subcommand, "--json", "--timeout=60s", *args]
+        argv = [subcommand, "--json"]
+        if self.config_path is not None:
+            argv.append(f"--config={self.config_path}")
+        argv += [f"--timeout={self.timeout}", *args]
         # a call forgectl refuses is a bug of the caller, whatever the answer would have been
         refusal = fake_forgectl.check_call(argv, stdin, hosts=self.hosts)
         if refusal is not None:

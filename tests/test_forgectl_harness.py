@@ -14,6 +14,7 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -116,6 +117,49 @@ def test_body_text_in_argv_or_the_environment_is_reported() -> None:
     in_env = call(*COMMENT, env={"PATH": "/bin", "HOME": body})
     assert "in the environment (HOME)" in text_violations(in_env, [body])[0]
     assert text_violations(call(*COMMENT), [""]) == []  # an empty text matches nothing
+
+
+def test_every_value_of_the_logged_environment_is_checked_for_body_text() -> None:
+    body = "secretbody"
+    leak = call(*COMMENT, env={"PATH": "/bin", "HOME": "/h", "LEAK": body})
+    assert "in the environment (LEAK)" in text_violations(leak, [body])[0]
+
+
+def test_a_home_or_xdg_directory_outside_the_test_directory_is_reported(tmp_path: Path) -> None:
+    inside = call(
+        *COMMENT,
+        env={"PATH": "/bin", "HOME": str(tmp_path / "h"), "XDG_CONFIG_HOME": str(tmp_path)},
+    )
+    assert environment_violations(inside, tmp_path) == []
+    real = call(
+        *COMMENT,
+        env={"PATH": "/bin", "HOME": "/home/somebody", "XDG_STATE_HOME": "/var/state"},
+    )
+    text = "\n".join(environment_violations(real, tmp_path))
+    assert "HOME='/home/somebody'" in text and "XDG_STATE_HOME" in text
+    assert "not under the test directory" in text
+    assert environment_violations(real) == []  # no root, no check
+
+
+def test_the_fake_logs_the_whole_environment_but_its_own_variables(forgectl: FakeForgectl) -> None:
+    forgectl.script(ok("files", files_doc()))
+    proc = forgectl.run(["files", "--json", PR], env={"LEAK": "secretbody"})
+    assert proc.returncode == 0
+    [seen] = forgectl.calls()
+    assert seen.env["LEAK"] == "secretbody" and seen.env["HOME"].startswith(str(forgectl.directory))
+    assert not [k for k in seen.env if k.startswith("FAKE_FORGECTL_")]
+    assert "in the environment (LEAK)" in text_violations(seen, ["secretbody"])[0]
+
+
+def test_a_child_with_the_real_home_fails_the_end_of_test_check(tmp_path: Path) -> None:
+    from tests.fakes import Tracker
+
+    tracker = Tracker()
+    fake = FakeForgectl(tmp_path / "f", tracker)
+    fake.script(ok("files", files_doc()))
+    fake.run(["files", "--json", PR], env={"HOME": "/home/somebody"})
+    problems = fake.check()
+    assert len(problems) == 1 and "HOME='/home/somebody'" in problems[0]
 
 
 def test_a_pr_comment_variable_a_relative_path_a_cwd_and_a_stdin_kind_are_reported() -> None:
@@ -265,6 +309,7 @@ def test_a_confirmation_that_never_happened_is_caught_by_the_yes_check(
 def test_a_write_without_yes_exits_thirteen_through_the_real_gateway(
     forgectl: FakeForgectl,
 ) -> None:
+    forgectl.allow_confirmation_blocked = True
     forgectl.script(ok("resolve", resolve_doc("resolve", "gh:rt:T1")))
     result = gateway(forgectl).call("resolve", [PR, "--thread=gh:rt:T1"])
     assert result.exit_code == 13
@@ -315,6 +360,43 @@ def run_inner(tmp_path: Path, test_body: str) -> subprocess.CompletedProcess[str
         timeout=120,
         check=False,
     )
+
+
+def test_a_write_that_stopped_at_confirmation_fails_the_test_unless_it_says_so(
+    forgectl: FakeForgectl,
+) -> None:
+    forgectl.script(ok("comment", post_doc("comment", ids=["gh:ic:IC_1"])))
+    assert forgectl.run(["comment", "--json", PR, "--body-file", "-"], stdin=b"x").returncode == 13
+    [problem] = forgectl.check()
+    assert "stopped at confirmation" in problem
+    forgectl.allow_confirmation_blocked = True
+    assert forgectl.check() == []
+
+
+def test_a_crash_of_the_fake_fails_the_test_unless_it_says_so(forgectl: FakeForgectl) -> None:
+    forgectl.script({"command": "show"})  # no outcome: the fake itself breaks
+    proc = forgectl.run(["show", "--json", PR])
+    assert proc.returncode == 1 and b"KeyError" in proc.stderr
+    [call_] = forgectl.calls()
+    assert call_.kind == "crash" and call_.exit_code == 1
+    [problem] = forgectl.check()
+    assert "the fake crashed" in problem and "KeyError" in problem
+    forgectl.allow_fake_errors = True
+    assert forgectl.check() == []
+
+
+def test_a_call_that_never_ended_fails_the_test(tmp_path: Path) -> None:
+    from tests.fakes import Tracker
+
+    fake = FakeForgectl(tmp_path / "f", Tracker())
+    start = {"n": 0, "event": "start", "argv": ["show"], "cwd": "/", "stdin_kind": "devnull"}
+    (fake.directory / "calls.jsonl").write_text(
+        json.dumps({**start, "env": {"HOME": str(fake.directory)}}) + "\n", encoding="ascii"
+    )
+    [problem] = fake.check()
+    assert "no end event" in problem
+    fake.allow_fake_errors = True
+    assert fake.check() == []
 
 
 def test_a_scenario_that_violates_the_pinned_schema_fails_the_test_that_uses_it(
@@ -470,3 +552,107 @@ def test_the_pinned_gateway_holds_a_dry_run_refusal_to_the_plan_shape() -> None:
             "approve",
             [PR, "--dry-run", f"--expected-head={HEAD}", "--expected-base=main"],
         )
+
+
+# --- the pinned gateway holds an answer to the confirmation rule ----------------------------------
+
+PINS = [f"--expected-head={HEAD}", "--expected-base=main"]
+REVIEW_STDIN = b'{"event":"comment","body":"hello"}'
+COUNTS: dict[str, Any] = {"neutralized_lines": 0, "markers_removed": 0}
+
+
+def envelope(
+    command: str, code: str, exit_code: int, *, write: bool = True, **body: object
+) -> ForgectlResult:
+    text = json.dumps({"error": {"code": code, "message": "m", **body}})
+    return ForgectlResult(command=command, write=write, exit_code=exit_code, stdout=text.encode())
+
+
+def judged(command: str, args: list[str], stdin: bytes | None, reply: ForgectlResult) -> None:
+    PinnedGateway([reply]).call(command, args, stdin=stdin)
+
+
+def rejected(
+    command: str, args: list[str], stdin: bytes | None, reply: ForgectlResult, why: str
+) -> None:
+    with pytest.raises(AssertionError, match="could not have answered") as raised:
+        judged(command, args, stdin, reply)
+    assert why in str(raised.value)
+
+
+COMMENT_NO_YES = [PR, "--body-file", "-"]
+
+
+def test_a_write_without_yes_that_succeeds_is_rejected() -> None:
+    posted = doc_result("comment", post_doc("comment", ids=["gh:ic:IC_1"], **COUNTS))
+    rejected("comment", COMMENT_NO_YES, b"x", posted, "no --yes")
+    judged("comment", [*COMMENT_NO_YES, "--yes"], b"x", posted)
+
+
+def test_a_write_without_yes_that_ends_after_confirmation_is_rejected() -> None:
+    stale = envelope("review", "approved_stale_head", 12, details={"ids": ["gh:r:R_1"]})
+    args = [PR, "--file", "-", *PINS]
+    rejected("review", args, REVIEW_STDIN, stale, "happens after confirmation")
+    judged("review", [*args, "--yes"], REVIEW_STDIN, stale)
+    # outcome_partial may be a dedupe hit at step 4, before confirmation: nothing to reject
+    partial_ = envelope(
+        "review",
+        "outcome_partial",
+        12,
+        details={"landed": {"ids": ["gh:r:R_1"], "thread_ids": []}, "failed": "approve"},
+    )
+    judged("review", args, REVIEW_STDIN, partial_)
+    veto = envelope("comment", "vetoed", 11, hook="pre-post", hook_stderr="")
+    rejected("comment", COMMENT_NO_YES, b"x", veto, "happens after confirmation")
+
+
+def test_exit_thirteen_confirmation_is_only_for_a_write_without_yes() -> None:
+    confirm = envelope("comment", "confirmation_required", 13)
+    judged("comment", COMMENT_NO_YES, b"x", confirm)
+    rejected("comment", [*COMMENT_NO_YES, "--yes"], b"x", confirm, "confirmation_required is for")
+    dry = envelope("comment", "confirmation_required", 13, write=False)
+    rejected("comment", [*COMMENT_NO_YES, "--dry-run"], b"x", dry, "confirmation_required is for")
+    read = envelope("show", "confirmation_required", 13, write=False)
+    rejected("show", [PR], None, read, "confirmation_required is for")
+
+
+def test_a_write_without_yes_that_ends_before_confirmation_is_accepted() -> None:
+    judged("comment", COMMENT_NO_YES, b"x", envelope("comment", "not_found", 10))
+    judged("comment", COMMENT_NO_YES, b"x", envelope("comment", "rate_limited", 12))
+    dedupe = doc_result(
+        "comment", post_doc("comment", already_posted=True, ids=["gh:ic:IC_9"], **COUNTS)
+    )
+    judged("comment", [*COMMENT_NO_YES, "--dedupe-key=k"], b"x", dedupe)
+
+
+@pytest.mark.parametrize("code", ["usage", "invalid_pr", "body_too_large"])
+def test_an_error_the_fake_computes_from_the_call_is_rejected_for_a_call_it_accepted(
+    code: str,
+) -> None:
+    exit_code = 2
+    rejected(
+        "comment",
+        [*COMMENT_NO_YES, "--yes"],
+        b"x",
+        envelope("comment", code, exit_code),
+        "passed every check",
+    )
+
+
+def test_config_invalid_needs_a_config_the_call_names() -> None:
+    reply = envelope("show", "config_invalid", 2, write=False, details={"key": "/c.yaml"})
+    rejected("show", [PR], None, reply, "needs a --config")
+    PinnedGateway([reply], config_path="/c.yaml").call("show", [PR])
+
+
+def test_the_pinned_gateway_builds_the_argv_as_the_real_gateway_does() -> None:
+    gw = PinnedGateway([gateway_ok("show", show_doc())])
+    gw.call("show", [PR])
+    assert gw.timeout == "120s" and gw.config_path is None
+    gw2 = PinnedGateway([gateway_ok("show", show_doc())], timeout="9s", config_path="/c.yaml")
+    gw2.call("show", [PR])
+    # a timeout forgectl refuses fails the call, which shows the value reaches forgectl's parser
+    with pytest.raises(AssertionError, match="forgectl refuses this call"):
+        PinnedGateway([gateway_ok("show", show_doc())], timeout="0s").call("show", [PR])
+    with pytest.raises(AssertionError, match="forgectl refuses this call"):
+        PinnedGateway([gateway_ok("show", show_doc())], config_path="").call("show", [PR])
