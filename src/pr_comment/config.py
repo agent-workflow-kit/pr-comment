@@ -576,7 +576,7 @@ class LoadedConfig:
 
     config: Config
     config_hash: str
-    config_path: str | None  # the `--config` path; None for the default location
+    config_path: str | None  # the main config file actually read; None when none exists
     warnings: tuple[ConfigWarning, ...] = ()
 
     @classmethod
@@ -678,12 +678,14 @@ def load_config(config_path: str | None, *, env: Mapping[str, str]) -> LoadedCon
         required = True
     raw: dict[str, Any] = {}
     warnings: list[ConfigWarning] = []
+    main_read = False
     sources = [(main, required)]
     sources += [(p, True) for p in _drop_in_paths(main.parent / "config.d")]
     for path, must_exist in sources:
         layer = _parse_layer(path, required=must_exist)
         if layer is None:
             continue
+        main_read = main_read or path == main
         keys = _warning_keys(layer)
         _fold_repo_keys(layer)
         if keys:
@@ -699,6 +701,6 @@ def load_config(config_path: str | None, *, env: Mapping[str, str]) -> LoadedCon
     return LoadedConfig(
         config=config,
         config_hash=config_hash(config),
-        config_path=None if config_path is None else str(main),
+        config_path=str(main) if main_read else None,
         warnings=tuple(warnings),
     )

@@ -1,0 +1,28 @@
+{
+  "error": {
+    "code": "invalid_draft",
+    "decision_ids": [],
+    "details": {
+      "errors": [
+        {
+          "message": "must be less than line",
+          "pointer": "/findings/0/start_line"
+        },
+        {
+          "message": "duplicates an id of another finding",
+          "pointer": "/findings/1/id"
+        }
+      ]
+    },
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": null,
+    "hook_stderr": null,
+    "landed": null,
+    "lower_error": null,
+    "message": "invalid draft: must be less than line (at /findings/0/start_line) and 1 more",
+    "reason": null,
+    "retry": null,
+    "retry_after": null
+  }
+}

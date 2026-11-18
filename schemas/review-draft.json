@@ -345,7 +345,7 @@
         ]
       },
       "maxItems": 500,
-      "description": "Optional: findings that could not be anchored, with the anchor they last had and their moved reason. Never mapped or validated; always rendered in the body's 'Findings that could not be anchored' section. At most 500 together with findings, checked by pr-comment."
+      "description": "Optional: findings that could not be anchored, with the anchor they last had and their moved reason. Never anchored or mapped to the diff, but checked like any finding (shape, caps and rules; ids unique across both lists); always rendered in the body's 'Findings that could not be anchored' section. At most 500 together with findings, checked by pr-comment."
     },
     "meta": {
       "type": "object",

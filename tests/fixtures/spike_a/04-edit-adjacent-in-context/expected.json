@@ -1,0 +1,48 @@
+[
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 10
+  },
+  "expected": {
+   "path": "f.txt",
+   "line": 10,
+   "side": "right"
+  }
+ },
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 12
+  },
+  "expected": {
+   "path": "f.txt",
+   "line": 12,
+   "side": "right"
+  }
+ },
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 8
+  },
+  "expected": {
+   "path": "f.txt",
+   "line": 8,
+   "side": "right"
+  }
+ },
+ {
+  "finding": {
+   "path": "f.txt",
+   "side": "right",
+   "line": 11
+  },
+  "expected": {
+   "unmapped": "changed"
+  }
+ }
+]

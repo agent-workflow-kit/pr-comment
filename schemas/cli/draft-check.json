@@ -45,8 +45,7 @@
           },
           "message": {
             "type": "string",
-            "x-untrusted": true,
-            "description": "Untrusted: the validation message; may quote draft text."
+            "description": "A fixed validation message; never draft content."
           },
           "kind": {
             "oneOf": [
@@ -67,7 +66,8 @@
           "kind"
         ]
       },
-      "description": "Empty when valid."
+      "maxItems": 101,
+      "description": "Empty when valid. At most 100 problems, then one final `further errors omitted` entry (kind null) when more were dropped."
     }
   },
   "additionalProperties": false,

@@ -15,7 +15,7 @@
         "info",
         "debug"
       ],
-      "description": "error for exit 1; warn for refusals, vetoes, escalations, declined dialogs and exit 12; info otherwise; debug with --verbose."
+      "description": "error for exit 1; warn for refusals, vetoes, escalations, declined dialogs, warnings, config warnings and exit 12; info otherwise; debug with --verbose."
     },
     "event": {
       "enum": [
@@ -56,7 +56,7 @@
         "null"
       ],
       "x-untrusted": true,
-      "description": "Untrusted: may hold host or draft text. Never bodies or secrets."
+      "description": "Untrusted: may hold host or draft text. Never bodies or secrets. A line over 64 KiB has its details replaced by {\"truncated\": true}."
     }
   },
   "additionalProperties": false,
