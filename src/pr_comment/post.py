@@ -21,7 +21,9 @@ Rules that keep a post from happening twice or being lost:
 - SIGINT, SIGTERM and SIGHUP are held from just before the ``attempted`` record until the outcome
   record is appended (``_DeferredSignals``), so a signal never leaves a landed write with only an
   ``attempted`` record. A signal held that way does not change the run: forgectl's answer is
-  recorded and the run ends with it (a signal during the forgectl call is the gateway's).
+  recorded and the run ends with it (a signal during the forgectl call is the gateway's). A
+  signal already held when ``attempted`` returns means nothing was sent: the pair is closed as
+  ``failed`` and the run exits 128 + signum with no envelope, before any forgectl write call.
 - An unexpected error after ``attempted`` (the call, lowering, the result document) is recorded as
   ``outcome_unknown`` and ends the run as exit 12 ``outcome_unknown``: the write may have landed.
 - A forgectl failure keeps forgectl's exit code, code, reason and details (``lower.py``);
@@ -58,6 +60,7 @@ from .audit import (
     now_utc,
 )
 from .config import LoadedConfig
+from .confirm import Interrupted
 from .forge import PostRead, read_post
 from .gateway import (
     FORWARDED_SIGNALS,
@@ -306,8 +309,8 @@ def post_review(prepared: Prepared, env: PostEnv) -> Outcome:
     env.gateway.lower_version()
     # TODO(#33): the pre-post hooks run here (veto: exit 11, escalation: exit 13), before
     # ``attempted``; a veto or escalation before the first write goes to the log only.
-    with _DeferredSignals():
-        return _post_with_audit(prepared, env)
+    with _DeferredSignals() as held:
+        return _post_with_audit(prepared, env, held)
 
 
 def _call_and_lower(prepared: Prepared, env: PostEnv) -> tuple[Lowered, Outcome]:
@@ -363,7 +366,7 @@ def _call_and_lower(prepared: Prepared, env: PostEnv) -> tuple[Lowered, Outcome]
     return lowered, outcome
 
 
-def _post_with_audit(prepared: Prepared, env: PostEnv) -> Outcome:
+def _post_with_audit(prepared: Prepared, env: PostEnv, held: _DeferredSignals) -> Outcome:
     plan = prepared.plan
     try:
         env.trail.attempted(audit_record(prepared, env))
@@ -372,6 +375,18 @@ def _post_with_audit(prepared: Prepared, env: PostEnv) -> Outcome:
         log_failure(env.log, env.trail.attempt_id, plan.pr, outcome)
         return outcome
     started = format_ts(now_utc())
+    if held.received:
+        # A signal arrived during the ``attempted`` append: nothing was sent and nothing will be.
+        # Close the pair as a failed write (exit 1, ``internal``: no forgectl call, no code of its
+        # own), then end 128 + signum with no envelope, as a signal before any write does.
+        unsent = LowerResult(exit=1, code="internal", reason=None)
+        write = WriteRecord.from_lower(0, started, plan.action, None, plan.dedupe_key, unsent)
+        stopped = Outcome(1)
+        final = _record(env, [write], stopped)
+        if final is not stopped:  # the pair could not be closed: report that
+            log_failure(env.log, env.trail.attempt_id, plan.pr, final)
+            return final
+        raise Interrupted(held.received[0])
     try:
         lowered, outcome = _call_and_lower(prepared, env)
     except Exception as exc:  # after ``attempted`` nothing is known: the write may have landed

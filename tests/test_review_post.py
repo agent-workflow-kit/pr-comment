@@ -1048,6 +1048,56 @@ def test_a_signal_while_the_outcome_is_appended_waits_for_the_record(
     assert len(forgectl.writes()) == 1
 
 
+_SLOW_ATTEMPTED = _SLOW_OUTCOME.replace(
+    'if sync and b"attempted" not in line:  # the outcome record: slow and announced',
+    'if sync and b"attempted" in line:  # the attempted record: slow and announced',
+)
+
+
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT, signal.SIGHUP])
+def test_a_signal_while_attempted_is_appended_sends_no_write(
+    forgectl: FakeForgectl, tmp_path: Path, state_home: Path, signum: int
+) -> None:
+    import time
+
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    launcher = scripts / "slow_attempted.py"
+    launcher.write_text(_SLOW_ATTEMPTED, encoding="utf-8")
+    ready = tmp_path / "attempted-append-started"
+    draft = draft_file(tmp_path, [finding("f1")])
+    forgectl.script(show(), dry())
+    env = forgectl.environ({"XDG_STATE_HOME": str(state_home), "PRC_TEST_READY": str(ready)})
+    env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p)
+    proc = subprocess.Popen(
+        [sys.executable, str(launcher), *args_for(draft)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        cwd=str(tmp_path),
+        start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while not ready.exists() and proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert ready.exists(), "the attempted append never started"
+        os.kill(proc.pid, signum)  # the exact pid this test started
+        stdout, stderr = proc.communicate(timeout=60)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    # the signal came before the write was sent: no write, no envelope, a closed pair
+    assert proc.returncode == 128 + signum, stderr
+    assert stdout == b""
+    assert forgectl.writes() == []
+    records = audit(state_home)
+    validate_audit(records)
+    assert [r["result"] for r in records] == ["attempted", "failed"]
+    assert records[1]["attempt_id"] == records[0]["attempt_id"]
+
+
 # --- an unexpected error after ``attempted`` ----------------------------------------------------
 
 
