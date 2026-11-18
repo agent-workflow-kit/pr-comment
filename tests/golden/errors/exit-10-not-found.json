@@ -1,0 +1,20 @@
+{
+  "error": {
+    "code": "not_found",
+    "decision_ids": [],
+    "details": {
+      "id": "x#1",
+      "what": "pr"
+    },
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": null,
+    "hook_stderr": null,
+    "landed": null,
+    "lower_error": null,
+    "message": "no such PR",
+    "reason": null,
+    "retry": null,
+    "retry_after": null
+  }
+}

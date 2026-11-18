@@ -1,0 +1,644 @@
+{
+  "anchor-base-sha-bad": [
+    {
+      "message": "must be 40 lowercase hex digits or null",
+      "pointer": "/anchor/base_sha"
+    }
+  ],
+  "anchor-head-short": [
+    {
+      "message": "must be 40 lowercase hex digits",
+      "pointer": "/anchor/head_sha"
+    }
+  ],
+  "anchor-head-uppercase": [
+    {
+      "message": "must be 40 lowercase hex digits",
+      "pointer": "/anchor/head_sha"
+    }
+  ],
+  "anchor-merge-base-bad": [
+    {
+      "message": "must be 40 lowercase hex digits or null",
+      "pointer": "/anchor/merge_base_sha"
+    }
+  ],
+  "anchor-missing-head": [
+    {
+      "message": "missing required property head_sha",
+      "pointer": "/anchor"
+    }
+  ],
+  "anchor-missing-merge-base": [
+    {
+      "message": "missing required property merge_base_sha",
+      "pointer": "/anchor"
+    }
+  ],
+  "anchor-type": [
+    {
+      "message": "must be an object",
+      "pointer": "/anchor"
+    }
+  ],
+  "anchor-unknown": [
+    {
+      "message": "unknown property",
+      "pointer": "/anchor"
+    }
+  ],
+  "base-ref-control": [
+    {
+      "message": "is not a valid branch name",
+      "pointer": "/anchor/base_ref"
+    }
+  ],
+  "base-ref-dotdot": [
+    {
+      "message": "is not a valid branch name",
+      "pointer": "/anchor/base_ref"
+    }
+  ],
+  "base-ref-empty": [
+    {
+      "message": "is not a valid branch name",
+      "pointer": "/anchor/base_ref"
+    }
+  ],
+  "base-ref-format-char": [
+    {
+      "message": "is not a valid branch name",
+      "pointer": "/anchor/base_ref"
+    }
+  ],
+  "base-ref-leading-dash": [
+    {
+      "message": "is not a valid branch name",
+      "pointer": "/anchor/base_ref"
+    }
+  ],
+  "base-ref-lone-at": [
+    {
+      "message": "is not a valid branch name",
+      "pointer": "/anchor/base_ref"
+    }
+  ],
+  "base-ref-refs": [
+    {
+      "message": "is not a valid branch name",
+      "pointer": "/anchor/base_ref"
+    }
+  ],
+  "base-ref-refs-prefix": [
+    {
+      "message": "is not a valid branch name",
+      "pointer": "/anchor/base_ref"
+    }
+  ],
+  "base-ref-separator": [
+    {
+      "message": "is not a valid branch name",
+      "pointer": "/anchor/base_ref"
+    }
+  ],
+  "base-ref-space": [
+    {
+      "message": "is not a valid branch name",
+      "pointer": "/anchor/base_ref"
+    }
+  ],
+  "base-ref-too-long": [
+    {
+      "message": "is not a valid branch name",
+      "pointer": "/anchor/base_ref"
+    }
+  ],
+  "base-ref-type": [
+    {
+      "message": "is not a valid branch name",
+      "pointer": "/anchor/base_ref"
+    }
+  ],
+  "body-multibyte-over-cap": [
+    {
+      "message": "is longer than 65536 bytes of UTF-8",
+      "pointer": "/body"
+    }
+  ],
+  "body-too-long": [
+    {
+      "message": "is longer than 65536 bytes of UTF-8",
+      "pointer": "/body"
+    }
+  ],
+  "body-type": [
+    {
+      "message": "must be a string",
+      "pointer": "/body"
+    }
+  ],
+  "draft-id-lowercase": [
+    {
+      "message": "is not in the required form",
+      "pointer": "/draft_id"
+    }
+  ],
+  "draft-id-short": [
+    {
+      "message": "is not in the required form",
+      "pointer": "/draft_id"
+    }
+  ],
+  "draft-id-trailing-newline": [
+    {
+      "message": "is not in the required form",
+      "pointer": "/draft_id"
+    }
+  ],
+  "draft-id-type": [
+    {
+      "message": "is not in the required form",
+      "pointer": "/draft_id"
+    }
+  ],
+  "duplicate-id-in-findings": [
+    {
+      "message": "duplicates an id of another finding",
+      "pointer": "/findings/1/id"
+    }
+  ],
+  "duplicate-id-with-unanchored": [
+    {
+      "message": "duplicates an id of another finding",
+      "pointer": "/unanchored/0/finding/id"
+    }
+  ],
+  "event-approve": [
+    {
+      "message": "must be comment or request_changes",
+      "pointer": "/event"
+    }
+  ],
+  "event-case": [
+    {
+      "message": "must be comment or request_changes",
+      "pointer": "/event"
+    }
+  ],
+  "event-type": [
+    {
+      "message": "must be comment or request_changes",
+      "pointer": "/event"
+    }
+  ],
+  "file-level-with-side": [
+    {
+      "message": "is not allowed on a file-level finding",
+      "pointer": "/findings/2/side"
+    }
+  ],
+  "file-level-with-start-line": [
+    {
+      "message": "is not allowed on a file-level finding",
+      "pointer": "/findings/2/start_line"
+    }
+  ],
+  "file-level-with-suggestion": [
+    {
+      "message": "is not allowed on a file-level finding",
+      "pointer": "/findings/2/suggestion"
+    }
+  ],
+  "finding-body-empty": [
+    {
+      "message": "must not be empty",
+      "pointer": "/findings/0/body"
+    }
+  ],
+  "finding-body-multibyte-over-cap": [
+    {
+      "message": "is longer than 65536 bytes of UTF-8",
+      "pointer": "/findings/0/body"
+    }
+  ],
+  "finding-body-over-cap": [
+    {
+      "message": "is longer than 65536 bytes of UTF-8",
+      "pointer": "/findings/0/body"
+    }
+  ],
+  "finding-body-type": [
+    {
+      "message": "must be a string",
+      "pointer": "/findings/0/body"
+    }
+  ],
+  "finding-id-bad": [
+    {
+      "message": "is not in the required form",
+      "pointer": "/findings/0/id"
+    }
+  ],
+  "finding-id-empty": [
+    {
+      "message": "is not in the required form",
+      "pointer": "/findings/0/id"
+    }
+  ],
+  "finding-id-long": [
+    {
+      "message": "is not in the required form",
+      "pointer": "/findings/0/id"
+    }
+  ],
+  "finding-missing-body": [
+    {
+      "message": "missing required property body",
+      "pointer": "/findings/0"
+    }
+  ],
+  "finding-missing-id": [
+    {
+      "message": "missing required property id",
+      "pointer": "/findings/0"
+    }
+  ],
+  "finding-missing-line": [
+    {
+      "message": "missing required property line",
+      "pointer": "/findings/0"
+    }
+  ],
+  "finding-missing-path": [
+    {
+      "message": "missing required property path",
+      "pointer": "/findings/0"
+    }
+  ],
+  "finding-type": [
+    {
+      "message": "must be an object",
+      "pointer": "/findings/0"
+    }
+  ],
+  "finding-unknown": [
+    {
+      "message": "unknown property",
+      "pointer": "/findings/0"
+    }
+  ],
+  "findings-501": [
+    {
+      "message": "has more than 500 items",
+      "pointer": "/findings"
+    }
+  ],
+  "findings-type": [
+    {
+      "message": "must be an array",
+      "pointer": "/findings"
+    }
+  ],
+  "items-501-together": [
+    {
+      "message": "findings and unanchored together have more than 500 items",
+      "pointer": "/unanchored"
+    }
+  ],
+  "line-bool": [
+    {
+      "message": "must be an integer of at least 1, or null",
+      "pointer": "/findings/0/line"
+    }
+  ],
+  "line-float": [
+    {
+      "message": "must be an integer of at least 1, or null",
+      "pointer": "/findings/0/line"
+    }
+  ],
+  "line-negative": [
+    {
+      "message": "must be an integer of at least 1, or null",
+      "pointer": "/findings/0/line"
+    }
+  ],
+  "line-string": [
+    {
+      "message": "must be an integer of at least 1, or null",
+      "pointer": "/findings/0/line"
+    }
+  ],
+  "line-zero": [
+    {
+      "message": "must be an integer of at least 1, or null",
+      "pointer": "/findings/0/line"
+    }
+  ],
+  "meta-null": [
+    {
+      "message": "must be an object",
+      "pointer": "/meta"
+    }
+  ],
+  "meta-type": [
+    {
+      "message": "must be an object",
+      "pointer": "/meta"
+    }
+  ],
+  "missing-anchor": [
+    {
+      "message": "missing required property anchor",
+      "pointer": ""
+    }
+  ],
+  "missing-body": [
+    {
+      "message": "missing required property body",
+      "pointer": ""
+    }
+  ],
+  "missing-draft-id": [
+    {
+      "message": "missing required property draft_id",
+      "pointer": ""
+    }
+  ],
+  "missing-event": [
+    {
+      "message": "missing required property event",
+      "pointer": ""
+    }
+  ],
+  "missing-findings": [
+    {
+      "message": "missing required property findings",
+      "pointer": ""
+    }
+  ],
+  "missing-pr": [
+    {
+      "message": "missing required property pr",
+      "pointer": ""
+    }
+  ],
+  "path-4097-bytes": [
+    {
+      "message": "is longer than 4096 bytes of UTF-8",
+      "pointer": "/findings/0/path"
+    }
+  ],
+  "path-cr": [
+    {
+      "message": "must be one line",
+      "pointer": "/findings/0/path"
+    }
+  ],
+  "path-empty": [
+    {
+      "message": "must not be empty",
+      "pointer": "/findings/0/path"
+    }
+  ],
+  "path-ls": [
+    {
+      "message": "must be one line",
+      "pointer": "/findings/0/path"
+    }
+  ],
+  "path-multibyte-over-cap": [
+    {
+      "message": "is longer than 4096 bytes of UTF-8",
+      "pointer": "/findings/0/path"
+    }
+  ],
+  "path-nel": [
+    {
+      "message": "must be one line",
+      "pointer": "/findings/0/path"
+    }
+  ],
+  "path-newline": [
+    {
+      "message": "must be one line",
+      "pointer": "/findings/0/path"
+    }
+  ],
+  "path-ps": [
+    {
+      "message": "must be one line",
+      "pointer": "/findings/0/path"
+    }
+  ],
+  "path-trailing-newline": [
+    {
+      "message": "must be one line",
+      "pointer": "/findings/0/path"
+    }
+  ],
+  "path-type": [
+    {
+      "message": "must be a string",
+      "pointer": "/findings/0/path"
+    }
+  ],
+  "path-vt": [
+    {
+      "message": "must be one line",
+      "pointer": "/findings/0/path"
+    }
+  ],
+  "pr-bad": [
+    {
+      "message": "is not in the required form",
+      "pointer": "/pr"
+    }
+  ],
+  "pr-number-zero": [
+    {
+      "message": "is not in the required form",
+      "pointer": "/pr"
+    }
+  ],
+  "pr-type": [
+    {
+      "message": "is not in the required form",
+      "pointer": "/pr"
+    }
+  ],
+  "severity-bad": [
+    {
+      "message": "is not a known severity",
+      "pointer": "/findings/0/severity"
+    }
+  ],
+  "side-bad": [
+    {
+      "message": "must be right or left",
+      "pointer": "/findings/0/side"
+    }
+  ],
+  "side-null": [
+    {
+      "message": "must be right or left",
+      "pointer": "/findings/0/side"
+    }
+  ],
+  "start-line-after-line": [
+    {
+      "message": "must be less than line",
+      "pointer": "/findings/0/start_line"
+    }
+  ],
+  "start-line-equals-line": [
+    {
+      "message": "must be less than line",
+      "pointer": "/findings/0/start_line"
+    }
+  ],
+  "start-line-type": [
+    {
+      "message": "must be an integer of at least 1",
+      "pointer": "/findings/0/start_line"
+    }
+  ],
+  "start-line-zero": [
+    {
+      "message": "must be an integer of at least 1",
+      "pointer": "/findings/0/start_line"
+    }
+  ],
+  "suggestion-line-ls": [
+    {
+      "message": "must be one line",
+      "pointer": "/findings/1/suggestion/lines/0"
+    }
+  ],
+  "suggestion-line-newline": [
+    {
+      "message": "must be one line",
+      "pointer": "/findings/1/suggestion/lines/1"
+    }
+  ],
+  "suggestion-line-type": [
+    {
+      "message": "must be a string",
+      "pointer": "/findings/1/suggestion/lines/1"
+    }
+  ],
+  "suggestion-lines-type": [
+    {
+      "message": "must be an array",
+      "pointer": "/findings/1/suggestion/lines"
+    }
+  ],
+  "suggestion-missing-lines": [
+    {
+      "message": "missing required property lines",
+      "pointer": "/findings/1/suggestion"
+    }
+  ],
+  "suggestion-on-left": [
+    {
+      "message": "is not allowed on side left",
+      "pointer": "/findings/1/suggestion"
+    }
+  ],
+  "suggestion-over-64kib": [
+    {
+      "message": "is longer than 65536 bytes of UTF-8",
+      "pointer": "/findings/1/suggestion"
+    }
+  ],
+  "suggestion-type": [
+    {
+      "message": "must be an object",
+      "pointer": "/findings/1/suggestion"
+    }
+  ],
+  "suggestion-unknown-key": [
+    {
+      "message": "unknown property",
+      "pointer": "/findings/1/suggestion"
+    }
+  ],
+  "title-257-chars": [
+    {
+      "message": "is longer than 256 characters",
+      "pointer": "/findings/0/title"
+    }
+  ],
+  "title-newline": [
+    {
+      "message": "must be one line",
+      "pointer": "/findings/0/title"
+    }
+  ],
+  "title-type": [
+    {
+      "message": "must be a string",
+      "pointer": "/findings/0/title"
+    }
+  ],
+  "unanchored-bad-head": [
+    {
+      "message": "must be 40 lowercase hex digits",
+      "pointer": "/unanchored/0/head_sha"
+    }
+  ],
+  "unanchored-bad-reason": [
+    {
+      "message": "is not a known moved reason",
+      "pointer": "/unanchored/0/reason"
+    }
+  ],
+  "unanchored-finding-bad-line": [
+    {
+      "message": "must be an integer of at least 1, or null",
+      "pointer": "/unanchored/0/finding/line"
+    }
+  ],
+  "unanchored-finding-start-after-line": [
+    {
+      "message": "must be less than line",
+      "pointer": "/unanchored/0/finding/start_line"
+    }
+  ],
+  "unanchored-item-type": [
+    {
+      "message": "must be an object",
+      "pointer": "/unanchored/0"
+    }
+  ],
+  "unanchored-missing-head": [
+    {
+      "message": "missing required property head_sha",
+      "pointer": "/unanchored/0"
+    }
+  ],
+  "unanchored-missing-reason": [
+    {
+      "message": "missing required property reason",
+      "pointer": "/unanchored/0"
+    }
+  ],
+  "unanchored-type": [
+    {
+      "message": "must be an array",
+      "pointer": "/unanchored"
+    }
+  ],
+  "unanchored-unknown": [
+    {
+      "message": "unknown property",
+      "pointer": "/unanchored/0"
+    }
+  ],
+  "unknown-top-level": [
+    {
+      "message": "unknown property",
+      "pointer": ""
+    }
+  ]
+}
