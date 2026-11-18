@@ -103,7 +103,9 @@ Each becomes a `live` test in the plan.
 | `gateway.py` | the only subprocess boundary |
 | `files.py` | state and temporary directory checks, no-follow and exclusive creation, hook directory removal, sweeping |
 | `hooks.py` | `pre-post` and `post-post` |
-| `audit.py` | audit and log records, `export` |
+| `appendfile.py` | the append-only line file under the state directory (no-follow, regular file, 0600, torn-line handling) |
+| `audit.py` | audit record pairs, write results and their aggregation, `export` |
+| `jsonlog.py` | `log.jsonl` events and the config warnings |
 | `confirm.py` | the TTY dialog, display sanitizing and the summary |
 
 ## Data model

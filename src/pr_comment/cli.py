@@ -19,7 +19,9 @@ from . import __version__, grammars
 from .actor import ActorError, resolve_run, stream_is_tty, with_me_name
 from .config import ConfigError, load_config
 from .errors import sanitize
+from .files import StateUnsafeError, open_state_dirs
 from .grammars import MAX_DECISION_IDS, MAX_THREADS
+from .jsonlog import LogWriter, write_config_warnings
 from .output import LOG, PROG, Outcome, check_outcome, error_outcome, internal_outcome, render
 
 DESCRIPTION = "Posts reviews, replies and comments to PRs, safely and with attribution."
@@ -611,12 +613,36 @@ def main(argv: list[str] | None = None) -> int:
         LOG.removeHandler(handler)
 
 
+def _log_config_warnings(args: argparse.Namespace) -> None:
+    """Write the config's warnings to log.jsonl; nothing is opened when there are none.
+
+    A state directory that is unsafe does not end the run here: the posting orders check it again
+    ([Files]) and refuse with `state_unsafe` before any write.
+    """
+    warnings = args.loaded_config.warnings
+    if not warnings:
+        return
+    try:
+        dirs = open_state_dirs()
+    except StateUnsafeError as exc:
+        LOG.warning("log.jsonl not written: %s", sanitize(str(exc)))
+        return
+    try:
+        log = LogWriter.open(dirs, verbose=args.verbose)
+        try:
+            write_config_warnings(log, warnings)
+        finally:
+            log.close()
+    finally:
+        dirs.close()
+
+
 def _load_config_into(args: argparse.Namespace) -> Outcome | None:
     """Load the config once per run into ``args.loaded_config``; an invalid config is the outcome.
 
     ``draft check`` is offline and ``export`` reads local files only: neither reads config, so a
     broken config never blocks reading the audit trail (interface.md, Commands).
-    TODO(#11): write ``loaded_config.warnings`` as ``config_warning`` log lines.
+    ``loaded_config.warnings`` go to log.jsonl as ``config_warning`` lines (a failure only warns).
     TODO(#26) and TODO(#29): callers pass the canonical repo id to ``loaded_config.for_repo``.
     TODO(#33): merge ``loaded_config.hooks_for(name, args.hook)`` when running hooks.
     """
@@ -633,6 +659,7 @@ def _load_config_into(args: argparse.Namespace) -> Outcome | None:
     # The flag rules were checked in validate_args and do not depend on the name; the config's
     # `me.name` only replaces the OS username of a TTY default actor.
     args.run = with_me_name(args.run, args.loaded_config.config.me.name)
+    _log_config_warnings(args)
     return None
 
 
