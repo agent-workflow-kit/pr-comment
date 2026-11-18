@@ -13,7 +13,6 @@ import json
 import os
 import random
 import subprocess
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +23,7 @@ from pr_comment.diffmap import DiffMapper
 from pr_comment.draft import Draft, validate_document
 from pr_comment.reanchor import (
     BASE_CHANGED,
+    CompareContractError,
     StaleHeadError,
     left_side_ok,
     mapper_from_compare,
@@ -96,7 +96,6 @@ def run(
     *,
     head: str = B,
     merge_base: str | None = MB1,
-    old_lengths: Mapping[str, int] | None = None,
 ) -> Any:
     mapper = DiffMapper.unavailable() if diff is None else DiffMapper.from_text(diff)
     return reanchor(
@@ -106,7 +105,6 @@ def run(
         base_sha=C,
         merge_base_sha=merge_base,
         mapper=mapper,
-        old_lengths=old_lengths,
     )
 
 
@@ -299,22 +297,6 @@ def test_huge_and_boundary_lines() -> None:
     assert by_id(out.draft)["f1"]["line"] == 10**30 + 1  # unknown length: the pre-check decides
 
 
-def test_line_beyond_the_length_of_a_moves_changed_when_lengths_are_known() -> None:
-    draft = make_draft(
-        [finding("f1", "a.py", 11), finding("f2", "a.py", 10), finding("f3", "z.py", 99)]
-    )
-    out = run(draft, "", old_lengths={"a.py": 10})
-    assert reasons(out) == {"f1": "changed"}
-    out = run(draft, hunk_diff("a.py", "@@ -1,0 +2 @@\n+n\n"), old_lengths={"a.py": 10})
-    assert reasons(out) == {"f1": "changed"}
-    assert by_id(out.draft)["f2"]["line"] == 11
-
-
-def test_range_start_beyond_length_moves_too() -> None:
-    draft = make_draft([finding("f1", "a.py", 12, start=11)])
-    assert reasons(run(draft, "", old_lengths={"a.py": 10})) == {"f1": "changed"}
-
-
 def test_file_level_findings_never_move_or_validate() -> None:
     gone = GONE
     draft = make_draft([finding("f1", "d", None), finding("f2", "<U+1>", None)])
@@ -381,11 +363,23 @@ def test_base_changed_wins_over_file_removed() -> None:
     assert reasons(run(draft, gone, merge_base=MB2)) == {"f1": "base_changed"}
 
 
-def test_left_finding_follows_a_rename_with_its_line() -> None:
-    diff = RENAME_100
+def test_left_finding_does_not_follow_a_rename() -> None:
+    draft = make_draft([finding("f1", "old.py", 8, side="left"), finding("f2", "old.py", None)])
+    out = run(draft, RENAME_100)
+    assert reasons(out) == {"f1": "file_removed"}
+    assert by_id(out.draft)["f2"]["path"] == "new.py"
+
+
+def test_base_changed_wins_over_a_rename_for_left_findings() -> None:
     draft = make_draft([finding("f1", "old.py", 8, side="left")])
-    f = by_id(run(draft, diff).draft)["f1"]
-    assert (f["path"], f["line"]) == ("new.py", 8)
+    assert reasons(run(draft, RENAME_100, merge_base=MB2)) == {"f1": BASE_CHANGED}
+
+
+def test_left_finding_on_an_unchanged_file_keeps_its_path_beside_a_rename() -> None:
+    draft = make_draft([finding("f1", "keep.py", 8, side="left")])
+    out = run(draft, RENAME_100)
+    assert out.moved == ()
+    assert by_id(out.draft)["f1"]["path"] == "keep.py"
 
 
 def test_left_finding_with_unavailable_diff_follows_step_three_only() -> None:
@@ -439,15 +433,28 @@ def test_force_push_moves_every_right_side_finding() -> None:
     assert reasons(out) == {"f1": "diff_unavailable", "f2": "diff_unavailable"}
 
 
+def error_document(outcome: Any) -> Doc:
+    assert outcome.document is not None
+    validate("pr-comment/cli/error.json", outcome.document)
+    return outcome.document["error"]
+
+
 def test_compare_to_sha_must_equal_b() -> None:
     with pytest.raises(StaleHeadError) as info:
         mapper_from_compare(compare("ahead", "", to_sha=C), head_sha=B)
     assert info.value.head_sha == C
     outcome = info.value.outcome()
     assert outcome.exit_code == 20
-    assert outcome.document is not None
-    assert outcome.document["error"]["reason"] == "stale_head"
-    assert outcome.document["error"]["details"] == {"head_sha": C}
+    error = error_document(outcome)
+    assert error["reason"] == "stale_head"
+    assert error["details"] == {"head_sha": C}
+
+
+def test_compare_to_sha_is_lowercased_before_the_check() -> None:
+    assert mapper_from_compare(compare("identical", "", to_sha=B.upper()), head_sha=B).available
+    with pytest.raises(StaleHeadError) as info:
+        mapper_from_compare(compare("ahead", "", to_sha=C.upper()), head_sha=B)
+    assert error_document(info.value.outcome())["details"] == {"head_sha": C}
 
 
 def test_compare_to_sha_is_checked_even_without_a_diff() -> None:
@@ -455,10 +462,79 @@ def test_compare_to_sha_is_checked_even_without_a_diff() -> None:
         mapper_from_compare(compare("diverged", None, to_sha=C), head_sha=B)
 
 
-@pytest.mark.parametrize("shape", [{}, {"to_sha": 5}, {"to_sha": B, "diff": 7}])
-def test_malformed_compare_fails_closed(shape: Doc) -> None:
-    with pytest.raises(StaleHeadError):
+@pytest.mark.parametrize(
+    "shape",
+    [
+        {},
+        {"to_sha": None},
+        {"to_sha": 5},
+        {"to_sha": "c" * 39},
+        {"to_sha": "g" * 40},
+        {"to_sha": B, "diff": 7},
+        {"to_sha": C, "diff": 7},
+        {"to_sha": B, "diff": b"x"},
+        [],
+        "x",
+        5,
+    ],
+)
+def test_malformed_compare_fails_closed_with_a_contract_error(shape: Any) -> None:
+    with pytest.raises(CompareContractError) as info:
         mapper_from_compare(shape, head_sha=B)
+    outcome = info.value.outcome()
+    assert outcome.exit_code == 12
+    error = error_document(outcome)
+    assert error["code"] == "lower_contract_mismatch"
+    assert error["details"] == {"command": "compare", "lower_version": None}
+
+
+@pytest.mark.parametrize("from_sha", [None, 5, "a" * 39, C, "g" * 40])
+def test_compare_from_sha_must_equal_a_when_a_is_given(from_sha: Any) -> None:
+    shape = compare("ahead", "")
+    shape["from_sha"] = from_sha
+    with pytest.raises(CompareContractError):
+        mapper_from_compare(shape, head_sha=B, from_sha=A)
+
+
+def test_compare_from_sha_matching_a_is_accepted_in_either_case() -> None:
+    shape = compare("ahead", "")
+    shape["from_sha"] = A.upper()
+    assert mapper_from_compare(shape, head_sha=B, from_sha=A).available
+
+
+# --- lines past the end of A -------------------------------------------------------------
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_line_past_the_end_of_a_is_not_checked_and_lands_past_the_end_of_b(
+    tmp_path: Path, changed: bool
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, home, "init", "-q", "-b", "main")
+    old = [f"line{i}" for i in range(1, 11)]
+    (repo / "f.txt").write_text("\n".join(old) + "\n")
+    git(repo, home, "add", "f.txt")
+    git(repo, home, "commit", "-q", "-m", "a")
+    sha_a = git(repo, home, "rev-parse", "HEAD").strip()
+    new = ["new1", "new2", *old[1:]] if changed else old
+    (repo / "f.txt").write_text("\n".join(new) + "\n")
+    git(repo, home, "commit", "-q", "-a", "--allow-empty", "-m", "b")
+    sha_b = git(repo, home, "rev-parse", "HEAD").strip()
+    diff = git(repo, home, "diff", sha_a, sha_b)
+    draft = make_draft([finding("f1", "f.txt", 15)])
+    out = reanchor(
+        draft,
+        head_sha=sha_b,
+        base_ref="main",
+        base_sha=C,
+        merge_base_sha=None,
+        mapper=DiffMapper.from_text(diff),
+    )
+    placed = by_id(out.draft)["f1"]
+    assert placed["line"] > len(new)
 
 
 # --- input checks -------------------------------------------------------------------------
@@ -654,7 +730,6 @@ def test_oracle_git_diff_every_mapped_finding_lands_on_the_same_text(
         base_sha=C,
         merge_base_sha=None,
         mapper=DiffMapper.from_text(diff),
-        old_lengths={"f.txt": len(old)},
     )
     kept = by_id(out.draft)
     removed_lines = removed_by_git(old, new)
@@ -725,9 +800,46 @@ def test_oracle_git_rename_and_delete(tmp_path: Path) -> None:
     )
     got = by_id(out.draft)
     assert (got["r"]["path"], got["r"]["line"]) == ("new name.txt", 6)
-    assert (got["l"]["path"], got["l"]["line"]) == ("new name.txt", 5)
     assert got["fl"]["path"] == "new name.txt"
-    assert reasons(out) == {"g": "file_removed", "gl": "file_removed"}
+    assert reasons(out) == {"l": "file_removed", "g": "file_removed", "gl": "file_removed"}
+
+
+def test_oracle_git_rename_onto_a_deleted_path_does_not_move_a_left_comment_to_wrong_code(
+    tmp_path: Path,
+) -> None:
+    # Base has X and Y. A deletes Y and edits X. B does `git mv X Y`. A-to-B reports X renamed
+    # to Y, but base-to-B shows X deleted and Y modified: base X line 5 is not base Y line 5.
+    home = tmp_path / "home"
+    home.mkdir()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, home, "init", "-q", "-b", "main")
+    x = "".join(f"x content {i}\n" for i in range(1, 21))
+    y = "".join(f"y content {i}\n" for i in range(1, 21))
+    (repo / "X").write_text(x)
+    (repo / "Y").write_text(y)
+    git(repo, home, "add", ".")
+    git(repo, home, "commit", "-q", "-m", "base")
+    git(repo, home, "rm", "-q", "Y")
+    (repo / "X").write_text(x.replace("x content 15\n", "x edited\n"))
+    git(repo, home, "commit", "-q", "-am", "a")
+    sha_a = git(repo, home, "rev-parse", "HEAD").strip()
+    git(repo, home, "mv", "X", "Y")
+    git(repo, home, "commit", "-q", "-m", "b")
+    sha_b = git(repo, home, "rev-parse", "HEAD").strip()
+    diff = git(repo, home, "diff", "-M", sha_a, sha_b)
+    assert "rename from X" in diff
+    draft = make_draft([finding("l", "X", 5, side="left"), finding("fl", "X", None)])
+    out = reanchor(
+        draft,
+        head_sha=sha_b,
+        base_ref="main",
+        base_sha=C,
+        merge_base_sha=MB1,
+        mapper=DiffMapper.from_text(diff),
+    )
+    assert reasons(out) == {"l": "file_removed"}
+    assert by_id(out.draft)["fl"]["path"] == "Y"
 
 
 SPIKE_SCENARIO = Path(__file__).resolve().parent / "fixtures" / "spike_a" / "scenario"

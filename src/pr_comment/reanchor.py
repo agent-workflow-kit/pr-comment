@@ -7,7 +7,9 @@ finding moves, with a reason, to ``unanchored``, so none is dropped and none lan
 
 Right-side findings go through ``DiffMapper.map_right``. Left-side findings refer to the base file
 at the merge-base, so they are never mapped through the head-to-head diff: they keep their lines
-only when both merge-bases are known and equal (step 3), and follow a rename of their file.
+only when both merge-bases are known and equal (step 3), and move (``file_removed``) when the
+A-to-B diff deletes or renames their file, since a rename between A and B does not say which file
+the base lines belonged to.
 """
 
 from __future__ import annotations
@@ -23,26 +25,35 @@ from .draft import Draft
 from .output import Outcome, error_outcome
 
 BASE_CHANGED: Final = "base_changed"
-CHANGED: Final = "changed"
 FILE_REMOVED: Final = "file_removed"
 
 _SHA: Final = re.compile(r"[0-9a-f]{40}")
 
 
 class StaleHeadError(Exception):
-    """``compare`` answered for another head than B (or not at all): exit 20 ``stale_head``."""
+    """``compare`` answered for another head than B: exit 20 ``stale_head``."""
 
-    def __init__(self, head_sha: str | None) -> None:
+    def __init__(self, head_sha: str) -> None:
         super().__init__("compare did not answer for the pinned head")
         self.head_sha = head_sha
 
     def outcome(self) -> Outcome:
-        details: dict[str, Any] = {"head_sha": self.head_sha}
         return error_outcome(
             "refused",
             "the head moved while the draft was being re-anchored; rerun with the current head",
             reason="stale_head",
-            details=details,
+            details={"head_sha": self.head_sha},
+        )
+
+
+class CompareContractError(Exception):
+    """``compare`` is not shaped as forgectl's schema says: exit 12 ``lower_contract_mismatch``."""
+
+    def outcome(self) -> Outcome:
+        return error_outcome(
+            "lower_contract_mismatch",
+            "forgectl compare returned a result that does not match its contract",
+            details={"command": "compare", "lower_version": None},
         )
 
 
@@ -62,23 +73,39 @@ class Reanchored:
     moved: tuple[MovedFinding, ...]
 
 
-def mapper_from_compare(compare: Mapping[str, Any] | None, *, head_sha: str) -> DiffMapper:
+def _sha_field(compare: Mapping[str, Any], name: str) -> str:
+    value = compare.get(name)
+    if not isinstance(value, str) or _SHA.fullmatch(value.lower()) is None:
+        raise CompareContractError(name)
+    return value.lower()
+
+
+def mapper_from_compare(
+    compare: Mapping[str, Any] | None, *, head_sha: str, from_sha: str | None = None
+) -> DiffMapper:
     """The right-side mapper for a parsed ``forgectl compare`` result (step 1).
 
-    ``compare`` is ``None`` when forgectl exited 20 ``too_large``. Its ``to_sha`` must equal
-    ``head_sha`` (B), else ``StaleHeadError``; a result that is not shaped as the schema says fails
-    the same way, closed. ``diff: null`` (``behind``, ``diverged``, ``unavailable``), ``too_large``
-    and a diff that cannot be read unambiguously give an unavailable mapper, which moves every
-    right-side finding (``diff_unavailable``). An ``identical`` compare has an empty diff.
+    ``compare`` is ``None`` when forgectl exited 20 ``too_large``. A result that is not shaped as
+    the schema says (not a mapping, a ``to_sha`` that is not 40 hex characters, a ``diff`` that is
+    neither text nor null, or, when ``from_sha`` (A) is given, a ``from_sha`` that is not A) raises
+    ``CompareContractError``, failing closed. Otherwise its ``to_sha`` (lowercased) must equal
+    ``head_sha`` (B), else ``StaleHeadError``. ``diff: null`` (``behind``, ``diverged``,
+    ``unavailable``), ``too_large`` and a diff that cannot be read unambiguously give an
+    unavailable mapper, which moves every right-side finding (``diff_unavailable``). An
+    ``identical`` compare has an empty diff.
     """
     if compare is None:
         return DiffMapper.unavailable()
-    to_sha = compare.get("to_sha")
-    if not isinstance(to_sha, str) or to_sha != head_sha:
-        raise StaleHeadError(to_sha if isinstance(to_sha, str) else None)
+    if not isinstance(compare, Mapping):  # pyright: ignore[reportUnnecessaryIsInstance]
+        raise CompareContractError("compare")
+    to_sha = _sha_field(compare, "to_sha")
+    if from_sha is not None and _sha_field(compare, "from_sha") != from_sha:
+        raise CompareContractError("from_sha")
     diff = compare.get("diff")
     if diff is not None and not isinstance(diff, str):
-        raise StaleHeadError(None)
+        raise CompareContractError("diff")
+    if to_sha != head_sha:
+        raise StaleHeadError(to_sha)
     return DiffMapper.from_text(diff)
 
 
@@ -107,15 +134,13 @@ def reanchor(
     base_sha: str | None,
     merge_base_sha: str | None,
     mapper: DiffMapper,
-    old_lengths: Mapping[str, int] | None = None,
 ) -> Reanchored:
     """Move ``draft``'s findings from its anchor head (A) onto ``head_sha`` (B).
 
     ``base_ref`` and ``base_sha`` come from ``show`` at B; ``merge_base_sha`` is the ``diff --json``
     read of step 3 (``None`` when unknown or not read). ``mapper`` is the A-to-B diff; when B
-    equals A it is ignored and lines are kept. ``old_lengths`` optionally gives the line count of
-    files at A (keyed by path); a right-side line past it moves ``changed``. Without it a line past
-    the end of an unchanged file is left to the pre-check at B (``invalid_position``).
+    equals A it is ignored and lines are kept. A right-side line past the end of A's file is not
+    checked here: it maps past the end of B's file and the pre-check at B moves it.
     Raises ``ValueError`` for a malformed sha. The source draft is not modified.
     """
     _check_sha("head_sha", head_sha)
@@ -133,7 +158,7 @@ def reanchor(
     kept: list[dict[str, Any]] = []
     moved: list[MovedFinding] = []
     for source in findings:
-        placed, reason = _place(source, mapper, left_ok, old_lengths)
+        placed, reason = _place(source, mapper, left_ok)
         if placed is not None:
             kept.append(placed)
         else:
@@ -168,10 +193,7 @@ def reanchor(
 
 
 def _place(
-    source: dict[str, Any],
-    mapper: DiffMapper,
-    left_ok: bool,
-    old_lengths: Mapping[str, int] | None,
+    source: dict[str, Any], mapper: DiffMapper, left_ok: bool
 ) -> tuple[dict[str, Any] | None, str | None]:
     """The finding at B, or ``(None, reason)`` when it moves."""
     path: str = source["path"]
@@ -187,15 +209,11 @@ def _place(
         if not left_ok:
             return None, BASE_CHANGED
         fate = mapper.follow_file(path)
-        if fate.removed:
+        if fate.removed or _followed(path, fate.path) != path:
+            # A rename between A and B says nothing about which file the base lines belonged to.
             return None, FILE_REMOVED
-        placed["path"] = _followed(path, fate.path)
         return placed, None
     start: int | None = source.get("start_line")
-    if old_lengths is not None:
-        length = old_lengths.get(path)
-        if length is not None and line > length:
-            return None, CHANGED
     result = mapper.map_right(path, line, start)
     if not isinstance(result, Mapped):
         return None, str(result.reason)
