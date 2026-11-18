@@ -1,0 +1,12 @@
+diff --git a/f.txt b/f.txt
+index c6aa3e4..ea255b5 100644
+--- a/f.txt
++++ b/f.txt
+@@ -2,0 +3 @@ line02
++ins
+@@ -8 +8,0 @@ line07
+-line08
+@@ -15,0 +16,3 @@ line15
++x
++y
++z
