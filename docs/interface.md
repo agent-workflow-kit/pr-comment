@@ -11,7 +11,7 @@ References: architecture (`../awkit-docs/architecture.md`) sections 5.2, 12.4, 1
 ### Identifiers
 
 - A PR is given as a URL or `host/<full project path>#N` (GitLab MR numbers without `!`). pr-comment reads it with `forgectl show` before any other host step and uses forgectl's canonical `pr` (the `#N` form) and `pr_id` everywhere: in dedupe keys, hooks, audit records, the attribution line's `{sha}` and `repos.<id>` lookups.
-- pr-comment never reimplements forgectl's reference grammar. It only rejects an argument that is neither `https://...` nor `<something>#<digits>`, or that starts with `-` (exit 2 `invalid_pr`), and lets forgectl parse the rest.
+- pr-comment never reimplements forgectl's reference grammar. It only rejects an argument that is neither `https://...` nor `<something>#<digits>` (printable ASCII only, no space or control character), or that starts with `-` (exit 2 `invalid_pr`), and lets forgectl parse the rest.
 - The repo id is `host/<full project path>`, taken from `show`'s `repo`. pr-comment never derives a repo from the working directory.
 - Comment, review and thread ids are forgectl's (forgectl, section Identifiers): `gh:ic:`, `gh:rc:`, `gh:rt:`, `gh:r:`, `gl:d:`, `gl:n:`. pr-comment treats them as opaque.
 - `draft_id` is 26 characters of Crockford base32 (`^[0-9A-HJKMNP-TV-Z]{26}$`), chosen once by whoever creates a draft; [`draft new`](#draft-new) writes a ULID.
@@ -21,11 +21,14 @@ References: architecture (`../awkit-docs/architecture.md`) sections 5.2, 12.4, 1
 
 - The actor comes from `--actor` (grammar `^(human|auto):[A-Za-z0-9._@-]{1,64}$`); the default is `human:<me.name>` when stdin is a TTY, else `auto:unknown`.
 - `me.name` must match `^[A-Za-z0-9._@-]{1,64}$`; an OS username that does not gives `human:unknown`.
+- The default `me.name` is the username from the password database (`pwd.getpwuid`), never read from `USER`, `LOGNAME` or any other environment variable; a failed lookup gives `human:unknown`.
 - A run is **interactive** when stdin and stderr are TTYs, the actor is not `auto:`, `--yes` is not given and no body or draft is read from stdin (`-`).
 - `--body-file -` or `--draft-file -` with stdin a TTY exits 2 (`usage`).
 - Human-only flags (`--allow-mention`, `--override-escalation=<scope>`) require a `human:` actor; otherwise exit 2. `--allow-mention` also requires an interactive run (exit 2 otherwise); its names show in the dialog summary and the audit record (`inputs.allowed_mentions`, `override: ["allow_mention"]`). `--override-escalation=<scope>` needs only the `human:` actor (an interactive run, or `--actor human:<user>`) and works with `--yes`, which is how a caller with its own dialog passes it.
 - A human who pipes a draft (`--draft-file -`) gets the default actor `auto:unknown` (stdin is not a TTY) and the automatic attribution; such a pipeline passes `--actor human:<me>` and `--yes`, or the human writes the draft to a file and runs `review --draft-file <path>`.
 - As in forgectl, human-only rules are advisory against a same-user process that claims `--actor human:<user>`; the audit record shows how the actor was obtained (`actor_source`, `stdin_tty`).
+- `actor_source` is `flag` when `--actor` is given (even when it equals the default), `tty` when `--actor` is absent and stdin is a TTY (actor `human:<me.name>`, or `human:unknown`), and `default` when `--actor` is absent and stdin is not a TTY (`auto:unknown`).
+- These usage rules run before other flag-combination usage errors, in this order: `-` with a TTY stdin, then `--allow-mention`, then `--override-escalation`. `draft check -` is not refused on a TTY stdin (it has no dialog) but is never interactive.
 
 ### Posting plan
 
@@ -47,7 +50,7 @@ The review draft is a JSON document described by [schemas/review-draft.json](../
 | `draft_id` | string | yes | See [Identifiers](#identifiers). Kept when a draft is edited or re-anchored. |
 | `pr` | string | yes | The PR in `host/<full project path>#N` form. Compared with `show`'s `pr`, host and path in ASCII lowercase. If they differ, pr-comment runs `forgectl show <draft pr>`; the same `pr_id` (a renamed repo) is accepted, otherwise exit 2 `draft_pr_mismatch` (`details.draft_pr`, `details.pr`). |
 | `anchor.head_sha` | string | yes | 40 lowercase hex. The head the findings' lines refer to. |
-| `anchor.base_ref` | string | yes | The base branch name the draft was written against. It must follow forgectl's branch grammar (git `check-ref-format`, no leading `-`, no space, `~^:?*[\`, `..`, `@{` or control character; checked by the schema and `draft check`). |
+| `anchor.base_ref` | string | yes | The base branch name the draft was written against. It must follow forgectl's branch grammar (git `check-ref-format`: 1 to 1024 characters, no leading `-`, not a lone `@`, no space, `~^:?*[\`, `..`, `@{` or control character, no path component starting with `.`; checked by the schema and `draft check`). `draft check` additionally refuses `refs` and anything starting with `refs/`, and any control, format, surrogate or line or paragraph separator character, which the schema cannot express. |
 | `anchor.base_sha` | string or null | yes | The base branch tip at drafting time; informational. |
 | `anchor.merge_base_sha` | string or null | yes | forgectl `diff --json` `merge_base_sha` at drafting time; used for left-side findings on re-anchor. |
 | `event` | string | yes | `comment` or `request_changes`. `approve` is never a draft event; see `--approve`. Changing a posted draft's `event` while keeping its `draft_id` reuses the dedupe key, so the new event does not post; a changed event needs a new draft (`draft new --from`). |
@@ -268,7 +271,7 @@ Approves the PR at a pinned head and base, following the [Approve order](#approv
 
 `pr-comment resolve|unresolve <pr> --thread <id> [--thread <id>]...`
 
-Resolves or unresolves at most 100 review threads (`gh:rt:` or `gl:d:` only; forgectl, section Commands, `resolve` and `unresolve`), following the [Resolve order](#resolve-order).
+Resolves or unresolves review threads (`gh:rt:` or `gl:d:` only; forgectl, section Commands, `resolve` and `unresolve`), following the [Resolve order](#resolve-order). At most 100 `--thread` occurrences are accepted; duplicates are then dropped.
 
 ### `draft check`
 
@@ -302,9 +305,15 @@ Prints audit records (or, with `--log`, log records) as JSONL, oldest first; wit
 | `--override-escalation=<scope>` | Human-only, repeatable; `scope` is `pr-comment` or `forgectl`, as in the envelope's `escalated_by`. `pr-comment` counts exit 13 from pr-comment's own `pre-post` hooks as allow; `forgectl` passes `--override-escalation` to every forgectl write. A veto still vetoes. Without a value: exit 2 (`usage`). It works with `--yes` (a caller's own dialog). A caller that gets exit 13 `escalated` from one scope and reruns the command with that scope runs it again as a new run: every `pre-post` hook runs again and the run writes its own audit record pair. Recorded in audit whenever given. |
 | `--actor <actor>` | See [Actors and interactive runs](#actors-and-interactive-runs). |
 | `--decision-id <id>` | Repeatable, at most 32, grammar `^[A-Za-z0-9._:@/-]{1,128}$`. Recorded in audit and passed to forgectl. |
-| `--hook <name>=<cmd>` | Per-invocation hook, run after configured hooks ([Hooks](#hooks)). |
+| `--hook <name>=<cmd>` | Repeatable. Per-invocation hook, run after configured hooks ([Hooks](#hooks)). |
 | `--verbose`, `--quiet` | More or less human output on stderr. |
 | `--version` | Print the version. |
+
+- A global flag is accepted before the command, after it, and, for `draft check` and `draft new`, between `draft` and its subcommand; repeatable flags collect the values from every position.
+- A scalar global flag (`--config`, `--actor`, `--expect-plan`) given more than once with different values, in any position, exits 2 (`usage`, "<flag> given more than once with different values"); the same value given twice is accepted.
+- `--` before the command (or between `draft` and its subcommand) exits 2 (`usage`).
+- A command line may have at most 1024 arguments.
+- `-h` and `--help` always print plain-text help on stdout and exit 0, with or without `--json`.
 
 ## Review order
 
@@ -356,7 +365,7 @@ On GitLab an approval with a body is a note followed by the approval, so a failu
 
 ## Human output
 
-Every untrusted string pr-comment shows on a terminal (the dialog, `--dry-run` human output, messages, `hook_stderr`, forgectl messages) is displayed with forgectl's Sanitizing rules: Cc except tab and LF, Cf, Cs, Co, Cn, Zl, Zp and forgectl's listed invisible code points become `<U+XXXX>`; one-line fields also mark tab and LF. The posted text is not changed by display (C0 and C1 controls are refused earlier, [Text pipeline](#text-pipeline)). `--json` output is not display-sanitized; its untrusted fields are marked in the schemas.
+Every untrusted string pr-comment shows on a terminal (the dialog, `--dry-run` human output, messages, `hook_stderr`, forgectl messages) is displayed with forgectl's Sanitizing rules: Cc except tab and LF, Cf, Cs, Co, Cn, Zl, Zp and forgectl's listed invisible code points become `<U+XXXX>`; one-line fields also mark tab and LF. The posted text is not changed by display (C0 and C1 controls are refused earlier, [Text pipeline](#text-pipeline)). `--json` output is not display-sanitized, the error `message` included; its untrusted fields are marked in the schemas. `--quiet` wins over `--verbose`. Human output of an error is its one-line message, plus code, reason, landed and retry with `--verbose`; `resolve`, `unresolve` and `draft check` print a result document on some non-zero exits without an `error`, so their handlers supply the human lines for those exits.
 
 ## Automatic approval guard
 
@@ -467,8 +476,8 @@ Codes 0–21 follow design guide section 4.2. pr-comment defines no codes of 22 
   | `outcome_partial`, backend `github` | `false` (forgectl's dedupe hit with the state gone: no write) | `new_key` |
   | `quick_action_ran`, `approved_stale_head`, forgectl's `audit_failed` | `true` | `none` |
 
-  `same_command`: rerunning the same command cannot duplicate text and can complete it; for `review`, when the rerun exits 20 `stale_head`, add `--reanchor-to <current head>`. `new_key`: the same key cannot complete it; post a new draft or pass `--dedupe-key`. `none`: it landed, or a human must act first. The backend is `show`'s `backend`.
-- `hook` and `hook_stderr` (untrusted, at most 4096 bytes) name only pr-comment's own vetoing or escalating hook; a forgectl hook's veto has them in `lower_error`. With several escalations, `hook_stderr` is the first's.
+  `same_command`: rerunning the same command cannot duplicate text and can complete it; for `review`, when the rerun exits 20 `stale_head`, add `--reanchor-to <current head>`. `new_key`: the same key cannot complete it; post a new draft or pass `--dedupe-key`. `none`: it landed, or a human must act first. The backend is `show`'s `backend`. For `host_rejected` the presence of the `details.leftover_drafts` key decides the pair, whatever its value (so a count of 0 still means `none`, which never invites a rerun that could post twice); the value is an integer of at least 0, as in the schema. Own `audit_failed` always follows a write, so its `landed` and `retry` are always that write's; `lower_contract_mismatch` has them only when it follows a write.
+- `hook` and `hook_stderr` (untrusted, at most 4096 bytes) name only pr-comment's own vetoing or escalating hook; a forgectl hook's veto has them in `lower_error`. With several escalations, `hook_stderr` is the first's. The cut to 4096 bytes is silent: no marker is added.
 - `escalated_by` (`pr-comment` or `forgectl`) and `escalated_hooks` (`[{hook, index}]`, from pr-comment's hooks or copied from forgectl's envelope) are set on `escalated`, null otherwise; `escalated_by` is the scope a caller passes to `--override-escalation=<scope>`.
 - Own and passed-through details: an own `stale_head` always has `details.head_sha`; a passed-through one has forgectl's details.
 - `details` by code: `stale_head` → `head_sha`; `stale_base` → `base_ref`; `invalid_draft` → `errors: [{pointer, message}]`; `invalid_text` → `pointer`, `kind`; `unsupported_draft_version` → `supported`; `draft_pr_mismatch` → `draft_pr`, `pr`; `tool_missing` → `install`; `lower_contract_mismatch` → `command` (the forgectl subcommand), `lower_version` (string or null); `config_invalid` → `key`; `invalid_position` → `invalid` (forgectl's items); `host_rejected` → `leftover_drafts`; `body_too_large` → forgectl's details plus `role`; `not_found` → `what` (pr, to or thread), `id`; `plan_changed` → `plan_sha256`; `audit_failed` → `outcome` (the result document).
@@ -502,7 +511,7 @@ Configured as `hooks.<name>`, a list of `{cmd, timeout, async, with_text}` (desi
 | `forgectl_bin` | `forgectl` | Path or name of forgectl (binding A); see [forgectl edge](#forgectl-edge). |
 | `forgectl_config` | unset | Passed to forgectl as `--config`. |
 | `timeout` | `120s` | Budget per forgectl call, passed as `--timeout`. |
-| `me.name` | OS username | Used for the default actor and `{user}`. |
+| `me.name` | OS username (password database) | Used for the default actor and `{user}`. |
 | `footer.human` | see [Footers and marker](#footers-and-marker) | String or `false`. |
 | `footer.auto` | see Footers and marker | A non-empty string, never `false`. |
 | `mentions.policy` | `neutralize` | `neutralize` or `allow`. |
@@ -524,7 +533,7 @@ Configured as `hooks.<name>`, a list of `{cmd, timeout, async, with_text}` (desi
 - Binding A: pr-comment calls `forgectl_bin` and parses the documented output. It uses `show`, `diff --json`, `files`, `compare`, `comments`, `whoami`, `review`, `comment`, `reply`, `approve`, `resolve`, `unresolve` and `--version`, and every write's `--dry-run` for the [pre-check](#pre-check). No version check is made up front; compatibility is checked field by field.
 - `forgectl_bin` is a bare name or an absolute path. A bare name resolves only against absolute `PATH` entries, and forgectl runs with a `PATH` of only absolute entries.
 - forgectl runs with an argv list (no shell), pr-comment's environment, and `--json`. Reads run with stdin `/dev/null`. Writes and their pre-checks get their input on stdin, with `-` as a separate argv element as forgectl documents (`--file <path|->`): `forgectl review <pr> --file - ...`, `comment|reply|approve ... --body-file - ...`. pr-comment writes the whole input, then closes stdin, while it reads stdout and stderr concurrently. A broken pipe (forgectl exiting early) is not an error of its own: the call ends with forgectl's exit status, or with `lower_contract_mismatch` when forgectl exits 0 without valid output. Bodies and review inputs never travel in argv, environment or files.
-- pr-comment validates every value it forwards before any read, and passes each as `--flag=value` (the stdin `-` above excepted), so no value can be read as an option: `--to` against forgectl's id forms (`gh:ic:`, `gh:rc:`, `gh:rt:`, `gh:r:` plus `[A-Za-z0-9_=-]{1,100}`, `gl:d:` plus 40 hex, `gl:n:` plus an integer), `--thread` against the thread forms, `--expected-head` and `--reanchor-to` as 40 hex (uppercase lowered), `--expected-base` and `anchor.base_ref` against the branch grammar, `--dedupe-key` and `--decision-id` (including hook-supplied ids) against their grammars, `--actor` against the actor grammar, `--timeout` (config `timeout` or `PR_COMMENT_TIMEOUT`) against the duration grammar of [schemas/defs.json](../schemas/defs.json), and the forgectl config path (`forgectl_config` or `PR_COMMENT_FORGECTL_CONFIG`, passed as `--config=<path>`) as a non-empty path that does not start with `-`. A caller's value that fails exits 2 `usage` naming the flag; a configured `timeout` or `forgectl_config` that fails exits 2 `config_invalid` (`details.key`). A decision id supplied by a hook that fails its grammar is the exception: it is dropped with a warning ([Hooks](#hooks)), never exit 2.
+- pr-comment validates every value it forwards before any read, and passes each as `--flag=value` (the stdin `-` above excepted), so no value can be read as an option: `--to` against forgectl's id forms (`gh:ic:`, `gh:rc:`, `gh:rt:`, `gh:r:` plus `[A-Za-z0-9_=-]{1,100}`, `gl:d:` plus 40 hex, `gl:n:` plus an integer), `--thread` against the thread forms, `--expected-head` and `--reanchor-to` as 40 hex (uppercase lowered), `--expected-base` and `anchor.base_ref` against the branch grammar, `--dedupe-key` and `--decision-id` (including hook-supplied ids) against their grammars, `--actor` against the actor grammar, `--timeout` (config `timeout` or `PR_COMMENT_TIMEOUT`) against the duration grammar of [schemas/defs.json](../schemas/defs.json) (a bare number string included) and forgectl's limit of 100 years; a number is forwarded as a plain decimal string, and the forgectl config path (`forgectl_config` or `PR_COMMENT_FORGECTL_CONFIG`, passed as `--config=<path>`) as a non-empty path that does not start with `-` and holds no NUL or lone surrogate. A `--hook` command holds none either. A caller's repeated single-valued flag with different values exits 2 `usage`, and a parser error never repeats a caller's value. A caller's value that fails exits 2 `usage` naming the flag; a configured `timeout` or `forgectl_config` that fails exits 2 `config_invalid` (`details.key`). A decision id supplied by a hook that fails its grammar is the exception: it is dropped with a warning ([Hooks](#hooks)), never exit 2.
 - A missing forgectl exits 12 `tool_missing` with its install command in `details.install`.
 - pr-comment checks forgectl's output by the fields it uses (unknown fields ignored, so additive forgectl releases keep working). A missing or ill-typed field exits 12 `lower_contract_mismatch` with `details.command` and `details.lower_version` (the first line of `forgectl --version`, display-sanitized, at most 64 characters, or null). Nothing is retried. `forgectl --version` is read only for `details.lower_version`. Supported: forgectl 0.1.x. pr-comment relies on forgectl promising `details.invalid[].index` (forgectl's error details) and the dedupe Hit fields `already_posted`, `ids` and `review_id` on a real post.
 - `anchor.base_ref` is passed as `--expected-base=<ref>`.

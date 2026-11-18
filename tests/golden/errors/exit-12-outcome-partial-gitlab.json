@@ -1,0 +1,24 @@
+{
+  "error": {
+    "code": "outcome_partial",
+    "decision_ids": [],
+    "details": {
+      "landed": {
+        "ids": [
+          "n1"
+        ],
+        "thread_ids": []
+      }
+    },
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": null,
+    "hook_stderr": null,
+    "landed": true,
+    "lower_error": null,
+    "message": "approval failed after the note",
+    "reason": null,
+    "retry": "same_command",
+    "retry_after": null
+  }
+}

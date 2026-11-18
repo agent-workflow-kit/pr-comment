@@ -91,7 +91,8 @@ Each becomes a `live` test in the plan.
 
 | Module | Responsibility |
 |---|---|
-| `cli.py` | argparse, global flags, actor resolution, interactive detection |
+| `cli.py` | argparse, global flags, actor resolution, interactive detection, dispatch (`HANDLERS`) |
+| `grammars.py` | the value grammars of every forwarded flag, config value and hook-supplied decision id, shared by `cli.py` and, once they land, `config.py` and `hooks.py` |
 | `config.py` | Pydantic config, drop-ins, environment, per-repo merge, footer placeholder validation |
 | `draft.py` | draft loading (no-follow, caps), schema, version and consistency checks, `draft check`, `draft new` |
 | `diffmap.py` | unified-diff parser and hunk mapping for re-anchoring |
@@ -101,7 +102,8 @@ Each becomes a `live` test in the plan.
 | `gateway.py` | the only subprocess boundary |
 | `hooks.py` | `pre-post` and `post-post` |
 | `audit.py` | audit and log records, `export` |
-| `confirm.py` | the TTY dialog, display sanitizing and the summary |
+| `display.py` | display sanitizing with forgectl's rules (`sanitize_text`, `sanitize_line`, `sanitize_bytes`) and the shared predicate `is_marked` / `count_marked` |
+| `confirm.py` | the TTY dialog and the summary (shows untrusted text through `display.py`) |
 
 ## Data model
 

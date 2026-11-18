@@ -1,0 +1,19 @@
+{
+  "error": {
+    "code": "outcome_unknown",
+    "decision_ids": [
+      "d1"
+    ],
+    "details": null,
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": null,
+    "hook_stderr": null,
+    "landed": null,
+    "lower_error": null,
+    "message": "the call timed out",
+    "reason": null,
+    "retry": "same_command",
+    "retry_after": null
+  }
+}

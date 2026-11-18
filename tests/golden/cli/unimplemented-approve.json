@@ -1,0 +1,17 @@
+{
+  "error": {
+    "code": "internal",
+    "decision_ids": [],
+    "details": null,
+    "escalated_by": null,
+    "escalated_hooks": null,
+    "hook": null,
+    "hook_stderr": null,
+    "landed": null,
+    "lower_error": null,
+    "message": "approve is not implemented yet",
+    "reason": null,
+    "retry": null,
+    "retry_after": null
+  }
+}
