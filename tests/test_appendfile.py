@@ -326,3 +326,81 @@ def test_concurrent_processes_never_interleave_lines(dirs: files.StateDirs) -> N
 
     seen = {(d["tag"], d["i"]) for d in map(json.loads, lines)}
     assert len(seen) == 160
+
+
+def test_a_torn_line_that_cannot_be_ended_gets_a_newline_before_the_next_record(
+    dirs: files.StateDirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = open_file(dirs)
+    real = os.write
+    state = {"n": 0, "broken": True}
+
+    def torn(fd: int, data: bytes) -> int:
+        state["n"] += 1
+        if state["n"] == 1:
+            return real(fd, bytes(data)[:4])
+        if state["broken"]:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real(fd, data)
+
+    monkeypatch.setattr(appendfile, "os", os_proxy(write=torn))
+    with pytest.raises(AppendError) as info:
+        f.append(b'{"a":1}\n')
+    assert info.value.partial is True
+    assert target(dirs).read_bytes() == b'{"a"'
+    state["broken"] = False
+    f.append(b'{"b":2}\n')
+    f.append(b'{"c":3}\n')
+    assert target(dirs).read_bytes() == b'{"a"\n{"b":2}\n{"c":3}\n'
+
+
+def test_the_repair_newline_counts_in_the_size_cap(
+    dirs: files.StateDirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = open_file(dirs)
+    f._torn = True  # pyright: ignore[reportPrivateUsage]
+    line = b"a" * (appendfile.MAX_LINE_BYTES - 1) + b"\n"
+    with pytest.raises(AppendError) as info:
+        f.append(line)
+    assert info.value.details.get("too_large") is True
+    assert target(dirs).read_bytes() == b""
+
+
+def test_a_rename_after_the_write_is_reported_as_a_landed_partial(
+    dirs: files.StateDirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = open_file(dirs)
+    real = os.write
+
+    def write_then_rename(fd: int, data: bytes) -> int:
+        count = real(fd, data)
+        os.rename(target(dirs), dirs.state_path / "audit.old")
+        return count
+
+    monkeypatch.setattr(appendfile, "os", os_proxy(write=write_then_rename))
+    with pytest.raises(AppendError) as info:
+        f.append(b'{"a":1}\n')
+    assert info.value.partial is True
+    assert (dirs.state_path / "audit.old").read_bytes() == b'{"a":1}\n'
+
+
+def test_a_failed_fsync_marks_the_line_as_possibly_written(
+    dirs: files.StateDirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = open_file(dirs)
+
+    def bad(fd: int) -> None:
+        raise OSError(errno.EIO, "I/O error")
+
+    monkeypatch.setattr(appendfile, "os", os_proxy(fsync=bad))
+    with pytest.raises(AppendError) as info:
+        f.append(b'{"a":1}\n', sync=True)
+    assert info.value.written is True
+
+
+def test_a_file_with_a_second_hard_link_is_refused(dirs: files.StateDirs, tmp_path: Path) -> None:
+    target(dirs).write_bytes(b"")
+    os.chmod(target(dirs), 0o600)
+    os.link(target(dirs), tmp_path / "other-name")
+    with pytest.raises(AppendError, match="hard link"):
+        open_file(dirs)

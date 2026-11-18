@@ -133,6 +133,10 @@ class LowerResult:
     thread_ids: tuple[str, ...] = ()
     review_id: str | None = None
     already_posted: bool | None = None
+    #: forgectl's ``host_rejected`` with the ``details.leftover_drafts`` key present (whatever its
+    #: value): a rerun is refused until a human acts. Not part of the record; it only decides the
+    #: own ``audit_failed`` pair.
+    leftover_drafts: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -166,8 +170,9 @@ def aggregate_result(results: Sequence[str]) -> str:
     """The record result of the writes' results.
 
     One write: its own. Several: ``done`` when all are ``done`` or ``already_posted``, else
-    ``partial`` when any landed (``done``, ``already_posted`` or ``partial``), else the first
-    write that is not ``done``. Raises ``ValueError`` for no writes or an unknown result.
+    ``partial`` when any landed (``done``, ``already_posted`` or ``partial``), else
+    ``outcome_unknown`` when any write's outcome is unknown, else the first write that is not
+    ``done``. Raises ``ValueError`` for no writes or an unknown result.
     """
     if not results:
         raise ValueError("a record has at least one write")
@@ -181,18 +186,24 @@ def aggregate_result(results: Sequence[str]) -> str:
         return "done"
     if any(item in LANDED_RESULTS for item in results):
         return "partial"
+    if "outcome_unknown" in results:
+        return "outcome_unknown"
     return next(item for item in results if item not in clean)
 
 
-def write_pair_for(result: str) -> tuple[bool | None, str]:
+def write_pair_for(result: str, *, leftover_drafts: bool = False) -> tuple[bool | None, str]:
     """The ``(landed, retry)`` pair of a record result, for an own ``audit_failed``.
 
-    Anything that landed (or partly landed) is ``(True, "none")``: a rerun could post twice.
-    An unknown outcome is ``(None, "same_command")``; a write that did not land is
-    ``(False, "same_command")``.
+    Anything that landed (or partly landed) is ``(True, "none")``: a rerun could post twice
+    (forgectl's code-specific ``outcome_partial`` variants are not carried: this is the side that
+    can never double-post). ``leftover_drafts`` (a write forgectl rejected with leftover drafts,
+    and no write landed) is ``(False, "none")``: a rerun is refused until a human acts. An unknown
+    outcome is ``(None, "same_command")``; a write that did not land is ``(False, "same_command")``.
     """
     if result in LANDED_RESULTS:
         return True, "none"
+    if leftover_drafts:
+        return False, "none"
     if result == "outcome_unknown":
         return None, "same_command"
     return False, "same_command"
@@ -209,6 +220,10 @@ class WriteRecord:
     dedupe_key: str | None
     result: str
     lower: LowerResult | None
+
+    @property
+    def leftover_drafts(self) -> bool:
+        return self.lower is not None and self.lower.leftover_drafts
 
     def __post_init__(self) -> None:
         if type(self.index) is not int or self.index < 0:
@@ -370,6 +385,9 @@ class AuditTrail:
         self._record: RunRecord | None = None
         self._attempted = False
         self._done = False
+        # A write that may be on disk (partial, or fsync failed): never appended a second time.
+        self._attempted_error: AuditUnavailableError | None = None
+        self._outcome_error: AuditFailedError | None = None
 
     @classmethod
     def open(cls, dirs: StateDirs, *, clock: Clock = now_utc) -> AuditTrail:
@@ -408,32 +426,42 @@ class AuditTrail:
     def attempted(self, record: RunRecord) -> None:
         """Append the ``attempted`` record, immediately before the first forgectl write.
 
-        Raises ``AuditUnavailableError`` (nothing was sent; the call may be repeated).
+        Raises ``AuditUnavailableError`` (nothing was sent). When the append failed before any
+        byte could be on disk the call may be repeated; when the line may already be on disk
+        (a partial write, or an fsync that failed) a repeat raises the same error without
+        writing, so one ``attempt_id`` never has two ``attempted`` records.
         """
         if self._attempted:
             raise ValueError("the attempted record was already written")
+        if self._attempted_error is not None:
+            raise self._attempted_error
         try:
             line = _line(self._base(record, "attempted"))
             self._file.append(line, sync=True)
         except ValueError as exc:
             raise AuditUnavailableError(str(exc), {"path": str(AUDIT_NAME)}) from None
         except AppendError as exc:
-            raise AuditUnavailableError(
-                f"audit.jsonl cannot be appended: {exc}", exc.details
-            ) from exc
+            error = AuditUnavailableError(f"audit.jsonl cannot be appended: {exc}", exc.details)
+            if exc.written:
+                self._attempted_error = error
+            raise error from exc
         self._record = record
         self._attempted = True
 
     def outcome(self, writes: Sequence[WriteRecord], hook_decision_ids: Sequence[str] = ()) -> str:
         """Append the outcome record with every write the run tried; return its result.
 
-        Raises ``AuditFailedError`` when it cannot be appended (the call may be repeated) and
-        ``ValueError`` for a call out of order or malformed ``writes``.
+        Raises ``AuditFailedError`` when it cannot be appended and ``ValueError`` for a call out
+        of order or malformed ``writes``. When the append failed before any byte could be on disk
+        the call may be repeated; when the line may already be on disk (a partial write, or an
+        fsync that failed) a repeat raises the same error without writing.
         """
         if self._record is None or not self._attempted:
             raise ValueError("outcome needs the attempted record first")
         if self._done:
             raise ValueError("the outcome record was already written")
+        if self._outcome_error is not None:
+            raise self._outcome_error
         if not writes or [w.index for w in writes] != list(range(len(writes))):
             raise ValueError("writes are numbered 0, 1, 2, ... in order, at least one")
         if all(w.lower is None for w in writes):
@@ -443,7 +471,8 @@ class AuditTrail:
         for item in hook_decision_ids:
             grammars.check_decision_id(item)
         result = aggregate_result([w.result for w in writes])
-        pair = write_pair_for(result)
+        leftover = any(w.leftover_drafts for w in writes)
+        pair = write_pair_for(result, leftover_drafts=leftover)
         doc = self._base(self._record, result)
         doc["hook_decision_id"] = list(hook_decision_ids)
         doc["writes"] = [w.to_dict() for w in writes]
@@ -452,9 +481,12 @@ class AuditTrail:
         except ValueError as exc:
             raise AuditFailedError(str(exc), {"path": str(AUDIT_NAME)}, result, pair) from None
         except AppendError as exc:
-            raise AuditFailedError(
+            error = AuditFailedError(
                 f"the audit outcome could not be appended: {exc}", exc.details, result, pair
-            ) from exc
+            )
+            if exc.written:
+                self._outcome_error = error
+            raise error from exc
         self._done = True
         return result
 

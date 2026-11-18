@@ -386,7 +386,10 @@ AGGREGATION = [
     (["failed", "refused"], "failed"),
     (["vetoed", "failed"], "vetoed"),
     (["outcome_unknown", "failed"], "outcome_unknown"),
-    (["failed", "outcome_unknown"], "failed"),
+    (["failed", "outcome_unknown"], "outcome_unknown"),
+    (["refused", "outcome_unknown"], "outcome_unknown"),
+    (["vetoed", "outcome_unknown"], "outcome_unknown"),
+    (["outcome_unknown", "done"], "partial"),
     (["escalated", "vetoed"], "escalated"),
     (["done", "done", "failed"], "partial"),
     (["done", "done", "done"], "done"),
@@ -758,3 +761,107 @@ def test_the_clock_is_injectable(dirs: files.StateDirs) -> None:
 
 def test_module_does_not_import_jsonschema() -> None:
     assert "jsonschema" not in vars(audit)
+
+
+def test_a_repeated_attempted_after_a_failed_fsync_does_not_append_again(
+    dirs: files.StateDirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trail = AuditTrail.open(dirs)
+
+    def bad(fd: int) -> None:
+        raise OSError(errno.EIO, "io")
+
+    monkeypatch.setattr(appendfile, "os", proxy(fsync=bad))
+    with pytest.raises(AuditUnavailableError):
+        trail.attempted(run_record())
+    monkeypatch.undo()
+    with pytest.raises(AuditUnavailableError):
+        trail.attempted(run_record())
+    assert len(read_records(dirs)) == 1
+
+
+def test_a_repeated_outcome_after_a_failed_fsync_does_not_append_again(
+    dirs: files.StateDirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trail = AuditTrail.open(dirs)
+    trail.attempted(run_record())
+
+    def bad(fd: int) -> None:
+        raise OSError(errno.EIO, "io")
+
+    monkeypatch.setattr(appendfile, "os", proxy(fsync=bad))
+    with pytest.raises(AuditFailedError) as first:
+        trail.outcome([done_write()])
+    monkeypatch.undo()
+    with pytest.raises(AuditFailedError) as second:
+        trail.outcome([done_write()])
+    assert second.value.write_pair == first.value.write_pair == (True, "none")
+    assert [r["result"] for r in read_records(dirs)] == ["attempted", "done"]
+
+
+def test_a_repeated_outcome_after_a_partial_write_does_not_append_again(
+    dirs: files.StateDirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trail = AuditTrail.open(dirs)
+    trail.attempted(run_record())
+    real = os.write
+    state = {"n": 0}
+
+    def torn(fd: int, data: bytes) -> int:
+        state["n"] += 1
+        if state["n"] == 1:
+            return real(fd, bytes(data)[:10])
+        raise OSError(errno.ENOSPC, "full")
+
+    monkeypatch.setattr(appendfile, "os", proxy(write=torn))
+    with pytest.raises(AuditFailedError):
+        trail.outcome([done_write()])
+    monkeypatch.undo()
+    with pytest.raises(AuditFailedError):
+        trail.outcome([done_write()])
+    assert audit_path(dirs).read_bytes().count(b'"result":"done"') == 0
+
+
+def leftover_lower(**overrides: Any) -> LowerResult:
+    return lower(exit=12, code="host_rejected", ids=(), leftover_drafts=True, **overrides)
+
+
+@pytest.mark.parametrize(
+    ("writes", "pair"),
+    [
+        ([leftover_lower()], (False, "none")),
+        ([lower(exit=12, code="host_rejected", ids=())], (False, "same_command")),
+        ([lower(), leftover_lower()], (True, "none")),
+        ([leftover_lower(), lower(exit=12, code="outcome_unknown", ids=())], (False, "none")),
+        ([lower(exit=12, code="outcome_unknown", ids=())], (None, "same_command")),
+        (
+            [lower(exit=12, code="network_error", ids=()), lower(exit=12, code="outcome_unknown")],
+            (None, "same_command"),
+        ),
+        ([lower(exit=12, code="outcome_partial")], (True, "none")),
+    ],
+)
+def test_audit_failed_pair_with_leftover_drafts_and_unknown_outcomes(
+    dirs: files.StateDirs,
+    monkeypatch: pytest.MonkeyPatch,
+    writes: list[LowerResult],
+    pair: Any,
+) -> None:
+    trail = AuditTrail.open(dirs)
+    trail.attempted(run_record())
+    monkeypatch.setattr(
+        appendfile,
+        "os",
+        proxy(write=lambda fd, data: (_ for _ in ()).throw(OSError(errno.EIO, "io"))),
+    )
+    records = [done_write(i, lower=item) for i, item in enumerate(writes)]
+    with pytest.raises(AuditFailedError) as info:
+        trail.outcome(records)
+    assert info.value.write_pair == pair
+
+
+def test_leftover_drafts_is_not_written_to_the_record(dirs: files.StateDirs) -> None:
+    trail = AuditTrail.open(dirs)
+    trail.attempted(run_record())
+    trail.outcome([done_write(lower=leftover_lower())])
+    assert "leftover_drafts" not in read_records(dirs)[1]["writes"][0]["lower"]
