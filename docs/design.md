@@ -100,7 +100,9 @@ Each becomes a `live` test in the plan.
 | `diffmap.py` | unified-diff parser and hunk mapping for re-anchoring |
 | `textpipe.py` | text pipeline steps 1 and 2 on one untrusted text: line separators to LF, refusal of control and surrogate characters, refusal of suggestion fences |
 | `mentions.py` | mention neutralizing (`@` and its entity forms become `＠`, allowlist kept); `MentionNeutralizer` holds one run's state and names |
-| `render.py` | text pipeline, mentions; calls `neutralize.py` for `<`, `![` and the counts, finding text, suggestions, layout, attribution line and marker, dedupe keys |
+| `render.py` | text pipeline, mentions; calls `neutralize.py` for `<`, `![` and the counts, finding text, suggestions and their degrading, review body parts |
+| `assemble.py` | attribution line, body layouts, marker and `has_marker`, pre-applied forgectl neutralizing (step 6) |
+| `keys.py` | dedupe keys and `plan_sha256` |
 | `neutralize.py` | the character pass of the text pipeline (`<` and `![`, never on applicable suggestion lines) and the body counts (`raw_html`, `images`, `links`, `invisible`); `render.py` calls it |
 | `plan.py` | the posting plan shown by the dialog and `--dry-run`, and its `plan_sha256` |
 | `forge.py` | the forgectl edge: argv in `=` form, stdin input, the pre-check, result and envelope parsing by the fields pr-comment uses |

@@ -232,6 +232,13 @@ def test_empty_parts_are_left_out() -> None:
     assert build_body(["", "x", ""], LINE).text == f"{LINE}\n\n---\n\nx\n\n{MARKER}"
 
 
+def test_trailing_newlines_of_a_part_do_not_add_blank_lines() -> None:
+    assert build_body(["a\n", "b\n\n\n"], LINE).text == f"{LINE}\n\n---\n\na\n\nb\n\n{MARKER}"
+    assert build_body(["\n\n", "x"], LINE).text == f"{LINE}\n\n---\n\nx\n\n{MARKER}"
+    assert build_body(["x\n\n"], None).text == f"x\n\n{MARKER}"
+    assert build_inline("t\n\n\n").text == f"t\n\n{MARKER}"
+
+
 def test_footer_false_leaves_out_line_and_rule() -> None:
     assert build_body(["x"], None).text == f"x\n\n{MARKER}"
     assert build_body([], None).text == MARKER
@@ -332,6 +339,15 @@ def test_degraded_block_slash_line_gets_its_space_in_the_body() -> None:
     assert [lang for lang, _ in pre_blocks(body.text)] == ["text"]
 
 
+@pytest.mark.parametrize("line", ["x = 'forgectl:dedupe:abc'", "FORGECTL:Dedupe:k"])
+def test_a_suggestion_with_dedupe_text_is_degraded_never_altered_silently(line: str) -> None:
+    f = finding(suggestion={"lines": [line]}, body="b")
+    inline = render_inline_finding(f, mn(), host="github")
+    assert inline.degraded == "dedupe_text"
+    assert "suggestion\n" not in inline.text and "```text" in inline.text
+    assert [lang for lang, _ in pre_blocks(build_inline(inline.text).text)] == ["text"]
+
+
 def test_slash_line_in_the_fence_case_golden_shape() -> None:
     f = finding(suggestion={"lines": ["/x", "```"]}, body="b")
     body = build_inline(render_inline_finding(f, mn(), host="github").text)
@@ -427,6 +443,43 @@ def test_open_body_fence_cannot_pull_the_suggestion_into_live_markdown(
     after = page[page.index("open code") :]
     assert "<h1" not in after and "<a " not in after and "<strong>bold" not in after
     assert_inert(build_inline(text).text)
+
+
+REVIEW_HOSTILE = ["```", "# HEAD", "[l](http://example.com)", "*em*", "~~~~~"]
+
+
+def _live_after_open(parts: list[str]) -> None:
+    page = cmark(build_body(parts, LINE).text)
+    after = page[page.index("open code") :]
+    assert "<h1" not in after and "<a " not in after and "<em>" not in after
+
+
+def _moved_hostile() -> MovedFinding:
+    f = finding(body="plain", suggestion={"lines": REVIEW_HOSTILE})
+    return MovedFinding(f, "changed", Anchor(SHA_A, 10))
+
+
+def test_a_draft_body_that_leaves_a_fence_open_isolates_a_later_moved_suggestion() -> None:
+    parts = render_review_parts("x\n```\nopen code", [], [_moved_hostile()], mn())
+    _live_after_open(parts)
+    assert "<run split>" in parts[-1]
+
+
+def test_a_file_level_body_that_leaves_a_fence_open_isolates_a_later_moved_suggestion() -> None:
+    fl = finding(line=None, body="~~~\nopen code")
+    parts = render_review_parts("", [fl], [_moved_hostile()], mn())
+    _live_after_open(parts)
+
+
+def test_an_earlier_moved_body_that_leaves_a_fence_open_isolates_a_later_one() -> None:
+    first = MovedFinding(finding(body="```\nopen code"), "changed", Anchor(SHA_A, 3))
+    parts = render_review_parts("", [], [first, _moved_hostile()], mn())
+    _live_after_open(parts)
+
+
+def test_no_open_fence_earlier_leaves_a_moved_block_verbatim() -> None:
+    parts = render_review_parts("plain", [], [_moved_hostile()], mn())
+    assert "<run split>" not in parts[-1]
 
 
 def test_a_body_with_a_fence_run_gets_a_block_with_no_run_in_it() -> None:

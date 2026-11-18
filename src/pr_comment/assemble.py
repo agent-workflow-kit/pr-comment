@@ -144,8 +144,8 @@ def render_inline_finding(
 ) -> InlineFinding:
     """The finding text of an inline comment with its suggestion block (``host`` is ``github`` or
     ``gitlab``, forgectl's backend for the PR). The suggestion is rendered after the title and the
-    body, so mention names come out in the order the text shows them. An open code fence left by
-    the body is closed before the block (``fence.close_open_fence``)."""
+    body, so mention names come out in the order the text shows them. A body that holds a fence run
+    makes a degraded block's fence runs split (``render.render_suggestion``)."""
     rendered: list[SuggestionBlock] = []
 
     def block() -> str | None:
@@ -199,9 +199,10 @@ def build_body(parts: Sequence[str], attribution: str | None) -> Body:
     """A review, comment, reply or approve body: the attribution line, a blank line, ``---``, a
     blank line, the non-empty parts and the marker, each separated by one blank line. Without
     parts the ``---`` is left out; with ``attribution=None`` (``footer.human: false``) the line
-    and the ``---`` are left out. Parts are already rendered and neutralized (step 3)."""
+    and the ``---`` are left out. Parts are already rendered and neutralized (step 3); trailing
+    newlines of a part are dropped, so parts are separated by exactly one blank line."""
     pieces: list[str] = []
-    shown = [part for part in parts if part]
+    shown = [stripped for part in parts if (stripped := part.rstrip("\n"))]
     if attribution is not None:
         pieces.append(attribution)
         if shown:
@@ -213,7 +214,8 @@ def build_body(parts: Sequence[str], attribution: str | None) -> Body:
 
 def build_inline(finding_text: str) -> Body:
     """An inline comment: the rendered finding text, a blank line and the bare marker."""
-    pieces = [finding_text, MARKER] if finding_text else [MARKER]
+    text = finding_text.rstrip("\n")
+    pieces = [text, MARKER] if text else [MARKER]
     return _finish(_SEPARATOR.join(pieces))
 
 
