@@ -197,13 +197,15 @@ def write_pair_for(result: str, *, leftover_drafts: bool = False) -> tuple[bool 
     Anything that landed (or partly landed) is ``(True, "none")``: a rerun could post twice
     (forgectl's code-specific ``outcome_partial`` variants are not carried: this is the side that
     can never double-post). ``leftover_drafts`` (a write forgectl rejected with leftover drafts,
-    and no write landed) is ``(False, "none")``: a rerun is refused until a human acts. An unknown
-    outcome is ``(None, "same_command")``; a write that did not land is ``(False, "same_command")``.
+    and no write landed) is ``(False, "none")``: a rerun is refused until a human acts; when another
+    write's outcome is unknown too (that write may have landed) it is ``(None, "none")``. An unknown
+    outcome alone is ``(None, "same_command")``; a write that did not land is
+    ``(False, "same_command")``.
     """
     if result in LANDED_RESULTS:
         return True, "none"
     if leftover_drafts:
-        return False, "none"
+        return (None if result == "outcome_unknown" else False), "none"
     if result == "outcome_unknown":
         return None, "same_command"
     return False, "same_command"

@@ -832,7 +832,7 @@ def leftover_lower(**overrides: Any) -> LowerResult:
         ([leftover_lower()], (False, "none")),
         ([lower(exit=12, code="host_rejected", ids=())], (False, "same_command")),
         ([lower(), leftover_lower()], (True, "none")),
-        ([leftover_lower(), lower(exit=12, code="outcome_unknown", ids=())], (False, "none")),
+        ([leftover_lower(), lower(exit=12, code="outcome_unknown", ids=())], (None, "none")),
         ([lower(exit=12, code="outcome_unknown", ids=())], (None, "same_command")),
         (
             [lower(exit=12, code="network_error", ids=()), lower(exit=12, code="outcome_unknown")],
