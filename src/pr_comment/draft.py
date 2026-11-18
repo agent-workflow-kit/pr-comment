@@ -43,7 +43,7 @@ from typing import Any, Final, Protocol
 from . import grammars, textpipe
 from .forge import Forge, Show, match_draft_pr, stale_head_failure
 from .lower import LowerFailure, mismatch_outcome
-from .output import LOG, Outcome, error_outcome
+from .output import LOG, Outcome, dumps_document, error_outcome
 
 MAX_DRAFT_BYTES: Final = 16 * 1024 * 1024
 MAX_TEXT_BYTES: Final = 64 * 1024
@@ -880,6 +880,14 @@ def run_new(
         source = load_draft(from_draft, stdin=stdin).data if from_draft is not None else None
     except DraftError as exc:
         return exc.outcome()
+    # the id comes first: a clock outside the ULID range fails before any forgectl read
+    try:
+        draft_id = ulid(
+            time.time_ns() // 1_000_000 if now_ms is None else now_ms,
+            os.urandom(_ULID_ENTROPY_BYTES) if entropy is None else entropy,
+        )
+    except ValueError:
+        return error_outcome("internal", "the system clock is out of range")
     try:
         shown, merge_base = _read_anchor(forge, pr)
         if source is not None:
@@ -888,10 +896,6 @@ def run_new(
                 raise stale_head_failure(shown.head_sha)
     except LowerFailure as failure:
         return failure.outcome
-    draft_id = ulid(
-        time.time_ns() // 1_000_000 if now_ms is None else now_ms,
-        os.urandom(_ULID_ENTROPY_BYTES) if entropy is None else entropy,
-    )
     chosen = event if event is not None else ("comment" if source is None else source["event"])
     document = _skeleton(shown, merge_base, draft_id, chosen, source)
     # forgectl's strings are untrusted: a base ref the draft rules refuse (refs/..., a leading
@@ -899,7 +903,10 @@ def run_new(
     if validate_document(document) or text_issues(document):
         return mismatch_outcome(
             "show",
-            "the PR cannot be written into a draft (its base branch name is not allowed)",
+            "the PR cannot be written into a draft (a value from the host is not allowed)",
             gateway=forge.gateway,
         )
+    # the printer escapes non-ASCII text, which can make the document larger than its source
+    if len(dumps_document(document).encode("ascii")) + 1 > MAX_DRAFT_BYTES:  # + the newline
+        return _fail("draft is larger than 16 MiB").outcome()
     return Outcome(0, document, print_document=True)

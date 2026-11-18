@@ -101,11 +101,12 @@ def check_outcome(result: object) -> Outcome:
         raise TypeError("handler human lines are not a tuple of strings")
     _check_error_document(result)
     if result.document is not None:
-        _dumps(result.document)  # raises TypeError or ValueError for what JSON cannot hold
+        dumps_document(result.document)  # raises TypeError or ValueError for what JSON cannot hold
     return result
 
 
-def _dumps(document: Mapping[str, Any]) -> str:
+def dumps_document(document: Mapping[str, Any]) -> str:
+    """The JSON text the printer writes for a document (ASCII only)."""
     return json.dumps(document, ensure_ascii=True, allow_nan=False)
 
 
@@ -141,7 +142,7 @@ def render(
     if outcome.document is not None and (
         as_json or (outcome.print_document and outcome.exit_code == 0)
     ):
-        stdout = _dumps(outcome.document) + "\n"
+        stdout = dumps_document(outcome.document) + "\n"
     lines: list[str] = []
     error = _error_of(outcome.document)
     if outcome.exit_code != 0 and error is not None:

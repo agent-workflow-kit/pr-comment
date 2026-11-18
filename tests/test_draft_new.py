@@ -359,6 +359,30 @@ def test_a_base_ref_with_unicode_and_a_long_name_is_written_when_valid() -> None
         assert_checks_clean(document_of(outcome))
 
 
+def test_a_base_ref_the_draft_cannot_hold_says_the_pr_cannot_be_written_into_a_draft() -> None:
+    shown = h.show_doc()
+    shown["base"]["ref"] = "refs/heads/main"
+    outcome, _ = new(diff_of(), ok("show", shown))
+    assert outcome.exit_code == 12
+    assert "cannot be written into a draft" in error_of(outcome)["message"]
+    assert "base branch" not in error_of(outcome)["message"]
+
+
+# --- the clock -------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("nanoseconds", [-1_000_000, 3 * 10**20])
+def test_a_clock_outside_the_ulid_range_is_a_plain_internal_error_before_any_read(
+    monkeypatch: pytest.MonkeyPatch, nanoseconds: int
+) -> None:
+    monkeypatch.setattr(draft_module.time, "time_ns", lambda: nanoseconds)
+    forge, gateway = forge_of()
+    outcome = check_outcome(run_new(forge, PR, event=None, from_draft=None, stdin=None))
+    assert outcome.exit_code == 1 and error_of(outcome)["code"] == "internal"
+    assert error_of(outcome)["message"] == "the system clock is out of range"
+    assert gateway.calls == []
+
+
 # --- --from ----------------------------------------------------------------------------------
 
 
@@ -511,6 +535,23 @@ def test_from_stdin_over_the_cap_is_refused() -> None:
     big = io.BytesIO(b" " * (draft_module.MAX_DRAFT_BYTES + 1))
     outcome = run_new(forge, PR, event=None, from_draft="-", stdin=big)
     assert error_of(outcome)["code"] == "invalid_draft" and gateway.calls == []
+
+
+def test_from_a_source_that_grows_past_the_cap_when_escaped_is_refused_and_prints_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = source_at()
+    source["body"] = "\u00e9" * 200
+    raw = json.dumps(source, ensure_ascii=False).encode("utf-8")
+    path = tmp_path / "wide.json"
+    path.write_bytes(raw)
+    monkeypatch.setattr(draft_module, "MAX_DRAFT_BYTES", len(raw) + 50)
+    assert draft_module.check_result(raw)["valid"] is True  # the source itself is within the cap
+    outcome, _ = new(diff_of(), show_of(), from_draft=str(path))
+    assert outcome.exit_code == 2 and not outcome.print_document
+    error = error_of(outcome)
+    assert error["code"] == "invalid_draft"
+    assert "draft is larger than 16 MiB" in json.dumps(error["details"])
 
 
 def test_from_does_not_change_the_source_file(tmp_path: Path) -> None:

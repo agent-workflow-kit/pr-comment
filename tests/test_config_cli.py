@@ -100,8 +100,11 @@ def test_valid_config_loads_and_the_handler_runs(
 def test_draft_check_reads_no_config(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     config = write_config(tmp_path, "timeout: -5s\n")
     code, out, _ = run(capsys, "--json", "--config", config, "draft", "check", "x.json")
-    assert code == 2  # the handler ran (x.json is unreadable): the invalid config was never read
-    assert "config_invalid" not in out
+    # the handler ran (x.json is unreadable): the invalid config was never read
+    assert code == 2
+    result = json.loads(out)  # `draft check` prints a result, not an envelope, on exit 2
+    assert result["valid"] is False
+    assert result["errors"][0]["message"] == "draft file cannot be opened"
 
 
 def test_export_reads_no_config(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
