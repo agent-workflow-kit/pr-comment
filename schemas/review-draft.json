@@ -128,7 +128,7 @@
           "body": {
             "type": "string",
             "x-untrusted": true,
-            "description": "Untrusted: the finding's text; at most 64 KiB of UTF-8, checked by pr-comment (maxLength counts code points).",
+            "description": "Untrusted: the finding's text; at most 64 KiB of UTF-8, checked by pr-comment (maxLength counts code points). Must hold a character that is not blank (blank: a Text pipeline step 1 line separator, ASCII space or tab), checked by pr-comment.",
             "minLength": 1,
             "maxLength": 65536
           },
@@ -261,7 +261,7 @@
               "body": {
                 "type": "string",
                 "x-untrusted": true,
-                "description": "Untrusted: the finding's text; at most 64 KiB of UTF-8, checked by pr-comment (maxLength counts code points).",
+                "description": "Untrusted: the finding's text; at most 64 KiB of UTF-8, checked by pr-comment (maxLength counts code points). Must hold a character that is not blank (blank: a Text pipeline step 1 line separator, ASCII space or tab), checked by pr-comment.",
                 "minLength": 1,
                 "maxLength": 65536
               },

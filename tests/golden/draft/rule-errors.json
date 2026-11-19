@@ -191,6 +191,12 @@
       "pointer": "/event"
     }
   ],
+  "file-level-finding-body-blank": [
+    {
+      "message": "must contain a character that is not blank",
+      "pointer": "/findings/2/body"
+    }
+  ],
   "file-level-with-side": [
     {
       "message": "is not allowed on a file-level finding",
@@ -209,6 +215,12 @@
       "pointer": "/findings/2/suggestion"
     }
   ],
+  "finding-body-blank-and-over-cap": [
+    {
+      "message": "must contain a character that is not blank",
+      "pointer": "/findings/0/body"
+    }
+  ],
   "finding-body-empty": [
     {
       "message": "must not be empty",
@@ -221,9 +233,27 @@
       "pointer": "/findings/0/body"
     }
   ],
+  "finding-body-newline-only": [
+    {
+      "message": "must contain a character that is not blank",
+      "pointer": "/findings/0/body"
+    }
+  ],
   "finding-body-over-cap": [
     {
       "message": "is longer than 65536 bytes of UTF-8",
+      "pointer": "/findings/0/body"
+    }
+  ],
+  "finding-body-separators-only": [
+    {
+      "message": "must contain a character that is not blank",
+      "pointer": "/findings/1/body"
+    }
+  ],
+  "finding-body-spaces-only": [
+    {
+      "message": "must contain a character that is not blank",
       "pointer": "/findings/0/body"
     }
   ],
@@ -621,6 +651,12 @@
     {
       "message": "is not a known moved reason",
       "pointer": "/unanchored/0/reason"
+    }
+  ],
+  "unanchored-body-blank": [
+    {
+      "message": "must contain a character that is not blank",
+      "pointer": "/unanchored/0/finding/body"
     }
   ],
   "unanchored-finding-bad-line": [

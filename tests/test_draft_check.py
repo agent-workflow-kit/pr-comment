@@ -72,6 +72,30 @@ def test_schema_error_exits_2_with_pointer_and_null_kind(
     golden_json("draft/check-schema-error.json", doc)
 
 
+def test_blank_finding_body_exits_2_at_the_finding_body_pointer(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    bad = good()
+    bad["findings"][0]["body"] = "\n\r\n "
+    bad["unanchored"][0]["finding"]["body"] = " \t"
+    code, doc, err = run(capsys, ["draft", "check", write(tmp_path, bad)])
+    assert code == 2
+    assert doc["valid"] is False
+    assert doc["errors"] == [
+        {
+            "pointer": "/findings/0/body",
+            "message": "must contain a character that is not blank",
+            "kind": None,
+        },
+        {
+            "pointer": "/unanchored/0/finding/body",
+            "message": "must contain a character that is not blank",
+            "kind": None,
+        },
+    ]
+    validate("pr-comment/cli/draft-check.json", doc)
+
+
 def test_invalid_text_error_carries_the_kind(
     capsys: pytest.CaptureFixture[str], tmp_path: Path, golden_json: Callable[[str, Any], None]
 ) -> None:
