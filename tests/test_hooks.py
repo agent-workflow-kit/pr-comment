@@ -9,6 +9,7 @@ leaves one alive (never by pattern). No forgectl is involved.
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import shutil
@@ -566,15 +567,15 @@ def test_an_async_hook_is_detached_and_not_waited_for(
     assert pgid != os.getpgrp() and sid != os.getsid(0)
 
 
-@pytest.mark.parametrize("failure", ["no_shell", "payload_write", "nul_in_command"])
+@pytest.mark.parametrize("failure", ["payload_write", "nul_in_command", "lone_surrogate"])
 def test_an_async_hook_that_cannot_start_leaves_no_directory_behind(
     dirs: StateDirs, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
     cmd = "exit 0"
-    if failure == "no_shell":
-        monkeypatch.setattr(hooks_module, "SHELL", "/nonexistent/sh")
-    elif failure == "nul_in_command":
+    if failure == "nul_in_command":
         cmd = "exit 0\0"
+    elif failure == "lone_surrogate":
+        cmd = "exit 0\ud800"
     else:
 
         def broken(dir_fd: int, data: bytes) -> int:
@@ -587,6 +588,28 @@ def test_an_async_hook_that_cannot_start_leaves_no_directory_behind(
     assert tmp_entries(dirs) == []
     run_post(r, DecisionIds(()), lambda e, d: PAYLOAD)  # warns "hook_not_started", never raises
     assert tmp_entries(dirs) == []
+
+
+def test_a_failed_payload_descriptor_duplication_leaks_no_descriptor(
+    dirs: StateDirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_fcntl = hooks_module.fcntl.fcntl
+    calls: list[int] = []
+
+    def fcntl_fails_for_payload(fd: int, cmd: int, *args: int) -> int:
+        calls.append(fd)
+        if len(calls) > 3:  # the three directory duplicates succeed; the payload's fails
+            raise OSError(errno.EMFILE, "too many open files")
+        return real_fcntl(fd, cmd, *args)
+
+    cmd = "exit 0"
+    r = runner(dirs, post=[entry(cmd, async_=True)])
+    before = len(os.listdir("/proc/self/fd"))
+    monkeypatch.setattr(hooks_module.fcntl, "fcntl", fcntl_fails_for_payload)
+    assert r.spawn_detached(POST, entry(cmd, async_=True), PAYLOAD) is False
+    assert len(calls) == 4
+    assert tmp_entries(dirs) == []
+    assert len(os.listdir("/proc/self/fd")) == before
 
 
 def test_an_async_hooks_stdout_is_never_read_for_ids(dirs: StateDirs, tmp_path: Path) -> None:
