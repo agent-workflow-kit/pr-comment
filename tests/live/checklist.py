@@ -196,7 +196,7 @@ ROWS: tuple[Row, ...] = (
         "sc.versions",
         "#32",
         "forgectl versions other than the pinned 0.55.2 (the run records the version it saw).",
-        manual="Run the suite once per forgectl release the project supports (OPEN DECISION: the supported range) and keep the reports.",
+        manual="Run the suite once per forgectl 0.55.x release (the supported range, docs/interface.md) and keep the reports.",
     ),
     _r(
         "sc.macos_pipes",
