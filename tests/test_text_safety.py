@@ -1,5 +1,6 @@
 """Text safety against GitHub's engine: the oracle itself, golden cases over the whole pipeline
-(draft to body) and the open decisions the current behavior is pinned for (issue #22).
+(draft to body) and the decisions the current behavior is pinned for (issue #22): decision 1
+is resolved (#86), decisions 2 and 3 are open.
 
 Every body is rendered with the pinned ``cmarkgfm`` and checked for: no raw HTML, no image, no live
 mention, no suggestion pr-comment did not write, the attribution line as the first paragraph and
@@ -542,14 +543,16 @@ def test_golden_text_has_no_live_ascii_at_outside_applicable_suggestions() -> No
                 assert not re.search(r"(?<![A-Za-z0-9])@", item.text), (case.name, item.label)
 
 
-# --- open decisions: the current behavior, written down so it can change with the decision ------
+# --- decision 1 is resolved (#86); decisions 2 and 3 are open: the current behavior is pinned ----
 
 
 def test_decision_1_ordinary_and_javascript_links_are_counted_not_neutralized() -> None:
     """Decision 1 (issue #86): ``counts.links`` counts ordinary, ``javascript:`` and reference
     definition links, so it is an upper bound; the links are only counted, never neutralized."""
-    for text in ("[x](u)", "[x](/relative/path)", "[x](javascript:alert(1))", "[x]: javascript:x"):
-        assert count_text(text).links >= 1, text
+    assert count_text("[x](u)").links == 1
+    assert count_text("[x](/relative/path)").links == 1
+    assert count_text("[x](javascript:alert(1))").links == 1
+    assert count_text("[x]: javascript:x").links == 1
 
 
 def test_decision_1_cmark_gfm_drops_the_javascript_href_itself() -> None:

@@ -157,7 +157,7 @@ Each row is settled by a scenario or test, by a manual step, or both. Source is 
 | `ts.gitlab_engine` | #22 | GitLab's own Markdown (`>>>` quote, `[[_TOC_]]`, math, quick actions, references) behaves as pr-comment assumes; a slash line is not run as a quick action. | scenario `gitlab_markdown` | - |
 | `ts.github_media` | #22 | A bare attachment URL on its own line renders as media on GitHub (recorded; `counts.images` does not count it). | scenario `render_probes` | - |
 | `ts.github_diagrams` | #22 | Diagram fences (`mermaid`, `geojson`, `stl`) render on GitHub (recorded). | scenario `render_probes` | - |
-| `ts.link_forms` | #22 | How a `javascript:` or relative link renders (recorded: the `javascript:` hrefs found). | scenario `render_probes` | - |
+| `ts.link_forms` | #22 | How a `javascript:` or relative link renders on the hosts (unverified; the pinned cmark-gfm renders an empty href) (recorded: the `javascript:` hrefs found). | scenario `render_probes` | - |
 | `ts.postprocess` | #22 | Host post-processing after the engine: sanitizing, emoji, issue and commit links, `@` inside a link text (recorded). | scenario `render_probes` | - |
 | `ts.marker_display` | #22 | How a host shows the hidden marker comment (not as text). | scenario `render_probes` | - |
 | `ts.engine_version` | #22 | Whether GitHub's engine is the pinned `cmarkgfm` version at all. | - | Take the pinned fuzz corpus's disagreement cases (`tests/test_text_safety_fuzz.py`), post them as comments and compare the rendered HTML with `cmarkgfm`'s. |

@@ -3,8 +3,8 @@
 Every inline link or image destination ``](``, every link reference definition, every angle
 autolink and every bare form is counted. The differential tests render with the pinned cmarkgfm
 (GitHub's engine) and require the count to cover every ``<a>`` and ``<img>`` it produces. A
-reference definition counts once however often its label is used (the count is of link
-destinations written in the text), so the fuzz gives each label one use.
+reference use (a closing bracket not followed by ``(`` or ``:``) and every ``[^`` is counted too,
+so a definition used several times, and a footnote (a back-reference per use), stay covered.
 """
 
 from __future__ import annotations
@@ -38,13 +38,15 @@ def _links(text: str) -> int:
         ("[x]( javascript:alert(1))", 1),
         ("![x](u)", 1),
         ("[x](a) [y](b)", 2),
-        ("[x][r]\n\n[r]: u", 1),
+        ("[x][r]\n\n[r]: u", 3),
         ("[x]: javascript:x", 1),
         ("[x]: <u> 'title'", 1),
         ("   [x]: u", 1),
         ('[x]: u\n"title"', 1),
         ("[a]: u\n[b]: v", 2),
-        ("[x]\n\n[x]: /u", 1),
+        ("[x]\n\n[x]: /u", 2),
+        ("[x] [x]\n\n[x]: u", 3),
+        ("a[^1]\n\n[^1]: n", 4),
         ("> [x]: u", 1),
         ("<javascript:alert(1)>", 1),
         ("<foo:bar>", 1),
@@ -53,7 +55,8 @@ def _links(text: str) -> int:
         ("<mailto:a@b.co>", 3),
         ("&#91;x&#93;&#40;u&#41;", 1),
         ("[x]\\(u)", 1),
-        ("plain [brackets] and (parens)", 0),
+        ("plain [brackets] and (parens)", 1),
+        ("plain brackets and (parens)", 0),
         ("< a:b>", 0),
         ("<1a:b>", 0),
     ],
@@ -92,10 +95,24 @@ def test_golden_cases_are_covered_by_the_count(text: str) -> None:
     assert _links(text) >= _rendered_links(text), text
 
 
-def test_a_reference_used_twice_counts_its_destination_once() -> None:
+def test_a_reference_used_twice_is_counted_per_use() -> None:
     text = "[x] [x]\n\n[x]: u"
     assert _rendered_links(text) == 2
-    assert _links(text) == 1
+    assert _links(text) >= 2
+
+
+def test_a_footnote_is_counted_for_both_its_anchors() -> None:
+    text = "a[^1]\n\n[^1]: n"
+    rendered = len(_TAG_RE.findall(render_footnotes(text)))
+    assert rendered == 2
+    assert _links(text) >= rendered
+
+
+def test_a_footnote_used_twice_is_covered() -> None:
+    text = "a[^f0] a[^f0]  **[t](u)**\n\n[^f0]: note"
+    rendered = len(_TAG_RE.findall(render_footnotes(text)))
+    assert rendered == 5
+    assert _links(text) >= rendered
 
 
 _FRAGMENTS = [
@@ -129,7 +146,7 @@ _FRAGMENTS = [
 ]
 
 
-def _fuzz_document(rng: random.Random) -> str:
+def _fuzz_document(rng: random.Random, footnotes: bool = False) -> str:
     out: list[str] = []
     defs: list[str] = []
     for _ in range(rng.randint(1, 8)):
@@ -137,7 +154,7 @@ def _fuzz_document(rng: random.Random) -> str:
         if kind == 0:
             label = f"r{len(defs)}"
             uses = [f"[t][{label}]", f"![t][{label}]", f"[{label}][]", f"[{label}]"]
-            out.append(rng.choice(uses))
+            out.extend(rng.choice(uses) + " " for _ in range(rng.randint(1, 3)))
             defs.append(
                 rng.choice(
                     [
@@ -149,6 +166,10 @@ def _fuzz_document(rng: random.Random) -> str:
                     ]
                 )
             )
+        elif footnotes and kind == 1:
+            label = f"^f{len(defs)}"
+            out.extend(f"a[{label}] " for _ in range(rng.randint(1, 3)))
+            defs.append(f"[{label}]: note")
         else:
             out.append(rng.choice(_FRAGMENTS))
         out.append(rng.choice([" ", "\n", "\n\n"]))
@@ -169,7 +190,7 @@ def test_differential_fuzz_against_cmarkgfm() -> None:
 def test_differential_fuzz_with_footnotes_rendering_too() -> None:
     rng = random.Random(861)
     for _ in range(300):
-        text = _fuzz_document(rng)
+        text = _fuzz_document(rng, footnotes=True)
         rendered = len(_TAG_RE.findall(render_footnotes(text)))
         assert _links(text) >= rendered, text
 

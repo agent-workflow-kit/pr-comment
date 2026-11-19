@@ -8,9 +8,9 @@ starts with a literal ``![``. Character references such as ``&lt;`` are left as 
 
 The counts (``raw_html``, ``images``, ``links``, ``invisible``) are taken from the untrusted text
 as given, before this pass, so a reader sees what the input tried. They include code and are
-upper bounds (a URL with ``www.`` counts twice). ``links`` counts every link destination written
-in the text (inline ``](``, reference definitions, angle and bare autolinks); a reference used
-several times counts once, through its one definition.
+upper bounds (a URL with ``www.`` counts twice). ``links`` counts every link form in the text
+(inline ``](``, reference definitions, every reference or footnote use, angle and bare autolinks),
+without matching labels, so a reference used several times counts once per use.
 
 No Markdown is parsed here. Mentions (step 3, #16), the markers of degraded suggestions and the
 rendering of parts (steps 4 to 6) are other modules' work.
@@ -53,6 +53,11 @@ _INLINE_DEST_RE: Final = re.compile(r"\]\(")
 # A link reference definition is `[label]: dest`; the label may span lines and sit in a quote or
 # list, so each `]:` counts (an upper bound, linear).
 _REF_DEF_RE: Final = re.compile(r"\]:")
+# A reference use (full, collapsed or shortcut) or a footnote reference ends in a `]` that is not
+# an inline destination `](` or a definition `]:`. Every such `]` counts, with no label matching,
+# so a definition used several times stays covered. Each `[^` counts too: a footnote renders an
+# anchor at its mark and one back-reference per use (an upper bound).
+_REF_USE_RE: Final = re.compile(r"\](?![(:])|\[\^")
 # An angle autolink: `<` and a scheme of 2 to 32 characters, then `:`. Counted after decoding, so
 # `&lt;x:y>` over-counts, which is fine for an upper bound.
 _ANGLE_AUTOLINK_RE: Final = re.compile(r"<[A-Za-z][A-Za-z0-9+.-]{1,31}:")
@@ -132,6 +137,7 @@ def count_text(text: str) -> TextCounts:
         + len(_EMAIL_RE.findall(decoded))
         + len(_INLINE_DEST_RE.findall(decoded))
         + len(_REF_DEF_RE.findall(decoded))
+        + len(_REF_USE_RE.findall(decoded))
         + len(_ANGLE_AUTOLINK_RE.findall(decoded))
     )
     return TextCounts(

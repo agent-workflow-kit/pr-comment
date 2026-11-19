@@ -139,9 +139,9 @@ def _count_bits(counts: dict[str, Any]) -> list[str]:
         f"findings by severity: {sev}",
         f"suggestions degraded {counts.get('suggestions_degraded', 0)}, "
         f"mentions neutralized {counts.get('mentions_neutralized', 0)}",
-        # counts.links counts every written link destination (inline, reference definition,
-        # autolink, bare form); a reference used again counts once, which the wording says.
-        f"links at most {counts.get('links', 0)} (one per written destination, not per use), "
+        # counts.links counts every link form (inline, reference definition and use, footnote,
+        # autolink, bare form), so it is an upper bound.
+        f"links at most {counts.get('links', 0)}, "
         f"images at most {counts.get('images', 0)}, raw HTML at most {counts.get('raw_html', 0)}",
         f"invisible characters marked {counts.get('invisible', 0)}",
     ]
