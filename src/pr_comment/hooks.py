@@ -33,6 +33,7 @@ write. This module is the only place pr-comment starts one. Rules:
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -462,11 +463,17 @@ class HookRunner:
             return False
         env = hook_environment(self._environ, self.hooks.deny, hook=hook, pr=self._pr)
         stdin_fd = -1
+        held: list[int] = []  # duplicates above 2 of what the watchdog inherits, closed afterwards
         proc: subprocess.Popen[bytes] | None = None
         try:
             if "\0" in entry.cmd:
                 raise ValueError("NUL in a command")
             os.fsencode(entry.cmd)  # a lone surrogate cannot be passed to exec
+            # The run may have standard descriptors closed, so these can sit on 0 to 2, which the
+            # watchdog's own standard streams replace: it gets duplicates above 2.
+            state_fd, tmp_fd, dir_fd = (
+                _high_descriptor(fd, held) for fd in (dirs.state_fd, dirs.tmp_fd, workdir.fd)
+            )
             job = watchdog.job_for(
                 dirs,
                 shell=SHELL,
@@ -479,12 +486,15 @@ class HookRunner:
                 pr=self._pr,
                 attempt_id=self._attempt_id,
                 log=self._log.enabled,
-                dir_fd=workdir.fd,
+                dir_fd=dir_fd,
                 dir_name=workdir.name,
+                state_fd=state_fd,
+                tmp_fd=tmp_fd,
             )
-            stdin_fd = _payload_descriptor(
-                workdir.fd, watchdog.encode_job(job, encode_payload(payload))
-            )
+            data = watchdog.encode_job(job, encode_payload(payload))
+            if len(data) > watchdog.MAX_JOB_BYTES:
+                raise ValueError("the job is larger than the watchdog reads")
+            stdin_fd = _high_descriptor(_payload_descriptor(workdir.fd, data), held, close=True)
             _prune_detached()
             proc = subprocess.Popen(
                 [sys.executable, "-I", "-m", WATCHDOG_MODULE],
@@ -495,7 +505,7 @@ class HookRunner:
                 cwd="/",
                 shell=False,
                 close_fds=True,
-                pass_fds=(dirs.state_fd, dirs.tmp_fd, workdir.fd),
+                pass_fds=(state_fd, tmp_fd, dir_fd),
                 start_new_session=True,
             )
         except (OSError, ValueError):
@@ -504,9 +514,9 @@ class HookRunner:
             _DETACHED.append(proc)
             return True
         finally:
-            if stdin_fd >= 0:
+            for fd in held:
                 with contextlib.suppress(OSError):
-                    os.close(stdin_fd)
+                    os.close(fd)
             if proc is not None:
                 with contextlib.suppress(OSError):
                     os.close(workdir.fd)  # the watchdog owns its copy and the directory now
@@ -515,6 +525,16 @@ class HookRunner:
                     workdir.remove(dirs.tmp_fd)  # closes the descriptor, once
                 except StateUnsafeError:
                     self.warn(hook, index, "hook_directory_not_removed")
+
+
+def _high_descriptor(fd: int, held: list[int], *, close: bool = False) -> int:
+    """A duplicate of ``fd`` above 2 (close-on-exec), recorded in ``held``; ``close`` also closes
+    ``fd`` itself."""
+    high = fcntl.fcntl(fd, fcntl.F_DUPFD_CLOEXEC, 3)
+    held.append(high)
+    if close:
+        os.close(fd)
+    return high
 
 
 def _prune_detached() -> None:

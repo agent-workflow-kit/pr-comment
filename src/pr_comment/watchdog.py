@@ -17,15 +17,23 @@ itself inherits none of them (``close_fds``).
 
 Ends: the hook ends on its own (the supervisor then ends, SIGKILLing whatever the hook left in its
 group, as for a synchronous hook), its timeout expires (``hook_timeout`` warning), or the
-supervisor gets SIGINT, SIGTERM or SIGHUP (the hook is ended, ``hook_interrupted`` warning). A
-supervisor killed by SIGKILL cannot act: its hook runs on without a timeout and its directory is
-left to ``files.sweep_stale_hook_dirs`` (an empty one is removed after a day).
+supervisor gets SIGINT, SIGTERM or SIGHUP while the hook runs (the hook is ended,
+``hook_interrupted`` warning). A signal inherited as ignored (a run under ``nohup``) stays ignored
+and the timeout still bounds the hook; a signal during start-up, before the hook starts, ends the
+supervisor without a warning and leaves the directory to the sweep; once the hook has ended the
+three signals are ignored so the cleanup completes. The install must make ``pr_comment`` importable
+under ``python -I`` (a virtual environment, an editable or a tool install does; ``PYTHONPATH`` alone
+does not), else the supervisor exits at once and the hook never runs. A supervisor killed by
+SIGKILL cannot act: its hook runs on without a timeout and its directory is left to
+``files.sweep_stale_hook_dirs`` (an empty one is removed after a day).
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
+import signal
 import sys
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
@@ -34,7 +42,13 @@ from typing import Any, Final
 
 from .appendfile import AppendError, AppendFile
 from .files import HOOK_NAME_RE, HookDir, StateDirs, StateUnsafeError
-from .gateway import ForgectlInterrupted, GatewayInternalError, ToolMissing, run_process
+from .gateway import (
+    FORWARDED_SIGNALS,
+    ForgectlInterrupted,
+    GatewayInternalError,
+    ToolMissing,
+    run_process,
+)
 from .jsonlog import LOG_NAME, LogWriter
 
 JOB_VERSION: Final = 1
@@ -42,6 +56,8 @@ STDOUT_LIMIT: Final = 0  # a detached hook's output is never read: it is drained
 STDERR_LIMIT: Final = 0
 DRAIN_GRACE: Final = 1.0
 MAX_JOB_BYTES: Final = 64 * 1024 * 1024
+MIN_FD: Final = 3  # 0 to 2 are the supervisor's own standard streams
+MAX_FD: Final = 65536
 
 
 @dataclass(frozen=True)
@@ -82,7 +98,11 @@ def job_for(
     log: bool,
     dir_fd: int,
     dir_name: str,
+    state_fd: int | None = None,
+    tmp_fd: int | None = None,
 ) -> Job:
+    """``state_fd`` and ``tmp_fd`` default to those of ``dirs``; ``spawn_detached`` passes
+    duplicates above 2 (the originals may sit on a closed standard descriptor)."""
     return Job(
         shell=shell,
         cmd=cmd,
@@ -94,9 +114,9 @@ def job_for(
         pr=pr,
         attempt_id=attempt_id,
         log=log,
-        state_fd=dirs.state_fd,
+        state_fd=dirs.state_fd if state_fd is None else state_fd,
         state_path=str(dirs.state_path),
-        tmp_fd=dirs.tmp_fd,
+        tmp_fd=dirs.tmp_fd if tmp_fd is None else tmp_fd,
         dir_fd=dir_fd,
         dir_name=dir_name,
         dir_path=str(dirs.tmp_path / dir_name),
@@ -149,19 +169,27 @@ def parse_job(data: bytes) -> tuple[Job, bytes] | None:
     if attempt is not None and not isinstance(attempt, str):
         return None
     numbers = ("timeout", "term_grace")
-    if not all(_is_number(doc[k]) and math.isfinite(doc[k]) and doc[k] > 0 for k in numbers):
+    if not all(_is_number(doc[k]) for k in numbers):
         return None
-    if not all(_is_int(doc[k]) for k in ("index", "state_fd", "tmp_fd", "dir_fd")):
+    try:
+        timeout, term_grace = float(doc["timeout"]), float(doc["term_grace"])
+    except OverflowError:  # an integer too large for a float
         return None
-    if min(doc["state_fd"], doc["tmp_fd"], doc["dir_fd"]) < 0 or not isinstance(doc["log"], bool):
+    if not all(math.isfinite(x) and x > 0 for x in (timeout, term_grace)):
+        return None
+    fds = ("state_fd", "tmp_fd", "dir_fd")
+    if not all(_is_int(doc[k]) for k in ("index", *fds)) or not isinstance(doc["log"], bool):
+        return None
+    values = [doc[k] for k in fds]
+    if any(not MIN_FD <= fd < MAX_FD for fd in values) or len(set(values)) != len(values):
         return None
     if not HOOK_NAME_RE.fullmatch(doc["dir_name"]):
         return None
     job = Job(
         shell=doc["shell"],
         cmd=doc["cmd"],
-        timeout=float(doc["timeout"]),
-        term_grace=float(doc["term_grace"]),
+        timeout=timeout,
+        term_grace=term_grace,
         env=dict(env_map),
         hook=doc["hook"],
         index=doc["index"],
@@ -186,6 +214,12 @@ def _warn(job: Job, log: LogWriter, reason: str) -> None:
         attempt_id=job.attempt_id,
         details={"hook": job.hook, "index": job.index, "reason": reason},
     )
+
+
+def _ignore_signals() -> None:
+    for sig in FORWARDED_SIGNALS:
+        with contextlib.suppress(ValueError, OSError):  # not the main thread
+            signal.signal(sig, signal.SIG_IGN)
 
 
 def supervise(job: Job, payload: bytes, log: LogWriter) -> None:
@@ -220,6 +254,7 @@ def supervise(job: Job, payload: bytes, log: LogWriter) -> None:
             if result.timed_out:
                 _warn(job, log, "hook_timeout")
     finally:
+        _ignore_signals()  # a signal now must not leave a half-removed directory
         try:
             HookDir(job.dir_name, Path(job.dir_path), job.dir_fd).remove(job.tmp_fd)
         except StateUnsafeError:
@@ -231,7 +266,7 @@ def _open_log(job: Job) -> LogWriter:
         return LogWriter.disabled()
     try:
         file = AppendFile.open(job.state_fd, LOG_NAME, Path(job.state_path) / LOG_NAME)
-    except (AppendError, ValueError, OSError):
+    except (AppendError, ValueError, OSError, OverflowError):
         return LogWriter.disabled()
     return LogWriter(file)
 
@@ -243,11 +278,14 @@ def main() -> int:
     if parsed is None:
         return 2
     job, payload = parsed
-    log = _open_log(job)
     try:
-        supervise(job, payload, log)
-    finally:
-        log.close()
+        log = _open_log(job)
+        try:
+            supervise(job, payload, log)
+        finally:
+            log.close()
+    except OverflowError:  # a number too large for the system call it reaches: no traceback
+        return 2
     return 0
 
 

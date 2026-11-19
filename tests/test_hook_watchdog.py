@@ -10,6 +10,7 @@ Timeouts are fractions of a second. No forgectl is involved.
 from __future__ import annotations
 
 import contextlib
+import io
 import json
 import os
 import signal
@@ -25,7 +26,7 @@ import pytest
 
 from pr_comment import hooks as hooks_module
 from pr_comment.config import HookEntry
-from pr_comment.files import StateDirs, create_hook_dir, open_state_dirs
+from pr_comment.files import HookDir, StateDirs, StateUnsafeError, create_hook_dir, open_state_dirs
 from pr_comment.hooks import POST, HookRunner, HookSet
 from pr_comment.jsonlog import LogWriter
 from tests.test_hooks import (
@@ -81,6 +82,16 @@ def supervisors() -> Iterator[None]:
                 proc.kill()
         proc.wait(5)
     del hooks_module._DETACHED[before:]  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.fixture(autouse=True)
+def signal_handlers() -> Iterator[None]:
+    """``watchdog.supervise`` ignores SIGINT, SIGTERM and SIGHUP once the hook has ended; a test
+    that runs it in this process gets the previous handlers back."""
+    saved = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+    yield
+    for sig, handler in saved.items():
+        signal.signal(sig, handler)
 
 
 def make_runner(dirs: StateDirs, *, log: bool = True) -> HookRunner:
@@ -160,10 +171,14 @@ def test_a_hook_that_ignores_sigterm_is_killed_after_the_grace_period(
     runner = make_runner(dirs)
     trapped = tmp_path / "trapped"
     cmd = f"trap 'echo term >> {trapped}' TERM; echo $$ >> {pids}; while :; do sleep 0.05; done"
+    started = time.monotonic()
     supervisor = spawn(runner, cmd, timeout=0.5)
     assert supervisor.wait(10) == 0
+    elapsed = time.monotonic() - started
     (hook_pid,) = recorded(pids)
-    assert wait_dead(hook_pid)
+    assert wait_dead(hook_pid, 0.5)
+    # SIGKILL came after the grace period (not at once) and well before the 5 s of the last wait.
+    assert 0.5 + GRACE * 0.9 <= elapsed < 0.5 + GRACE + 2
     assert trapped.read_text().split() == ["term"]  # SIGTERM came first, then SIGKILL
     assert [r["details"]["reason"] for r in log_lines(dirs)] == ["hook_timeout"]
 
@@ -177,7 +192,8 @@ def test_the_working_directory_is_removed_when_the_watchdog_ends_the_hook(
         runner, f"echo $$ >> {pids}; pwd -P > {seen}; echo x > scratch.txt; sleep 60"
     )
     assert wait_file(seen)
-    assert len(tmp_entries(dirs)) == 1  # the hook's directory exists while it runs
+    (entry,) = tmp_entries(dirs)  # the hook's directory exists while it runs
+    assert Path(seen.read_text().strip()) == (dirs.tmp_path / entry).resolve()
     assert supervisor.wait(10) == 0
     assert tmp_entries(dirs) == []  # removed with what the hook left in it
 
@@ -344,6 +360,26 @@ def test_sigterm_to_the_watchdog_ends_the_hook_and_removes_the_directory(
     hook_pid, child_pid = recorded(pids)
     assert wait_dead(hook_pid) and wait_dead(child_pid)
     assert tmp_entries(dirs) == []
+    assert [r["details"]["reason"] for r in log_lines(dirs)] == ["hook_interrupted"]
+
+
+def test_a_signal_to_the_watchdog_escalates_a_hook_that_traps_sigterm(
+    dirs: StateDirs, pids: Path, tmp_path: Path
+) -> None:
+    runner = make_runner(dirs)
+    trapped = tmp_path / "trapped"
+    cmd = f"trap 'echo term >> {trapped}' TERM; echo $$ >> {pids}; while :; do sleep 0.05; done"
+    supervisor = spawn(runner, cmd, 60)
+    assert wait_file(pids)
+    sent = time.monotonic()
+    supervisor.send_signal(signal.SIGTERM)  # an exact PID: our own Popen
+    assert supervisor.wait(10) == 0
+    assert time.monotonic() - sent < GRACE + 2  # SIGKILL after the grace period, no 5 s wait
+    (hook_pid,) = recorded(pids)
+    assert wait_dead(hook_pid, 0.5)
+    assert set(trapped.read_text().split()) == {"term"}  # trapped (forwarded, then group), killed
+    assert tmp_entries(dirs) == []
+    assert [r["details"]["reason"] for r in log_lines(dirs)] == ["hook_interrupted"]
 
 
 def test_a_killed_watchdog_leaves_the_hook_to_its_own_end(dirs: StateDirs, pids: Path) -> None:
@@ -500,3 +536,303 @@ def test_the_hook_environment_cannot_leak_into_the_command_line(
     assert b"sleep" not in argv  # the command is in the file as well
     supervisor.send_signal(signal.SIGTERM)
     supervisor.wait(10)
+
+
+def test_the_supervisor_leads_its_own_session_and_group(dirs: StateDirs, pids: Path) -> None:
+    runner = make_runner(dirs)
+    supervisor = spawn(runner, f"echo $$ >> {pids}; sleep 60", 5)
+    assert wait_file(pids)
+    assert os.getsid(supervisor.pid) == supervisor.pid
+    assert os.getpgid(supervisor.pid) == supervisor.pid
+    assert os.getsid(supervisor.pid) != os.getsid(0) and os.getpgid(supervisor.pid) != os.getpgrp()
+    supervisor.send_signal(signal.SIGTERM)
+    supervisor.wait(10)
+
+
+def test_the_hook_environment_stays_out_of_the_supervisors_environment(
+    dirs: StateDirs, pids: Path
+) -> None:
+    name, value = "WD_SEEDED_VARIABLE_NAME", "wd-seeded-variable-value"
+    runner = HookRunner(
+        HookSet(),
+        dirs=dirs,
+        environ={**BASE_ENV, name: value},
+        log=LogWriter.disabled(),
+        pr=PR,
+        attempt_id=None,
+    )
+    entry = HookEntry(f"echo $$ >> {pids}; sleep 60", 5, async_=True)
+    assert runner.spawn_detached(POST, entry, PAYLOAD, 0)
+    supervisor = hooks_module._DETACHED[-1]  # pyright: ignore[reportPrivateUsage]
+    assert wait_file(pids)
+    environ = Path(f"/proc/{supervisor.pid}/environ").read_bytes()
+    assert name.encode() not in environ, "a hook variable name is in the supervisor environment"
+    assert value.encode() not in environ, "a hook variable value is in the supervisor environment"
+    supervisor.send_signal(signal.SIGTERM)
+    supervisor.wait(10)
+
+
+# --- what a hook leaves behind -----------------------------------------------------------------
+
+QUIET_LEFTOVER = "sleep 60 >/dev/null 2>&1 & echo $! >> {pids}"
+
+
+def test_a_leftover_with_its_output_redirected_is_killed_at_a_normal_end(
+    dirs: StateDirs, pids: Path
+) -> None:
+    runner = make_runner(dirs)
+    cmd = f"echo $$ >> {pids}; {QUIET_LEFTOVER.format(pids=pids)}; exit 0"
+    supervisor = spawn(runner, cmd, 30)
+    assert supervisor.wait(10) == 0
+    hook_pid, child_pid = recorded(pids)
+    assert wait_dead(hook_pid) and wait_dead(child_pid, 2)
+
+
+def test_a_leftover_with_its_output_redirected_is_killed_at_the_timeout(
+    dirs: StateDirs, pids: Path
+) -> None:
+    runner = make_runner(dirs)
+    cmd = f"echo $$ >> {pids}; {QUIET_LEFTOVER.format(pids=pids)}; wait"
+    supervisor = spawn(runner, cmd, 0.5)
+    assert supervisor.wait(10) == 0
+    hook_pid, child_pid = recorded(pids)
+    assert wait_dead(hook_pid) and wait_dead(child_pid, 2)
+
+
+# --- the supervisor's own failures --------------------------------------------------------------
+
+
+def test_a_directory_that_cannot_be_removed_is_a_warning(
+    dirs: StateDirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pr_comment import watchdog
+
+    def refuse(self: HookDir, tmp_fd: int) -> None:
+        os.close(self.fd)
+        raise StateUnsafeError("refused", {"path": str(self.path)})
+
+    monkeypatch.setattr(HookDir, "remove", refuse)
+    job = workdir_job(dirs, "exit 0", 30)
+    log = LogWriter.open(dirs)
+    watchdog.supervise(job, b"{}", log)
+    log.close()
+    assert [r["details"]["reason"] for r in log_lines(dirs)] == ["hook_directory_not_removed"]
+
+
+def test_signals_are_ignored_while_the_directory_is_removed(
+    dirs: StateDirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pr_comment import watchdog
+
+    seen: dict[int, Any] = {}
+    real_remove = HookDir.remove
+
+    def spy(self: HookDir, tmp_fd: int) -> None:
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            seen[sig] = signal.getsignal(sig)
+        real_remove(self, tmp_fd)
+
+    monkeypatch.setattr(HookDir, "remove", spy)
+    watchdog.supervise(workdir_job(dirs, "exit 0", 30), b"{}", LogWriter.disabled())
+    assert set(seen.values()) == {signal.SIG_IGN} and len(seen) == 3
+    assert tmp_entries(dirs) == []
+
+
+def run_watchdog(data: bytes) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        [sys.executable, "-I", "-m", "pr_comment.watchdog"],
+        input=data,
+        env={**os.environ},
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+
+
+def test_a_bad_job_on_stdin_ends_the_watchdog_with_exit_2(dirs: StateDirs) -> None:
+    done = run_watchdog(b"garbage, no newline")
+    assert done.returncode == 2
+    assert done.stderr == b""
+
+
+def plain_job_bytes(dirs: StateDirs) -> bytes:
+    from pr_comment import watchdog
+
+    job = watchdog.job_for(
+        dirs,
+        shell="/bin/sh",
+        cmd="exit 0",
+        timeout=1.5,
+        term_grace=0.2,
+        env={},
+        hook=POST,
+        index=2,
+        pr=PR,
+        attempt_id=None,
+        log=False,
+        dir_fd=12,
+        dir_name="prc-hook-" + "a" * 32,
+        state_fd=10,
+        tmp_fd=11,
+    )
+    return watchdog.encode_job(job, b"")
+
+
+def test_out_of_range_numbers_end_the_watchdog_with_exit_2_and_no_traceback(
+    dirs: StateDirs,
+) -> None:
+    data = plain_job_bytes(dirs)
+    huge = b"1" + b"0" * 400
+    for old, new in (
+        (b'"timeout": 1.5', b'"timeout": ' + huge),
+        (b'"term_grace": 0.2', b'"term_grace": ' + huge),
+        (b'"dir_fd": 12', b'"dir_fd": ' + huge),
+        (b'"state_fd": 10', b'"state_fd": ' + huge),
+    ):
+        assert old in data
+        done = run_watchdog(data.replace(old, new))
+        assert done.returncode == 2, old
+        assert done.stderr == b"", old
+
+
+def test_an_overflow_inside_the_supervisor_ends_main_with_exit_2(
+    dirs: StateDirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pr_comment import watchdog
+
+    def overflow(*_a: object, **_k: object) -> None:
+        raise OverflowError("too large")
+
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(plain_job_bytes(dirs))))
+    monkeypatch.setattr(watchdog, "supervise", overflow)
+    assert watchdog.main() == 2
+
+
+# --- platforms without waitid -------------------------------------------------------------------
+
+
+def test_without_waitid_a_timeout_still_ends_the_hook_and_removes_the_directory(
+    dirs: StateDirs, pids: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pr_comment import gateway, watchdog
+
+    monkeypatch.delattr(os, "waitid")
+    monkeypatch.setattr(gateway, "_proc_start", lambda pid: None)
+    sent: list[tuple[int, int]] = []
+    real_killpg = os.killpg
+    monkeypatch.setattr(os, "killpg", lambda p, s: (sent.append((p, s)), real_killpg(p, s)))
+    job = workdir_job(dirs, f"echo $$ >> {pids}; sleep 60", 0.4)
+    log = LogWriter.open(dirs)
+    watchdog.supervise(job, b"{}", log)
+    log.close()
+    (hook_pid,) = recorded(pids)
+    assert wait_dead(hook_pid)
+    assert sent and {pgid for pgid, _ in sent} == {hook_pid}  # only the hook's group, none after
+    assert sent[0][1] == signal.SIGTERM  # the leader was reaped by the poll: no SIGKILL followed
+    assert [r["details"]["reason"] for r in log_lines(dirs)] == ["hook_timeout"]
+    assert tmp_entries(dirs) == []
+
+
+def test_without_waitid_a_normal_end_does_not_kill_what_the_hook_left(
+    dirs: StateDirs, pids: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pins the unverified fallback (todo #40): the poll reaps the leader, so none is signaled."""
+    from pr_comment import gateway, watchdog
+
+    monkeypatch.delattr(os, "waitid")
+    monkeypatch.setattr(gateway, "_proc_start", lambda pid: None)
+    sent: list[tuple[int, int]] = []
+    real_killpg = os.killpg
+    monkeypatch.setattr(os, "killpg", lambda p, s: (sent.append((p, s)), real_killpg(p, s)))
+    cmd = f"echo $$ >> {pids}; {QUIET_LEFTOVER.format(pids=pids)}; exit 0"
+    watchdog.supervise(workdir_job(dirs, cmd, 30), b"{}", LogWriter.disabled())
+    hook_pid, child_pid = recorded(pids)
+    assert sent == []
+    assert alive(child_pid)  # killed by ``pids`` at teardown
+    assert not alive(hook_pid) and tmp_entries(dirs) == []
+
+
+# --- descriptors and size limits ----------------------------------------------------------------
+
+
+def test_a_run_with_its_standard_descriptors_closed_still_runs_the_hook(
+    dirs: StateDirs, pids: Path, tmp_path: Path
+) -> None:
+    """The state directories then sit on descriptors 0 to 2, which the supervisor's own standard
+    streams replace; the job must carry duplicates."""
+    done = tmp_path / "done"
+    script = tmp_path / "closed.py"
+    script.write_text(
+        textwrap.dedent(
+            f"""
+            import os
+            from pr_comment.config import HookEntry
+            from pr_comment.files import open_state_dirs
+            from pr_comment.hooks import _DETACHED, HookRunner, HookSet
+            from pr_comment.jsonlog import LogWriter
+
+            for fd in (0, 1, 2):
+                os.close(fd)
+            with open_state_dirs() as dirs:
+                runner = HookRunner(HookSet(), dirs=dirs, environ={dict(BASE_ENV)!r},
+                                    log=LogWriter.disabled(), pr={PR!r}, attempt_id=None)
+                entry = HookEntry({f"echo ok > {done}"!r}, 30, async_=True)
+                ok = runner.spawn_detached("post-post", entry, {{}}, 0)
+                with open({str(pids)!r}, "a") as out:
+                    out.write(str(_DETACHED[-1].pid) + " ")
+            os._exit(0 if ok else 3)
+            """
+        )
+    )
+    ran = subprocess.run(
+        [sys.executable, "-I", str(script)], env={**os.environ}, check=False, timeout=30
+    )
+    assert ran.returncode == 0
+    assert wait_file(done) and done.read_text() == "ok\n"
+    end = time.monotonic() + 10
+    while time.monotonic() < end and tmp_entries(dirs):
+        time.sleep(0.02)
+    assert tmp_entries(dirs) == []
+
+
+def test_a_job_over_the_size_limit_is_refused_and_leaves_no_directory(
+    dirs: StateDirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pr_comment import watchdog
+
+    monkeypatch.setattr(watchdog, "MAX_JOB_BYTES", 100)
+    runner = make_runner(dirs)
+    before = len(hooks_module._DETACHED)  # pyright: ignore[reportPrivateUsage]
+    entry = HookEntry("exit 0", 30, async_=True)
+    assert runner.spawn_detached(POST, entry, PAYLOAD, 0) is False
+    assert len(hooks_module._DETACHED) == before  # pyright: ignore[reportPrivateUsage]
+    assert tmp_entries(dirs) == []
+
+
+def test_parse_job_refuses_unusable_numbers_and_descriptors(dirs: StateDirs) -> None:
+    from pr_comment import watchdog
+
+    data = plain_job_bytes(dirs)
+    assert watchdog.parse_job(data) is not None
+    huge = b"1" + b"0" * 400
+    for old, new in (
+        (b'"timeout": 1.5', b'"timeout": true'),
+        (b'"term_grace": 0.2', b'"term_grace": true'),
+        (b'"timeout": 1.5', b'"timeout": ' + huge),
+        (b'"term_grace": 0.2', b'"term_grace": ' + huge),
+        (b'"timeout": 1.5', b'"timeout": 1e999'),
+        (b'"dir_fd": 12', b'"dir_fd": -1'),
+        (b'"dir_fd": 12', b'"dir_fd": 0'),
+        (b'"dir_fd": 12', b'"dir_fd": 1'),
+        (b'"dir_fd": 12', b'"dir_fd": 2'),
+        (b'"state_fd": 10', b'"state_fd": 2'),
+        (b'"tmp_fd": 11', b'"tmp_fd": 0'),
+        (b'"dir_fd": 12', b'"dir_fd": 1000000000000'),
+        (b'"dir_fd": 12', b'"dir_fd": 65536'),
+        (b'"dir_fd": 12', b'"dir_fd": ' + huge),
+        (b'"tmp_fd": 11', b'"tmp_fd": 10'),  # the same descriptor twice
+        (b'"dir_fd": 12', b'"dir_fd": 11'),
+        (b'"v": 1', b'"v": 2'),
+    ):
+        assert old in data, old
+        assert watchdog.parse_job(data.replace(old, new)) is None, new[:40]
