@@ -963,3 +963,20 @@ def test_201_inline_comments_are_a_usage_error_before_any_dry_run(tmp_path: Path
     )
     assert error["details"] == {"limit": 200, "inline_comments": 201}
     assert [c.subcommand for c in gateway.calls] == ["show"]
+
+
+def test_findings_only_a_precheck_round_would_move_still_count(tmp_path: Path) -> None:
+    findings = [finding(f"f{i}", "a.py", i + 1) for i in range(201)]
+    draft = write_draft(tmp_path, draft_doc(findings))
+    invalid = {
+        "invalid": [{"index": 0, "path": "a.py", "line": 1, "side": "right", "start_line": None}]
+    }
+    gateway = PinnedGateway([show_reply(), error_reply(12, "invalid_position", details=invalid)])
+    with pytest.raises(RunFailure) as caught:
+        prepare(request(draft_file=draft), env(gateway))
+    outcome = check_outcome(caught.value.outcome)
+    assert outcome.document is not None
+    error = outcome.document["error"]
+    assert outcome.exit_code == 2 and error["code"] == "usage"
+    assert error["details"] == {"limit": 200, "inline_comments": 201}
+    assert [c.subcommand for c in gateway.calls] == ["show"]

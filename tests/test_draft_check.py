@@ -512,6 +512,32 @@ def test_201_findings_with_a_line_exit_2_with_the_fixed_message(
     validate("pr-comment/cli/draft-check.json", doc)
 
 
+def test_the_cap_entry_survives_the_100_entry_truncation(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    raw = _inline_doc(201)
+    for item in raw["findings"]:
+        item["start_line"] = 500  # a schema error per finding, so the schema errors fill the cap
+    code, doc, _ = run(capsys, ["draft", "check", write(tmp_path, raw)])
+    assert code == 2
+    errors = doc["errors"]
+    assert len(errors) == 101
+    assert {"pointer": "/findings", "message": CAP_MESSAGE, "kind": None} in errors
+    assert errors[-1]["message"] == "further errors omitted"
+    validate("pr-comment/cli/draft-check.json", doc)
+
+
+def test_a_path_marker_finding_still_counts_in_draft_check(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    # draft check is conservative: review would move this finding to the body, check cannot know
+    raw = _inline_doc(201)
+    raw["findings"][0]["path"] = "x<U+202E>y.py"
+    code, doc, _ = run(capsys, ["draft", "check", write(tmp_path, raw)])
+    assert code == 2
+    assert {"pointer": "/findings", "message": CAP_MESSAGE, "kind": None} in doc["errors"]
+
+
 def test_file_level_findings_and_unanchored_entries_do_not_count(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:

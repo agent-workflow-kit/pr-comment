@@ -720,8 +720,7 @@ def _result_entries(document: object) -> list[dict[str, str | None]]:
     if entries and entries[-1]["message"] == _OMITTED and len(entries) > MAX_REPORTED_ERRORS:
         entries.pop()
         omitted = True
-    if _inline_count(document) > MAX_INLINE_COMMENTS:
-        entries.append({"pointer": "/findings", "message": INLINE_CAP_MESSAGE, "kind": None})
+    cap_at = len(entries)
     for issue in text_issues(document):
         entries.append(
             {
@@ -730,9 +729,21 @@ def _result_entries(document: object) -> list[dict[str, str | None]]:
                 "kind": issue["kind"],
             }
         )
-    if len(entries) > MAX_REPORTED_ERRORS:
-        entries = entries[:MAX_REPORTED_ERRORS]
+    # The inline cap entry sits after the schema errors and before the text errors, and the
+    # truncation never drops it: it keeps at most MAX_REPORTED_ERRORS - 1 of the other entries.
+    room = MAX_REPORTED_ERRORS
+    if _inline_count(document) > MAX_INLINE_COMMENTS:
+        room -= 1
+    if len(entries) > room:
+        entries = entries[:room]
         omitted = True
+    if _inline_count(document) > MAX_INLINE_COMMENTS:
+        cap_entry: dict[str, str | None] = {
+            "pointer": "/findings",
+            "message": INLINE_CAP_MESSAGE,
+            "kind": None,
+        }
+        entries.insert(min(cap_at, len(entries)), cap_entry)
     if omitted:
         entries.append({"pointer": "", "message": _OMITTED, "kind": None})
     return entries

@@ -652,6 +652,15 @@ def test_only_inline_comments_count_toward_the_cap() -> None:
     assert len(plan.inline_comments) == 200 and [m.id for m in plan.moved] == ["g2"]
 
 
+def test_a_finding_moved_by_the_source_is_not_counted() -> None:
+    # a left-side finding moves to the body when the merge base changed (source.moves)
+    findings = _many(200) + [finding("l1", "a.py", 9, side="left")]
+    source, _ = source_of(draft_doc(findings), merge_base="2" * 40)
+    plan = build_review_plan(context(), source)
+    assert len(plan.inline_comments) == 200
+    assert [(m.id, m.reason) for m in plan.moved] == [("l1", "base_changed")]
+
+
 def test_a_precheck_move_brings_the_count_under_the_cap() -> None:
     plan = review(_many(201), extra={"f0": "invalid_position"})
     assert len(plan.inline_comments) == 200
