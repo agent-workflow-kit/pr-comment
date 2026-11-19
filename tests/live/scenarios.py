@@ -644,11 +644,20 @@ def s_review_suggestions(ctx: Ctx) -> None:
         )
 
 
-@scenario(rows=("ts.suggestion_infostring", "ts.suggestion_longer_fence", "ts.suggestion_variants"))
+@scenario(
+    rows=(
+        "ts.suggestion_infostring",
+        "ts.suggestion_longer_fence",
+        "ts.suggestion_variants",
+        "ts.suggestion_fence_body",
+        "ts.suggestion_line_cell",
+    )
+)
 def s_suggestion_probes(ctx: Ctx) -> None:
     """Raw review comments: which fence forms a host treats as an applicable suggestion."""
     (path, line), *_ = ctx.diff_lines(1)
     info = "suggestion" if ctx.github else "suggestion:-0+0"
+    ticks = "`" * 3
     forms = {
         "control-suggestion": f"```{info}\nreplacement()\n```",
         "control-code": "```text\nreplacement()\n```",
@@ -657,6 +666,15 @@ def s_suggestion_probes(ctx: Ctx) -> None:
         "info-after-word": "```python suggestion\nreplacement()\n```",
         "word-then-suggestion": f"```text {info}\nreplacement()\n```",
         "indented-fence": f"  ```{info}\nreplacement()\n  ```",
+        # bodies that hold a fence line of their own: the longer fence should keep them intact
+        "longer-fence-inner-ticks": f"````{info}\n{ticks}\nreplacement()\n````",
+        "same-fence-inner-ticks": f"```{info}\n{ticks}\nreplacement()\n```",
+        "longer-fence-inner-tilde": f"````{info}\n~~~\nreplacement()\n````",
+    }
+    bodies = {  # the body lines each of those forms must keep, verbatim
+        "longer-fence-inner-ticks": [ticks, "replacement()"],
+        "same-fence-inner-ticks": [ticks, "replacement()"],
+        "longer-fence-inner-tilde": ["~~~", "replacement()"],
     }
     comments = [
         {"path": path, "line": line, "body": f"{name}\n{text}\n{ctx.label_tag(name)}"}
@@ -674,10 +692,12 @@ def s_suggestion_probes(ctx: Ctx) -> None:
         if str(c.get("body", "")).split("\n", 1)[0] in forms
     }
     shapes = {}
+    htmls = {}
     for name, comment in by_name.items():
         html = ctx.render(str(comment["id"]))
         if html is not None:
             shapes[name] = html.shape()
+            htmls[name] = html
     if "control-suggestion" in shapes and "control-code" in shapes:
         # recorded, not asserted: a host may render both alike (then no variant can be classified)
         distinct = shapes["control-suggestion"] != shapes["control-code"]
@@ -694,12 +714,27 @@ def s_suggestion_probes(ctx: Ctx) -> None:
             )
             row = {
                 "longer-fence": "ts.suggestion_longer_fence",
+                "longer-fence-inner-ticks": "ts.suggestion_fence_body",
+                "same-fence-inner-ticks": "ts.suggestion_fence_body",
+                "longer-fence-inner-tilde": "ts.suggestion_fence_body",
                 "info-after-word": "ts.suggestion_infostring",
                 "word-then-suggestion": "ts.suggestion_infostring",
             }.get(name, "ts.suggestion_variants")
             ctx.observe(
                 row, name, verdict
             )  # OPEN DECISION: the fence degrade; the suite only records
+            if name in bodies:
+                verbatim = htmls[name].has_body(bodies[name])
+                ctx.observe("ts.suggestion_fence_body", f"{name}_body_verbatim", verbatim)
+            if name in ("control-suggestion", "longer-fence", "tilde-fence"):
+                # a tilde fence renders the widget but hid the line number, so its Apply is not
+                # proven by the shape alone: compare the cell with the line the comment is on
+                cells = htmls[name].line_cells()
+                ctx.observe(
+                    "ts.suggestion_line_cell",
+                    f"{name}_line_cell",
+                    helpers.line_cell_verdict(cells, line),
+                )
     else:
         ctx.observe("ts.suggestion_variants", "render", "unavailable: do the manual step")
 

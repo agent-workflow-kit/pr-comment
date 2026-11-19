@@ -179,12 +179,40 @@ class _Collector(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.tags: list[tuple[str, dict[str, str]]] = []
         self.text: list[str] = []
+        self.pre: list[str] = []  # the text of each <pre> block
+        self.cells: list[str] = []  # the line-number cells, in document order
+        self._pre_depth = 0
+        self._cell: list[str] | None = None  # text of the open numbered cell
+        self._cell_attr = ""
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self.tags.append((tag, {k: v or "" for k, v in attrs}))
+        values = {k: v or "" for k, v in attrs}
+        self.tags.append((tag, values))
+        if tag == "pre":
+            if self._pre_depth == 0:
+                self.pre.append("")
+            self._pre_depth += 1
+        elif tag in ("td", "th") and self._cell is None:
+            classes = values.get("class", "").split()
+            if "data-line-number" in values or "blob-num" in classes:
+                self._cell = []
+                # a hidden number (tilde fences) is marked by a class and a dot in the attribute
+                hidden = "blob-num-hidden" in classes
+                self._cell_attr = "\u00b7" if hidden else values.get("data-line-number", "")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "pre" and self._pre_depth:
+            self._pre_depth -= 1
+        elif tag in ("td", "th") and self._cell is not None:
+            self.cells.append(self._cell_attr or "".join(self._cell).strip())
+            self._cell = None
 
     def handle_data(self, data: str) -> None:
         self.text.append(data)
+        if self._pre_depth:
+            self.pre[-1] += data
+        if self._cell is not None:
+            self._cell.append(data)
 
 
 class Html:
@@ -194,8 +222,23 @@ class Html:
         self.source = source
         parser = _Collector()
         parser.feed(source)
+        parser.close()
         self.tags = parser.tags
         self.text = "".join(parser.text)
+        self.pre = parser.pre
+        self._cells = parser.cells
+
+    def line_cells(self) -> list[str]:
+        """The line-number cells of any rendered diff: the ``data-line-number`` value, else the
+        cell text (a host that hides the number shows dots or nothing)."""
+        return list(self._cells)
+
+    def has_body(self, lines: Sequence[str]) -> bool:
+        """The lines appear verbatim, in order, inside one rendered code block."""
+        if not lines:
+            return False
+        wanted = "\n".join(lines)
+        return any(wanted in block for block in self.pre)
 
     def count(self, tag: str) -> int:
         return sum(1 for name, _ in self.tags if name == tag)
@@ -228,6 +271,17 @@ class Html:
             classes = " ".join(sorted(attrs.get("class", "").split()))
             parts.append(f"{name}.{classes}" if classes else name)
         return " ".join(parts)
+
+
+def line_cell_verdict(cells: Sequence[str], expected: int) -> str:
+    """``match`` when a line-number cell is the expected line, ``mismatch`` when the cells show
+    other numbers, ``hidden`` when none shows a number (dots or empty), ``absent`` without cells."""
+    if not cells:
+        return "absent"
+    numbers = [c.strip() for c in cells if c.strip().isdigit()]
+    if not numbers:
+        return "hidden"
+    return "match" if str(expected) in numbers else "mismatch"
 
 
 def distinct_shapes(*shapes: str) -> bool:

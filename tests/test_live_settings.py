@@ -355,6 +355,66 @@ def test_html_inspection() -> None:
     assert helpers.distinct_shapes("a", "b") and not helpers.distinct_shapes("a", "a")
 
 
+# the structure of a host's rendered suggestion (sanitized: no names, ids or real content)
+SUGGESTION_HTML = """<p dir="auto">x</p>
+<div class="js-suggested-changes-blob diff-view"><div>Suggested change</div>
+<table><tbody>
+<tr><td class="blob-num blob-num-deletion text-right{hidden}" data-line-number="{num}"></td>
+<td class="blob-code-inner blob-code-deletion">old</td></tr>
+<tr><td class="blob-num blob-num-addition text-right{hidden}" data-line-number="{num}"></td>
+<td class="blob-code-inner blob-code-addition">new</td></tr>
+</tbody></table><div class="js-apply-changes"></div></div>"""
+
+
+def suggestion_html(num: str, hidden: str = "") -> helpers.Html:
+    return helpers.Html(SUGGESTION_HTML.format(num=num, hidden=hidden))
+
+
+def test_line_cells_of_a_rendered_suggestion_show_the_real_line_number() -> None:
+    assert suggestion_html("3").line_cells() == ["3", "3"]
+
+
+def test_line_cells_of_a_hidden_number_are_dots() -> None:
+    cells = suggestion_html("\u00b7", " blob-num-hidden").line_cells()
+    assert cells == ["\u00b7", "\u00b7"]
+    assert helpers.line_cell_verdict(cells, 3) == "hidden"
+
+
+def test_a_hidden_class_marks_the_cell_hidden_whatever_the_attribute_holds() -> None:
+    assert suggestion_html("3", " blob-num-hidden").line_cells() == ["\u00b7", "\u00b7"]
+
+
+def test_the_real_cell_matches_the_expected_line_and_other_cells_are_ignored() -> None:
+    assert helpers.line_cell_verdict(suggestion_html("3").line_cells(), 3) == "match"
+    assert helpers.line_cell_verdict(suggestion_html("3").line_cells(), 4) == "mismatch"
+    other = helpers.Html('<table><tr><td class="x">5</td></tr></table>')
+    assert other.line_cells() == []
+    assert helpers.Html("<p>no table</p>").line_cells() == []
+
+
+@pytest.mark.parametrize(
+    ("cells", "expected"),
+    [
+        (["12"], "match"),
+        (["11", "12"], "match"),
+        (["3"], "mismatch"),
+        (["\u00b7\u00b7\u00b7"], "hidden"),
+        ([""], "hidden"),
+        ([], "absent"),
+    ],
+)
+def test_the_line_cell_verdict(cells: list[str], expected: str) -> None:
+    assert helpers.line_cell_verdict(cells, 12) == expected
+
+
+def test_the_body_is_verbatim_only_when_every_line_is_in_the_rendered_text() -> None:
+    html = helpers.Html("<pre><code>```\nx\n~~~</code></pre>")
+    assert html.has_body(["```", "x", "~~~"]) is True
+    assert html.has_body(["```", "y"]) is False
+    assert helpers.Html("<pre><code>x</code></pre><p>```</p>").has_body(["```", "x"]) is False
+    assert html.has_body([]) is False
+
+
 # --- stricter settings (review round 1) -----------------------------------------------------------
 
 
