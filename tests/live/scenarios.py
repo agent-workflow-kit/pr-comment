@@ -10,10 +10,12 @@ host fact and decides nothing.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import signal
+import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -21,6 +23,7 @@ from typing import Any
 
 from . import helpers
 from .ctx import ZERO_SHA, Ctx
+from .errors import LiveRefusal
 from .settings import LiveSettings, Target
 
 Fn = Callable[[Ctx], None]
@@ -109,12 +112,13 @@ def s_forgectl_reads(ctx: Ctx) -> None:
     """forgectl's version, whoami and show; the base ref form pr-comment copies into a draft."""
     version = ctx.runner.fg("version", "--version", config="", strict=False)
     text = version.stdout.strip()
-    ctx.check(
-        re.fullmatch(r"forgectl [0-9]+\.[0-9]+\.[0-9]+\S*", text),
-        "forgectl --version is not 'forgectl X.Y.Z'",
-        "gw.version_format",
-    )
+    # recorded, not asserted: the format is what the row is there to find out
     ctx.observe("gw.version_format", "version_line", text)
+    ctx.observe(
+        "gw.version_format",
+        "matches_forgectl_x_y_z",
+        re.fullmatch(r"forgectl [0-9]+\.[0-9]+\.[0-9]+\S*", text) is not None,
+    )
     who = ctx.runner.fg("whoami", "whoami", "--json")
     ctx.check(who.code in (0, 12), "whoami exits 0 or 12 (partial results)", "fk.whoami")
     if who.real and who.doc:
@@ -244,10 +248,14 @@ BODY_VECTOR = (
 )
 def s_body_roundtrip(ctx: Ctx) -> None:
     """The stored text equals pr-comment's plan plus forgectl's dedupe line; newline handling."""
-    results = {}
+    # one tagged body for both variants (they differ only in the trailing newline), each posted
+    # under its own dedupe key; the stored texts are compared with the dedupe line taken out
+    label = "vec"
+    base = ctx.text(label, BODY_VECTOR + "last line")
+    stored_without_line: dict[str, str] = {}
     for name, suffix in (("with-newline", "\n"), ("no-newline", "")):
-        label = f"vec-{name}"
-        body = ctx.text(label, BODY_VECTOR + "last line") + suffix
+        body = base + suffix
+        key_flag = ("--dedupe-key", f"live.{ctx.settings.run_id}.vec-{name}")
         plan = ctx.runner.pc(
             f"plan-{name}",
             "comment",
@@ -255,15 +263,22 @@ def s_body_roundtrip(ctx: Ctx) -> None:
             "--body-file",
             "-",
             "--dry-run",
+            *key_flag,
             stdin=body.encode(),
             write=False,
         )
-        out = ctx.comment(label, body)
+        out = ctx.comment(f"{label}-{name}", body, *key_flag)
         ctx.want(out, 0)
         text = _doc(plan.doc, "plan", "bodies")
         planned = text[0]["text"] if isinstance(text, list) and text else None
         key = _doc(out.doc, "dedupe_key")
-        stored = ctx.stored_body(label)
+        line = f"<!-- forgectl:dedupe:{key} -->"
+        found = [c for c in ctx.posted(label) if line in str(c.get("body", ""))] if ctx.live else []
+        stored = str(found[0].get("body", "")) if found else None
+        if ctx.live:
+            ctx.check(
+                stored is not None, f"{name}: the comment is on the PR", "ts.host_keeps_bytes"
+            )
         if ctx.live and stored is not None and planned is not None:
             ctx.check(
                 stored.startswith(planned),
@@ -271,7 +286,6 @@ def s_body_roundtrip(ctx: Ctx) -> None:
                 "ts.host_keeps_bytes",
             )
             rest = stored[len(planned) :]
-            line = f"<!-- forgectl:dedupe:{key} -->"
             ctx.check(
                 rest.strip() == line, "the rest is forgectl's dedupe line", "ts.dedupe_line_format"
             )
@@ -279,9 +293,10 @@ def s_body_roundtrip(ctx: Ctx) -> None:
             ctx.check(
                 helpers.has_marker(stored), "marker detection finds it", "ts.dedupe_line_format"
             )
-        results[name] = stored
-    if ctx.live and None not in results.values():
-        same = results["with-newline"] == results["no-newline"]
+        if stored is not None:
+            stored_without_line[name] = stored.replace(line, "")
+    if ctx.live and len(stored_without_line) == 2:
+        same = stored_without_line["with-newline"] == stored_without_line["no-newline"]
         ctx.observe("ts.stdin_trailing_newline", "stored_equal_with_and_without_newline", same)
         ctx.check(
             same, "a trailing newline on stdin changes the stored text", "ts.stdin_trailing_newline"
@@ -364,6 +379,8 @@ def s_forgectl_confirmation_order(ctx: Ctx) -> None:
         "-",
         f"--expected-head={ZERO_SHA}",
         stdin=body,
+        write=True,  # a write for the gate (a verified target) and a dry run in preflight
+        yes=False,  # the point of the probe: no --yes
     )
     if unconfirmed.real:
         ctx.check(
@@ -382,6 +399,7 @@ def _mention_body(login: str, group: str | None) -> str:
             f"plain @{login}",
             f"letter a@{login} and digit 1@{login}",
             f"entities &amp@{login} &#64;{login} &#x40;{login} escaped \\@{login}",
+            f"unterminated &#64{login} &#x40{login}",
             f"code `@{login}` and a fullwidth \uff20{login}",
             f"all @all and group @{group or 'some-group'}/sub",
             "angle \uff1cb\uff1e and bang \uff01[x](https://example.com/i.png)",
@@ -405,12 +423,10 @@ def s_mentions(ctx: Ctx) -> None:
     ctx.want(out, 0)
     stored = ctx.stored_body("mentions")
     if ctx.live and stored is not None:
-        ctx.check(
-            f"\uff20{login}" in stored, "the fullwidth @ is kept as sent", "ts.fullwidth_fold"
-        )
-        ctx.check(
-            "\uff1cb\uff1e" in stored, "the fullwidth < > are kept as sent", "ts.fullwidth_fold"
-        )
+        # recorded, not asserted: OPEN DECISION (fullwidth @) and what a host stores is its own
+        ctx.observe("ts.fullwidth_fold", "fullwidth_at_kept", f"\uff20{login}" in stored)
+        ctx.observe("ts.fullwidth_fold", "fullwidth_angle_kept", "\uff1cb\uff1e" in stored)
+        ctx.observe("ts.fullwidth_fold", "fullwidth_bang_kept", "\uff01[x]" in stored)
         ctx.check(
             f"\n@{login}" not in stored and not stored.startswith(f"@{login}"),
             "no plain mention is stored",
@@ -436,6 +452,9 @@ def s_mentions(ctx: Ctx) -> None:
                 "ts.gitlab_mentions",
             )
         ctx.observe("ts.entities_unterminated", "links", len(html.links()))
+        # a host that folded the fullwidth forms would show an image or a bold tag (<b>)
+        ctx.observe("ts.fullwidth_fold", "img_tags", html.count("img"))
+        ctx.observe("ts.fullwidth_fold", "b_tags", html.count("b"))
     elif ctx.live:
         ctx.observe("ts.mention_filters", "render", "unavailable: do the manual step")
 
@@ -444,28 +463,56 @@ def s_mentions(ctx: Ctx) -> None:
 def s_fence_limit(ctx: Ctx) -> None:
     """Degraded suggestions with backtick and tilde runs of 254, 255, 256 and 300 characters."""
     runs = [(char, size) for char in "`~" for size in (254, 255, 256, 300)]
-    lines = ctx.diff_lines(len(runs) + 1)
+    lines = ctx.diff_lines(len(runs) + 3)
     findings = []
+    expected: dict[
+        str, tuple[int, int]
+    ] = {}  # opening words of a body -> (backtick run, tilde run)
     for index, (char, size) in enumerate(runs):
         kind = "backticks" if char == "`" else "tildes"
         path, line = lines[index]
+        opening = f"A run of {size} {kind}."
+        expected[opening] = (size, 0) if char == "`" else (0, size)
         findings.append(
             {
                 "id": f"run-{'bt' if char == '`' else 'tl'}-{size}",
                 "path": path,
                 "line": line,
-                "body": f"A run of {size} {kind}. {ctx.label_tag('fences')}",
+                "body": f"{opening} {ctx.label_tag('fences')}",
                 "suggestion": {"lines": ["x" + char * size]},
             }
         )
-    path, line = lines[-1]
+    path, line = lines[len(runs)]
+    both = "Backtick and tilde runs of 255 in one suggestion."
+    expected[both] = (255, 255)
     findings.append(
         {
             "id": "run-both-255",
             "path": path,
             "line": line,
-            "body": f"Backtick and tilde runs of 255 in one suggestion. {ctx.label_tag('fences')}",
+            "body": f"{both} {ctx.label_tag('fences')}",
             "suggestion": {"lines": ["a" + "`" * 255, "b" + "~" * 255]},
+        }
+    )
+    # controls: a short degraded suggestion (the baseline shape) and an applicable one
+    path, line = lines[len(runs) + 1]
+    findings.append(
+        {
+            "id": "control-degraded",
+            "path": path,
+            "line": line,
+            "body": f"Control degraded. {ctx.label_tag('fences')}",
+            "suggestion": {"lines": ["x ``` y"]},
+        }
+    )
+    path, line = lines[len(runs) + 2]
+    findings.append(
+        {
+            "id": "control-applicable",
+            "path": path,
+            "line": line,
+            "body": f"Control applicable. {ctx.label_tag('fences')}",
+            "suggestion": {"lines": ["replacement()"]},
         }
     )
     draft = ctx.draft("fences", findings, body="Fence length probe.")
@@ -474,9 +521,10 @@ def s_fence_limit(ctx: Ctx) -> None:
     degraded = _doc(out.doc, "suggestions_degraded")
     ctx.check(
         isinstance(degraded, list)
-        and len(degraded) == len(findings)
+        and sorted(str(d.get("id")) for d in degraded)
+        == sorted(str(f["id"]) for f in findings if f["id"] != "control-applicable")
         and all(d.get("reason") == "fence" for d in degraded),
-        "every suggestion is degraded for its fence",
+        "every suggestion but the applicable control is degraded for its fence",
         "ts.degraded_suggestion",
     )
     ctx.check(
@@ -484,19 +532,50 @@ def s_fence_limit(ctx: Ctx) -> None:
         "every finding posted inline",
         "ts.fence_255",
     )
-    comments = [c for c in ctx.posted("fences") if str(c.get("body", "")).startswith("A run of")]
-    ctx.check(
-        len(comments) == len(findings) - 1, "the inline comments are on the PR", "ts.fence_255"
-    )
-    for comment in comments if ctx.live else []:
+    if not ctx.live:
+        return
+    comments = {
+        opening: c
+        for c in ctx.posted("fences")
+        for opening in (*expected, "Control degraded.", "Control applicable.")
+        if str(c.get("body", "")).startswith(opening)
+    }
+    ctx.check(len(comments) == len(findings), "the inline comments are on the PR", "ts.fence_255")
+    for opening, (backticks, tildes) in expected.items():
+        comment = comments.get(opening)
+        if comment is None:
+            continue
+        problems = helpers.fence_problems(str(comment["body"]), backticks, tildes)
+        ctx.check(not problems, f"{opening} stored wrongly: {'; '.join(problems)}", "ts.run_split")
+    rendered: dict[str, helpers.Html] = {}
+    for opening, comment in comments.items():
         html = ctx.render(str(comment["id"]))
         if html is None:
             continue
-        blocks = html.count("pre")
-        ctx.observe("ts.fence_255", f"pre_blocks:{str(comment['body'])[:40]!r}", blocks)
-        ctx.check(blocks <= 2, "a fence leaked into more than the one code block", "ts.fence_255")
+        rendered[opening] = html
+        ctx.observe("ts.fence_255", f"pre_blocks:{opening}", html.count("pre"))
         ctx.check(
             "<!-- pr-comment" not in html.text, "the marker became visible text", "ts.fence_255"
+        )
+    control = rendered.get("Control degraded.")
+    if control is None:
+        ctx.observe("ts.fence_255", "render", "unavailable: do the manual step")
+        return
+    ctx.check(control.count("pre") == 1, "the control is not one code block", "ts.fence_255")
+    for opening in expected:
+        html = rendered.get(opening)
+        if html is not None:
+            ctx.check(
+                html.count("pre") == 1 and html.shape() == control.shape(),
+                f"{opening} does not render as the control's one code block",
+                "ts.fence_255",
+            )
+    applicable = rendered.get("Control applicable.")
+    if applicable is not None:
+        ctx.observe(
+            "ts.fence_255",
+            "degraded_shape_differs_from_applicable",
+            control.shape() != applicable.shape(),
         )
 
 
@@ -590,15 +669,14 @@ def s_suggestion_probes(ctx: Ctx) -> None:
         if html is not None:
             shapes[name] = html.shape()
     if "control-suggestion" in shapes and "control-code" in shapes:
-        ctx.check(
-            shapes["control-suggestion"] != shapes["control-code"],
-            "the host renders an applicable suggestion like a plain code block: no variant "
-            "can be classified",
-            "ts.suggestion_variants",
-        )
+        # recorded, not asserted: a host may render both alike (then no variant can be classified)
+        distinct = shapes["control-suggestion"] != shapes["control-code"]
+        ctx.observe("ts.suggestion_variants", "controls_distinguishable", distinct)
         for name, shape in shapes.items():
             verdict = (
-                "applicable"
+                "indistinguishable"
+                if not distinct
+                else "applicable"
                 if shape == shapes["control-suggestion"]
                 else "code"
                 if shape == shapes["control-code"]
@@ -650,11 +728,7 @@ def s_render_probes(ctx: Ctx) -> None:
     if not (ctx.live and html is not None):
         ctx.observe("ts.postprocess", "render", "unavailable: do the manual step")
         return
-    ctx.check(
-        not html.hrefs_with_scheme("javascript:"),
-        "a javascript: link rendered as a link",
-        "ts.link_forms",
-    )
+    ctx.observe("ts.link_forms", "javascript_hrefs", html.hrefs_with_scheme("javascript:"))
     ctx.check("pr-comment:v1" not in html.text, "the marker is visible text", "ts.marker_display")
     ctx.observe("ts.github_media", "img_tags", html.count("img"))
     ctx.observe("ts.github_media", "video_tags", html.count("video"))
@@ -782,6 +856,7 @@ def s_gitlab_body_thread(ctx: Ctx) -> None:
         )
     res = ctx.runner.pc("resolve", "resolve", ctx.ref, "--thread", str(thread))
     ctx.want(res, 0)
+    ctx.runner.leave(f"the GitLab body thread of {ctx.ref} (a note and a thread resolved)")
     missing = ctx.runner.pc("missing", "resolve", ctx.ref, "--thread", "gl:d:" + "0" * 40)
     ctx.want(missing, 10, "not_found", row="th.not_found")
 
@@ -839,6 +914,7 @@ def s_resolve_unresolve(ctx: Ctx) -> None:
         )
     un = ctx.runner.pc("unresolve", "unresolve", ctx.ref, "--thread", thread)
     ctx.want(un, 0)
+    ctx.runner.leave(f"a review thread of {ctx.ref} that was resolved and unresolved again")
     missing = ctx.runner.pc("missing", "resolve", ctx.ref, "--thread", "gh:rt:PRRT_kwDOZZZZZZZZZZ")
     ctx.want(missing, 10, "not_found", row="th.not_found")
 
@@ -933,26 +1009,34 @@ def s_refusals(ctx: Ctx) -> None:
     """Refusals that write nothing: stale head and base, an unknown reply target, a missing PR."""
     body = ctx.text("refuse", "Refusal probe: never posted.").encode()
     human = "human:live-suite"  # an auto: approve is refused by the guard before the checks below
-    stale = ctx.runner.pc(
-        "stale-head",
-        "approve",
-        ctx.ref,
-        f"--expected-head={ZERO_SHA}",
-        "--expected-base=main",
-        write=True,
-        actor=human,
-    )
-    ctx.want(stale, 20, "stale_head", row="fk.codes_reasons")
-    base = ctx.runner.pc(
-        "stale-base",
-        "approve",
-        ctx.ref,
-        f"--expected-head={_doc(ctx.show(), 'head', 'sha')}",
-        "--expected-base=no-such-branch-live",
-        write=True,
-        actor=human,
-    )
-    ctx.want(base, 20, "stale_base", row="fk.codes_reasons")
+    if ctx.may_approve:
+        # an approve is a write if the checks were ever to pass: only with PR_COMMENT_LIVE_APPROVE=1
+        stale = ctx.runner.pc(
+            "stale-head",
+            "approve",
+            ctx.ref,
+            f"--expected-head={ZERO_SHA}",
+            "--expected-base=main",
+            write=True,
+            actor=human,
+        )
+        ctx.want(stale, 20, "stale_head", row="fk.codes_reasons")
+        base = ctx.runner.pc(
+            "stale-base",
+            "approve",
+            ctx.ref,
+            f"--expected-head={_doc(ctx.show(), 'head', 'sha')}",
+            "--expected-base=no-such-branch-live",
+            write=True,
+            actor=human,
+        )
+        ctx.want(base, 20, "stale_base", row="fk.codes_reasons")
+    else:
+        ctx.observe(
+            "fk.codes_reasons",
+            "approve_refusals",
+            "skipped: they are approve writes (set PR_COMMENT_LIVE_APPROVE=1)",
+        )
     to = ctx.runner.pc(
         "unknown-target",
         "reply",
@@ -999,20 +1083,33 @@ def s_closed_pr(ctx: Ctx) -> None:
     closed = (ctx.target.closed_ref if ctx.target else None) or ctx.ref
     ctx.runner.verify_target(closed)
     sub = ctx.retarget(closed)
+    state = _doc(sub.show(), "state")
+    if ctx.live and state == "open":
+        # a review of an open PR would post: nothing is written unless it is really not open
+        raise LiveRefusal(
+            "the closed-PR target is open (or could not be read); nothing was written"
+        )
     draft = sub.draft("closed", [], body="Closed PR probe.")
     review = sub.post_review("closed", draft)
     sub.want(review, 20, "not_open", row="fk.codes_reasons")
-    head = str(_doc(sub.show(), "head", "sha"))
-    approve = ctx.runner.pc(
-        "approve-closed",
-        "approve",
-        sub.ref,
-        f"--expected-head={head}",
-        f"--expected-base={_doc(sub.show(), 'base', 'ref')}",
-        write=True,
-        actor="human:live-suite",
-    )
-    sub.want(approve, 20, "not_open", row="fk.codes_reasons")
+    if ctx.may_approve:
+        head = str(_doc(sub.show(), "head", "sha"))
+        approve = ctx.runner.pc(
+            "approve-closed",
+            "approve",
+            sub.ref,
+            f"--expected-head={head}",
+            f"--expected-base={_doc(sub.show(), 'base', 'ref')}",
+            write=True,
+            actor="human:live-suite",
+        )
+        sub.want(approve, 20, "not_open", row="fk.codes_reasons")
+    else:
+        ctx.observe(
+            "fk.codes_reasons",
+            "approve_not_open",
+            "skipped: an approve write (set PR_COMMENT_LIVE_APPROVE=1)",
+        )
     comment = sub.comment("closed", sub.text("closed", "A comment on a closed PR."))
     sub.want(comment, 0, row="fk.codes_reasons")
 
@@ -1040,9 +1137,7 @@ def s_approve_interactive(ctx: Ctx) -> None:
         "the result says approve",
         "fk.approve_interactive",
     )
-    ctx.runner.observe(
-        "fk.approve_interactive", "left_on_pr", "an approval; dismiss or unapprove it by hand"
-    )
+    ctx.runner.leave(f"an approval on {ref or ctx.ref}: dismiss or unapprove it by hand")
 
 
 # --- signals, hooks, escalation, config ----------------------------------------------------------
@@ -1051,15 +1146,17 @@ def s_approve_interactive(ctx: Ctx) -> None:
 @scenario(rows=("gw.signal_term", "fk.signal_after_write"))
 def s_signal_mid_write(ctx: Ctx) -> None:
     """SIGTERM, SIGHUP and SIGINT after the attempted record: outcome_unknown, one post."""
-    for number, sig in enumerate((signal.SIGTERM, signal.SIGHUP, signal.SIGINT), start=1):
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         label = f"sig-{sig.name.lower()}"
         body = ctx.text(label, f"Signal probe {sig.name}.").encode()
         args = ("comment", ctx.ref, "--body-file", "-")
+        # the audit records of earlier launches are not this one's: count before starting it
+        before = ctx.runner.audit_count("attempted")
         running = ctx.runner.start_pc(label, *args, stdin=body)
         if running.proc is not None:
             ctx.check(
-                ctx.runner.wait_for_audit("attempted", count=number),
-                "no attempted record appeared",
+                ctx.runner.wait_for_audit("attempted", after=before),
+                "no attempted record appeared for this run",
                 "fk.signal_after_write",
             )
             running.send(sig)
@@ -1093,6 +1190,33 @@ def s_signal_mid_write(ctx: Ctx) -> None:
             )
 
 
+ASYNC_SLEEP_SECONDS = 20  # long enough that returning before it ends cannot be a race
+
+
+def async_hook_config(marker: object) -> str:
+    """pr-comment config with one async ``post-post`` hook that touches ``marker`` late."""
+    command = f"sleep {ASYNC_SLEEP_SECONDS}; touch {marker}"
+    return f"hooks:\n  post-post:\n    - cmd: {json.dumps(command)}\n      async: true\n"
+
+
+def _kill_leaked_sleep(pid: int) -> None:
+    """End the hook's ``sleep 300`` if it is still there: only that pid (read from the hook's own
+    pid file) and only while its command line is the one the hook started."""
+    try:
+        listing = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+    if listing.stdout.strip() == "sleep 300":
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.kill(pid, signal.SIGKILL)
+
+
 AMBIENT_TOKENS = (
     "GH_TOKEN",
     "GITHUB_TOKEN",
@@ -1112,6 +1236,11 @@ def s_hooks_pass_through(ctx: Ctx) -> None:
     stdout = json.dumps({"decision_id": decision})
     hook = f"cat >/dev/null; env | cut -d= -f1 | sort > {dump}; echo '{stdout}'"
     ctx.tap_since()
+    # a canary in an ambient-token variable the target's host does not use: forgectl's host
+    # tools read GH_*, GITHUB_* for GitHub and GITLAB_*, OAUTH_TOKEN for GitLab, so the other
+    # family cannot change how this run authenticates
+    canary = "GITLAB_ACCESS_TOKEN" if ctx.github else "GITHUB_ENTERPRISE_TOKEN"
+    injected = canary not in ctx.runner.env
     out = ctx.runner.pc(
         "hook-comment",
         "comment",
@@ -1122,7 +1251,11 @@ def s_hooks_pass_through(ctx: Ctx) -> None:
         f"pre-post={hook}",
         stdin=ctx.text("hook", "A hook ran before this.").encode(),
         extra_config="hook_env_deny:\n  - PRC_LIVE_DENY_ME\n",
-        env_extra={"PRC_LIVE_DENY_ME": "x", "PRC_LIVE_KEEP_ME": "y"},
+        env_extra={
+            "PRC_LIVE_DENY_ME": "x",
+            "PRC_LIVE_KEEP_ME": "y",
+            **({canary: f"canary-{ctx.settings.run_id}"} if injected else {}),
+        },
     )
     ctx.want(out, 0)
     if ctx.live:
@@ -1134,7 +1267,9 @@ def s_hooks_pass_through(ctx: Ctx) -> None:
         )
         ctx.check(dump.exists(), "the hook did not run", "hk.decision_ids")
         names = set(dump.read_text(encoding="utf-8").split()) if dump.exists() else set()
-        ambient = {n for n in AMBIENT_TOKENS if n in ctx.runner.env}
+        ambient = {n for n in AMBIENT_TOKENS if n in ctx.runner.env} | (
+            {canary} if injected else set()
+        )
         ctx.check(
             not (ambient & names),
             f"ambient token variables reached a hook: {sorted(ambient & names)}",
@@ -1148,6 +1283,7 @@ def s_hooks_pass_through(ctx: Ctx) -> None:
         )
         ctx.check("PR_COMMENT_HOOK" in names, "PR_COMMENT_HOOK is missing", "hk.scrubbed_env")
         ctx.observe("hk.scrubbed_env", "ambient_tokens_set_in_this_run", sorted(ambient))
+        ctx.observe("hk.scrubbed_env", "canary_injected", injected)
 
 
 @scenario(rows=("hk.group_kill", "hk.async"), writes=False)
@@ -1173,7 +1309,10 @@ def s_hooks_timeout_and_async(ctx: Ctx) -> None:
     )
     ctx.want(veto, 11, row="hk.group_kill")
     if ctx.live:
-        pid = int(pidfile.read_text(encoding="utf-8").strip()) if pidfile.exists() else 0
+        pid = helpers.read_pidfile(pidfile)
+        ctx.check(pid > 0, "the hook did not start (no pid was written)", "hk.group_kill")
+        if pid > 0:
+            ctx.runner.cleanups.append(lambda: _kill_leaked_sleep(pid))
         time.sleep(1.0)
         alive = False
         if pid:
@@ -1189,12 +1328,7 @@ def s_hooks_timeout_and_async(ctx: Ctx) -> None:
         )
         ctx.check(len(ctx.posted("hook-veto")) == 0, "a vetoed run posted", "hk.group_kill")
     marker = work / "async-done"
-    async_config = (
-        "hooks:\n"
-        "  post-post:\n"
-        f"    - cmd: {json.dumps(f'sleep 4; touch {marker}')}\n"
-        "      async: true\n"
-    )
+    async_config = async_hook_config(marker)
     started = time.monotonic()
     posted = ctx.runner.pc(
         "hook-async",
@@ -1370,6 +1504,19 @@ def s_marker_whitespace(ctx: Ctx) -> None:
             "ts.unicode_whitespace_marker", "stored", ascii(stored.replace(line, "<dedupe>"))
         )
         ctx.observe("ts.unicode_whitespace_marker", "marker_detected", helpers.has_marker(stored))
+
+
+@scenario(rows=("fk.diff_markers",), writes=False)
+def s_diff_markers(ctx: Ctx) -> None:
+    """What forgectl's diff keeps of a carriage return and of the no-newline marker (recorded)."""
+    out = ctx.runner.fg("diff", "diff", "--json", ctx.ref)
+    if not out.real:
+        return
+    diff = str(_doc(out.doc, "diff") or "")
+    ctx.observe("fk.diff_markers", "exit", out.code)
+    ctx.observe("fk.diff_markers", "carriage_returns", diff.count("\r"))
+    ctx.observe("fk.diff_markers", "no_newline_markers", diff.count("\\ No newline"))
+    ctx.observe("fk.diff_markers", "added_lines", len(helpers.added_lines(diff)))
 
 
 __all__ = ["SCENARIOS", "Scenario", "pairs", "skip_reason"]

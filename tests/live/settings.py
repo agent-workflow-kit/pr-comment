@@ -19,6 +19,7 @@ Variables (all optional unless a problem says otherwise; the full list is in
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import secrets
@@ -39,9 +40,13 @@ TARGET_KEYS: dict[str, str] = {
     "GITLAB_SELFHOSTED": "gitlab",
 }
 PLACEHOLDER_REF = {"github": "github.com/acme/widgets#1", "gitlab": "gitlab.com/acme/widgets#1"}
+MIN_SECRET_LENGTH = 8  # a shorter value is not worth replacing: it would mangle ordinary text
 
+# PAT is matched as a whole word only, so that PATH is not taken for a secret
 SECRET_NAME_RE = re.compile(
-    r"TOKEN|SECRET|PASSW|CREDENTIAL|KEY|AUTH|WEBHOOK|COOKIE|SESSION|PRIVATE", re.IGNORECASE
+    r"TOKEN|SECRET|PASSW|CREDENTIAL|KEY|AUTH|WEBHOOK|COOKIE|SESSION|PRIVATE|BEARER|JWT"
+    r"|(?<![A-Z])PAT(?![A-Z])",
+    re.IGNORECASE,
 )
 REPO_ID_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*(?::[0-9]{1,5})?/[a-z0-9._-]+(?:/[a-z0-9._-]+)*$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -50,6 +55,15 @@ _URL_RE = re.compile(
     r"^https?://([A-Za-z0-9.-]+(?::[0-9]{1,5})?)/(.+?)/(?:-/)?(?:pull|merge_requests)/[0-9]+/?$"
 )
 _SHORT_RE = re.compile(r"^([A-Za-z0-9.-]+(?::[0-9]{1,5})?)/(.+)#[0-9]+$")
+
+
+def _repo_id_ok(item: str) -> bool:
+    """An exact repo id: a shape match, no ``.`` or ``..`` segment and no ``.git`` suffix (a path a
+    host would resolve to another repo than the one the allowlist names)."""
+    if not REPO_ID_RE.match(item):
+        return False
+    segments = item.split("/")
+    return not any(part in (".", "..") for part in segments) and not item.endswith(".git")
 
 
 class LiveConfigError(Exception):
@@ -64,6 +78,11 @@ def repo_of_ref(ref: str) -> str | None:
         if match:
             return f"{match.group(1)}/{match.group(2)}".lower()
     return None
+
+
+PLACEHOLDER_REPOS = frozenset(
+    repo for repo in (repo_of_ref(ref) for ref in PLACEHOLDER_REF.values()) if repo
+)
 
 
 @dataclass(frozen=True)
@@ -147,7 +166,7 @@ def redact(text: str, env: Mapping[str, str] | None = None) -> str:
     """``text`` with the value of every secret-looking variable replaced by its name."""
     source = REAL_ENV if env is None else env
     for name, value in sorted(source.items(), key=lambda item: -len(item[1])):
-        if len(value) >= 4 and SECRET_NAME_RE.search(name):
+        if len(value) >= MIN_SECRET_LENGTH and SECRET_NAME_RE.search(name):
             text = text.replace(value, f"<{name}>")
     return text
 
@@ -156,22 +175,66 @@ def _new_run_id() -> str:
     return time.strftime("%m%d%H%M", time.gmtime()) + secrets.token_hex(2)
 
 
+def _nearest_existing(path: Path) -> Path:
+    cursor = path
+    while not cursor.exists() and cursor != cursor.parent:
+        cursor = cursor.parent
+    return cursor
+
+
+def _dir_problem(name: str, value: str) -> tuple[Path | None, str | None]:
+    """An absolute directory setting: no ``..`` segment, resolved, and (when something of that
+    path exists) a directory. Returns the resolved path or the problem text."""
+    path = Path(value)
+    if not path.is_absolute():
+        return None, f"{name} must be an absolute path"
+    if ".." in path.parts:
+        return None, f"{name} must not contain a .. segment"
+    resolved = path.resolve()
+    if resolved.exists() and not resolved.is_dir():
+        return None, f"{name} must be a directory"
+    return resolved, None
+
+
+def _earlier_run_exists(report_dir: Path, run_id: str) -> bool:
+    """A real run (a ledger, or a results file whose mode is run) already used this run id here."""
+    try:
+        if (report_dir / f"ledger-{run_id}.jsonl").exists():
+            return True
+        for found in report_dir.glob(f"results-{run_id}-*.json"):
+            try:
+                if json.loads(found.read_text(encoding="utf-8")).get("mode") == "run":
+                    return True
+            except (OSError, ValueError, AttributeError):
+                return True  # unreadable: treat it as a run that happened
+    except OSError:
+        return False
+    return False
+
+
 def from_env(env: Mapping[str, str] | None = None) -> LiveSettings:
     """Parse the environment (``REAL_ENV`` by default). Never raises: ``problems`` lists faults."""
     source = REAL_ENV if env is None else env
     problems: list[str] = []
 
+    def problem(text: str) -> None:
+        if text not in problems:
+            problems.append(text)
+
     def get(name: str) -> str | None:
-        value = source.get(name, "").strip()
+        raw = source.get(name, "")
+        value = raw.strip()
+        if raw and not value:
+            problem(f"{name} is set but holds only whitespace")
         return value or None
 
     opted_in = get(OPT_IN) == "1"
     if get(OPT_IN) not in (None, "0", "1"):
-        problems.append(f"{OPT_IN} must be 1 (to opt in) or unset")
+        problem(f"{OPT_IN} must be 1 (to opt in) or unset")
 
     mode = get("PR_COMMENT_LIVE_MODE") or "plan"
     if mode not in MODES:
-        problems.append(f"PR_COMMENT_LIVE_MODE must be one of {', '.join(MODES)}")
+        problem(f"PR_COMMENT_LIVE_MODE must be one of {', '.join(MODES)}")
         mode = "plan"
 
     allow: list[str] = []
@@ -180,14 +243,13 @@ def from_env(env: Mapping[str, str] | None = None) -> LiveSettings:
         item = item.strip().lower()
         if not item:
             continue
-        if not REPO_ID_RE.match(item):
-            problems.append("PR_COMMENT_LIVE_ALLOW has an entry that is not an exact repo id")
+        if not _repo_id_ok(item):
+            problem("PR_COMMENT_LIVE_ALLOW has an entry that is not an exact repo id")
             continue
-        allow.append(item)
+        if item not in allow:
+            allow.append(item)
     if mode != "plan" and not allow:
-        problems.append(
-            "PR_COMMENT_LIVE_ALLOW is required (repo ids, comma separated) beyond plan mode"
-        )
+        problem("PR_COMMENT_LIVE_ALLOW is required (repo ids, comma separated) beyond plan mode")
 
     targets: dict[str, Target] = {}
     for key, backend in TARGET_KEYS.items():
@@ -197,7 +259,7 @@ def from_env(env: Mapping[str, str] | None = None) -> LiveSettings:
             continue
         old_head = get(f"{prefix}_OLD_HEAD")
         if old_head is not None and not SHA_RE.match(old_head.lower()):
-            problems.append(f"{prefix}_OLD_HEAD must be 40 hex characters")
+            problem(f"{prefix}_OLD_HEAD must be 40 hex characters")
             old_head = None
         target = Target(
             key,
@@ -216,40 +278,66 @@ def from_env(env: Mapping[str, str] | None = None) -> LiveSettings:
                 continue
             repo = repo_of_ref(value)
             if repo is None:
-                problems.append(f"{prefix}{label} is not a PR URL or host/path#N reference")
+                problem(f"{prefix}{label} is not a PR URL or host/path#N reference")
             elif repo not in allow:
-                problems.append(f"{prefix}{label} names a repo that PR_COMMENT_LIVE_ALLOW lacks")
+                problem(f"{prefix}{label} names a repo that PR_COMMENT_LIVE_ALLOW lacks")
         if target.is_enterprise and target.host in ("github.com", "gitlab.com"):
-            problems.append(f"{prefix}_PR must name a host other than github.com and gitlab.com")
+            problem(f"{prefix}_PR must name a host other than github.com and gitlab.com")
         elif not target.is_enterprise and target.host not in (None, "github.com", "gitlab.com"):
-            problems.append(f"{prefix}_PR names a host that needs the ENTERPRISE or SELFHOSTED key")
+            problem(f"{prefix}_PR names a host that needs the ENTERPRISE or SELFHOSTED key")
         targets[key] = target
 
     report = get("PR_COMMENT_LIVE_REPORT_DIR")
-    report_dir = Path(report) if report else None
-    if report_dir is not None and not report_dir.is_absolute():
-        problems.append("PR_COMMENT_LIVE_REPORT_DIR must be an absolute path")
-        report_dir = None
-    if mode == "run" and report_dir is None:
-        problems.append(
+    report_dir: Path | None = None
+    if report:
+        report_dir, bad = _dir_problem("PR_COMMENT_LIVE_REPORT_DIR", report)
+        if bad:
+            problem(bad)
+        elif report_dir is not None:
+            parent = _nearest_existing(report_dir)
+            if not parent.is_dir() or not os.access(parent, os.W_OK | os.X_OK):
+                problem("PR_COMMENT_LIVE_REPORT_DIR is not writable")
+                report_dir = None
+    if mode == "run" and report_dir is None and not report:
+        problem(
             "PR_COMMENT_LIVE_REPORT_DIR is required in run mode (the ledger of what was posted)"
         )
 
     cleanup = get("PR_COMMENT_LIVE_CLEANUP_CMD")
-    if cleanup is not None and not cleanup.startswith("/"):
-        problems.append("PR_COMMENT_LIVE_CLEANUP_CMD must be an absolute path to an executable")
-        cleanup = None
+    if cleanup is not None:
+        candidate = Path(cleanup)
+        if not cleanup.startswith("/"):
+            problem("PR_COMMENT_LIVE_CLEANUP_CMD must be an absolute path to an executable file")
+            cleanup = None
+        elif not (candidate.is_file() and os.access(candidate, os.X_OK)):
+            problem(
+                "PR_COMMENT_LIVE_CLEANUP_CMD must be one existing executable file "
+                "(no arguments, not a directory)"
+            )
+            cleanup = None
 
     fs = get("PR_COMMENT_LIVE_FS_DIR")
-    fs_dir = Path(fs) if fs else None
-    if fs_dir is not None and not fs_dir.is_absolute():
-        problems.append("PR_COMMENT_LIVE_FS_DIR must be an absolute path")
-        fs_dir = None
+    fs_dir: Path | None = None
+    if fs:
+        fs_dir, bad = _dir_problem("PR_COMMENT_LIVE_FS_DIR", fs)
+        if bad:
+            problem(bad)
 
-    run_id = get("PR_COMMENT_LIVE_RUN_ID") or _new_run_id()
+    explicit_run_id = get("PR_COMMENT_LIVE_RUN_ID")
+    run_id = explicit_run_id or _new_run_id()
     if not RUN_ID_RE.match(run_id):
-        problems.append("PR_COMMENT_LIVE_RUN_ID must be 6 to 24 characters of a-z and 0-9")
+        problem("PR_COMMENT_LIVE_RUN_ID must be 6 to 24 characters of a-z and 0-9")
         run_id = _new_run_id()
+    elif (
+        explicit_run_id
+        and mode == "run"
+        and report_dir is not None
+        and _earlier_run_exists(report_dir, run_id)
+    ):
+        problem(
+            "PR_COMMENT_LIVE_RUN_ID was used by an earlier run in this report directory: "
+            "pick another run id or another report directory"
+        )
 
     return LiveSettings(
         opted_in=opted_in,

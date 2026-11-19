@@ -8,11 +8,12 @@ The live suite re-checks, against real hosts, every behavior that was verified o
 
 - Opt-in: every host-facing test is skipped unless `PR_COMMENT_LIVE=1`. With the opt-in, a setting the suite refuses fails the run before any call, naming variables and never values.
 - Allowlist: `PR_COMMENT_LIVE_ALLOW` lists the exact repo ids the suite may write to. Each target is checked as written, and again against the canonical repo forgectl reports for it, before any write. A write whose argv names no verified target never runs.
-- Modes: `plan` (the default) calls nothing and prints every step; `preflight` runs reads and turns every write into a `--dry-run`; `run` writes. Steps that need an id only a real write produces are shown as `<name>` and are deferred in preflight.
-- Isolation: pr-comment runs with its own config file, state directory and working directory, and a tap that logs each forgectl argv. Every `PR_COMMENT_*` variable is dropped; the rest of the environment reaches forgectl for its credentials and is never printed (secret-looking values are redacted from every message).
-- Cleanup: every body carries the run's tag (`live-<run id>`) so what a run posted can be found. The ids it posted are written to `ledger-<run id>.jsonl` in the report directory and passed to `PR_COMMENT_LIVE_CLEANUP_CMD` when set. Hosts cannot delete a submitted review or an approval; those are listed as left for a human.
-- Idempotency: a run id fixes every draft id and dedupe key, so running the same run id again reports `already_posted`. Scenarios look only for comments with their own tag.
+- Modes: `plan` (the default) calls nothing and prints every step; `preflight` runs reads and turns every write into a `--dry-run`; `run` writes. Steps that need an id only a real write produces are shown as `<name>` and are deferred in preflight; in `run` mode a step still holding such a placeholder fails the scenario. In plan mode a configured target must be on the allowlist like any other (a target with no `PR_COMMENT_LIVE_ALLOW` is a refused setting); only a plan with no target at all shows steps against placeholder repos, which need no allowlist because nothing is called.
+- Isolation: pr-comment runs with its own config file, state directory and working directory, and a tap that logs each forgectl argv. Every `PR_COMMENT_*` variable is dropped; the rest of the environment reaches forgectl for its credentials and is never printed (secret-looking values of eight characters or more are redacted from every message, report and note). Unless `PR_COMMENT_LIVE_FORGECTL_CONFIG` is set, every child also gets a private `HOME` and `XDG_CONFIG_HOME`, so the developer's own `gh` or `glab` login is not found: forgectl's credentials must come from environment variables (for example `GH_TOKEN` or `GITLAB_TOKEN`) or from that config file. Each child runs in a process group of its own; on a timeout or an interrupt that exact group is killed.
+- Cleanup: every body carries the run's tag (`live-<run id>`) so what a run posted can be found. The ids it posted are written to `ledger-<run id>.jsonl` in the report directory and passed to `PR_COMMENT_LIVE_CLEANUP_CMD` when set. A write whose answer could not be read is listed as possibly posted (the entry is written before the write starts and kept after a timeout or an interrupt). Hosts cannot delete a submitted review or an approval, and a thread the suite resolved stays resolved; those are listed as left for a human. A cleanup command that is missing or times out is a note, never a failure that hides the scenario's own.
+- Idempotency: a run id fixes every draft id and dedupe key within one run (the dedupe and signal scenarios rely on it). Scenarios look only for comments with their own tag. A run id whose ledger or run-mode results already exist in the report directory is refused, so a second run cannot repeat the first one's writes by accident: use another run id or another report directory.
 - Raw probes: a few scenarios post through `forgectl` directly (a literal mention as a positive control, suggestion fences pr-comment refuses, a body that ends in a no-break space). They are marked `raw` in the step list and run only on an allowlisted target.
+- Never run the suite with `-l` or `--showlocals`: a failing frame can hold a raw response. The suite hides its own frames from tracebacks, and its failure messages are redacted, but pytest's local display is not.
 - What the suite never does: print an environment variable, post outside the allowlist, change a PR's branch or state, or send a quick action that changes anything (the GitLab probe sends `/shrug`, which only appends a text).
 
 ## Running it
@@ -38,14 +39,14 @@ The live suite re-checks, against real hosts, every behavior that was verified o
 | `PR_COMMENT_LIVE_<KEY>_APPROVE_PR` | Optional, per target: a throwaway PR the account did not author (for the interactive approve). |
 | `PR_COMMENT_LIVE_APPROVE` | `1` allows the interactive approve scenario. |
 | `PR_COMMENT_LIVE_SLOW` | `1` allows scenarios that take more than a minute (the deadline kill). |
-| `PR_COMMENT_LIVE_REPORT_DIR` | Absolute directory for the reports and the ledger of what was posted. Required in run mode. |
-| `PR_COMMENT_LIVE_RENDER` | `1` reads rendered HTML through `gh` or `glab` (GraphQL, read only) so the rendering rows are asserted; without it they are recorded as unavailable and become manual steps. |
-| `PR_COMMENT_LIVE_CLEANUP_CMD` | Optional absolute path of an executable called as `<cmd> <pr> <forgectl id>` for every id the run posted. Without it the ids are printed as left for a human. |
+| `PR_COMMENT_LIVE_REPORT_DIR` | Absolute directory (no `..`) for the reports and the ledger of what was posted. Required in run mode; it must be creatable and writable, and is created and probed before the first write. |
+| `PR_COMMENT_LIVE_RENDER` | `1` reads rendered HTML through `gh` or `glab` (GraphQL, read only; they need credentials in environment variables) so the rendering rows are observed; without it they are recorded as unavailable and become manual steps. |
+| `PR_COMMENT_LIVE_CLEANUP_CMD` | Optional absolute path of one existing executable file (no arguments) called as `<cmd> <pr> <forgectl id>` for every id the run posted, with the same private environment as the other children. Without it the ids are printed as left for a human. |
 | `PR_COMMENT_LIVE_FORGECTL` | forgectl binary name or path (default `forgectl`). |
-| `PR_COMMENT_LIVE_FORGECTL_CONFIG` | Optional forgectl config file passed with `--config` (declares enterprise hosts). |
+| `PR_COMMENT_LIVE_FORGECTL_CONFIG` | Optional forgectl config file passed with `--config` (declares enterprise hosts). When set, the environment's `HOME` and `XDG_CONFIG_HOME` are passed on; when unset they are private and credentials must come from environment variables. |
 | `PR_COMMENT_LIVE_GITLAB_GROUP` | Optional: a GitLab group path used for the group-mention probe. |
 | `PR_COMMENT_LIVE_FS_DIR` | Optional: a directory on the filesystem the local export checks should use. |
-| `PR_COMMENT_LIVE_RUN_ID` | Optional: 6 to 24 characters of a-z and 0-9. Reusing a run id repeats the same keys, so a repeated run reports `already_posted` instead of posting again. |
+| `PR_COMMENT_LIVE_RUN_ID` | Optional: 6 to 24 characters of a-z and 0-9. A run id fixes every draft id and dedupe key; one whose ledger or run-mode results exist in the report directory is refused. |
 
 `<KEY>` is one of `GITHUB`, `GITLAB`, `GITHUB_ENTERPRISE`, `GITLAB_SELFHOSTED`.
 
@@ -82,6 +83,7 @@ The live suite re-checks, against real hosts, every behavior that was verified o
 | `deadline_kill` | github/gitlab | writes | slow | A forgectl hook that outlasts the deadline: outcome_unknown. |
 | `dedupe_event_change` | github/gitlab | writes | - | The same draft id with another event: GitHub outcome_partial, GitLab completes it. |
 | `marker_whitespace` | github/gitlab | writes | - | Where forgectl puts its dedupe line when the last line is a no-break space (raw probe). |
+| `diff_markers` | github/gitlab | reads | - | What forgectl's diff keeps of a carriage return and of the no-newline marker (recorded). |
 
 ## Still-to-verify rows
 
@@ -90,7 +92,7 @@ Each row is settled by a scenario or test, by a manual step, or both. Source is 
 | Row | Source | Behavior | Automated by | Manual step |
 |---|---|---|---|---|
 | `gw.flag_forms` | #8 | forgectl's parser accepts `--flag=value` for every flag the gateway sends (`--timeout=`, `--config=`, `--dedupe-key=` and the rest). | scenario `comment_post` | - |
-| `gw.version_format` | #8 | The `forgectl --version` output format. | scenario `forgectl_reads` | - |
+| `gw.version_format` | #8 | The `forgectl --version` output format (recorded, not asserted). | scenario `forgectl_reads` | - |
 | `gw.signal_term` | #8 | Exit code and output of forgectl when a signal reaches pr-comment before and after a write (pr-comment forwards it to the exact child). | scenario `signal_mid_write` | - |
 | `gw.deadline_kill` | #8, #9 | Exit code and output of forgectl killed by SIGTERM at the deadline, and the output cap. | scenario `deadline_kill` | The 32 MiB output cap cannot be forced on a real host: read a PR with a very large diff and a very large comment history and confirm exit 12 `lower_contract_mismatch` for output over the cap. |
 | `gw.hook_outlasts_slack` | #8 | A forgectl hook that outlasts the deadline slack is killed and the write reported `outcome_unknown`. | scenario `deadline_kill` | - |
@@ -107,7 +109,7 @@ Each row is settled by a scenario or test, by a manual step, or both. Source is 
 | `fk.signal_after_write` | #9 | A signal after a write was attempted: exit 12 `outcome_unknown` with an envelope, then one post after the rerun (the before-write case is in the conformance replay). | scenario `signal_mid_write` | - |
 | `fk.body_vectors` | #9 | The `body_sha256`, `body_bytes`, marker and neutralizing computations over more than one vector (the stored text is compared with pr-comment's own plan). | scenario `body_roundtrip` | - |
 | `fk.plan_event_null_approve` | #9 | `plan.event` is null for approve. | scenario `refusals` | - |
-| `fk.gitlab_no_body_marker` | #9 | A GitLab review with no body puts the marker on the last inline comment. | scenario `gitlab_review_no_body` | - |
+| `fk.gitlab_no_body_marker` | #9 | pr-comment's own marker placement for a GitLab review with no body: the marker is on the inline comment as stored (forgectl's rule for a body-less review is not probed separately). | scenario `gitlab_review_no_body` | - |
 | `fk.dedupe_hit` | #9 | Dedupe-hit semantics: `already_posted`, `follow_up_done`, `ids` and `review_id` on a hit, and GitHub `outcome_partial` on a hit that still needs the state step. | scenario `dedupe`<br>scenario `dedupe_event_change` | - |
 | `fk.codes_reasons` | #9 | Per-command allowed error codes and reasons, and the required details per reason (`stale_head`, `stale_base`, `not_found`, `not_open`). | scenario `refusals`<br>scenario `closed_pr` | `self_approval`, `drafts_present`, `pending_review_exists`, `unknown_host` and `too_large` need a PR authored by the account, a leftover draft, an undeclared host and a very large PR: trigger each once by hand and record the envelope. |
 | `fk.id_prefixes` | #9 | Id prefixes per backend: GitHub `thread_ids` empty, GitLab `review_id` null, the ids of a comment, review and thread. | scenario `comment_post`<br>scenario `gitlab_review_no_body`<br>scenario `resolve_unresolve`<br>scenario `reply_kinds` | - |
@@ -122,8 +124,8 @@ Each row is settled by a scenario or test, by a manual step, or both. Source is 
 | `sc.sigpipe` | #32 | The early exit relies on SIGPIPE being ignored; the post path must not reset it. | scenario `early_exit_stdin` | - |
 | `sc.versions` | #32 | forgectl versions other than the pinned 0.55.2 (the run records the version it saw). | scenario `forgectl_reads` | Run the suite once per forgectl release the project supports (OPEN DECISION: the supported range) and keep the reports. |
 | `sc.macos_pipes` | #32 | Pipe buffer sizes on macOS. | - | On a Mac run `early_exit_stdin` and the offline stdin contract test. |
-| `th.not_found` | #35, #36 | A thread id that is not on the PR gives exit 10 `not_found`. | scenario `gitlab_body_thread`<br>scenario `resolve_unresolve`<br>scenario `refusals` | - |
-| `th.changed_false` | #35 | A no-op on a thread reports `changed: false`. | scenario `gitlab_body_thread`<br>scenario `resolve_unresolve` | - |
+| `th.not_found` | #35, #36 | A thread id that is not on the PR gives exit 10 `not_found` (pr-comment's own handling of the answer; no raw forgectl call probes forgectl's not_found separately). | scenario `gitlab_body_thread`<br>scenario `resolve_unresolve`<br>scenario `refusals` | - |
+| `th.changed_false` | #35 | A no-op on a thread reports `changed: false` (pr-comment's own result; forgectl's own answer for a repeated resolve is not probed separately). | scenario `gitlab_body_thread`<br>scenario `resolve_unresolve` | - |
 | `th.gl_d_ids` | #35 | A GitLab `gl:d:` discussion id resolves the same way as a `gh:rt:` id. | scenario `gitlab_body_thread` | - |
 | `th.gitlab_body_thread` | #36 | The GitLab review body thread is created and resolved by default. | scenario `gitlab_body_thread` | - |
 | `th.thread_author_is_self` | #36 | `thread_author_is_self` as forgectl reports it for a thread the account started. | scenario `resolve_unresolve` | - |
@@ -133,13 +135,15 @@ Each row is settled by a scenario or test, by a manual step, or both. Source is 
 | `st.stale_head` | #9 | A draft written at an older head is refused `stale_head` without `--reanchor-to`. | scenario `stale_and_reanchor` | - |
 | `st.reanchor` | #9 | A re-anchored post after a push, and its rerun reporting `already_posted`. | scenario `stale_and_reanchor` | - |
 | `bs.base_ref_forms` | #37 | A real PR's base ref forms are accepted by `draft new` and `draft check`. | scenario `forgectl_reads` | - |
+| `fk.diff_markers` | #9 | forgectl's `diff` keeps a carriage return and a `\ No newline at end of file` marker (recorded, not asserted). | scenario `diff_markers` | Put a CRLF file and a file without a trailing newline in the throwaway PR; the `diff_markers` scenario records the counts it finds. |
+| `fk.since_grammar` | #9 | The grammar of `--since` on a read (awaiting a maintainer decision: recorded by hand only, no assertion). | - | Run `forgectl comments --since` with an RFC 3339 time, a date and a relative form against a throwaway PR and record which are accepted; nothing is asserted until the maintainer decides. |
 | `hk.decision_ids` | #33 | A decision id printed by a hook reaches forgectl as `--decision-id=`. | scenario `hooks_pass_through` | - |
-| `hk.scrubbed_env` | #33 | A hook's environment holds none of the account's secret-looking variables. | scenario `hooks_pass_through` | - |
+| `hk.scrubbed_env` | #33 | A hook's environment holds none of forgectl's ambient token variables: a canary one is set for the run and must be absent, and `hook_env_deny` applies. | scenario `hooks_pass_through` | - |
 | `hk.group_kill` | #33 | A hook that times out is vetoed and its process group, background processes included, is killed. | scenario `hooks_timeout_and_async` | - |
-| `hk.async` | #33, #82 | An async `post-post` hook is not waited for and its working directory is swept after a day only when empty (OPEN DECISION: async hooks, #82). | scenario `hooks_timeout_and_async` | Leave an async hook's working directory in the state `tmp/` directory, age it by a day (`touch -d`) and run any command: confirm it is removed only when empty. |
+| `hk.async` | #33, #82 | An async `post-post` hook (a 20 second sleep) is not waited for and its working directory is swept after a day only when empty (OPEN DECISION: async hooks, #82; the marker is recorded, nothing asserted about it). | scenario `hooks_timeout_and_async` | Leave an async hook's working directory in the state `tmp/` directory, age it by a day (`touch -d`) and run any command: confirm it is removed only when empty. |
 | `eo.forgectl_scope` | #34 | A write that forgectl escalates (exit 13) fails without the flag and succeeds with `--override-escalation=forgectl`; how forgectl audits it. | scenario `override_escalation` | Read forgectl's audit record of the overridden write (`forgectl export`) and confirm it names the escalation. |
-| `ts.fence_255` | #19 | GitHub's and GitLab's own engines share the 255 fence-length limit: 254, 255, 256 and 300 backtick and tilde runs render as one code block. | scenario `fence_limit` | - |
-| `ts.run_split` | #19 | A degraded suggestion with backtick and tilde runs of 255 splits with the visible `<run split>` marker and renders as one block. | scenario `fence_limit` | - |
+| `ts.fence_255` | #19 | GitHub's and GitLab's own engines share the 255 fence-length limit: 254, 255, 256 and 300 backtick and tilde runs, and a suggestion with both kinds, are stored with the right fence and render as the same single code block as a short degraded control (the shape is also compared with an applicable control, recorded). | scenario `fence_limit` | - |
+| `ts.run_split` | #19 | A degraded suggestion with backtick and tilde runs of 255 in one suggestion splits with the visible `<run split>` marker (and only then), and a backtick run of 255 or more gets a tilde fence of at most 255 characters. | scenario `fence_limit` | - |
 | `ts.degraded_suggestion` | #19 | A degraded suggestion is posted inline as a text block and is not applicable. | scenario `fence_limit`<br>scenario `review_suggestions` | - |
 | `ts.applicable_suggestion` | #22 | An applicable suggestion is stored with the host's own fence (`suggestion`, or GitLab's `suggestion:-N+0`). | scenario `review_suggestions` | Open the inline comment in the web UI and confirm the Apply suggestion button is there. |
 | `ts.moved_finding` | #9 | A finding whose line is not in the diff moves to the review body. | scenario `review_suggestions` | - |
@@ -147,13 +151,13 @@ Each row is settled by a scenario or test, by a manual step, or both. Source is 
 | `ts.suggestion_longer_fence` | #22 | Whether either host applies a suggestion with a fence longer than three backticks (decides whether the `fence` degrade can be dropped; recorded, not asserted). | scenario `suggestion_probes` | - |
 | `ts.suggestion_variants` | #22 | Tilde and indented suggestion fences (recorded). | scenario `suggestion_probes` | - |
 | `ts.mention_filters` | #22 | Neutral mentions, `a@user` and `1@user` do not link on either host; a literal mention does (the positive control). | scenario `mentions` | - |
-| `ts.fullwidth_fold` | #22 | Neither host folds fullwidth `＠`, `＜` or `！` to ASCII (OPEN DECISION: fullwidth `＠`). | scenario `mentions` | - |
+| `ts.fullwidth_fold` | #22 | Whether either host folds fullwidth `＠`, `＜` or `！` to ASCII (recorded: what is stored, and the image and bold tags of the render; OPEN DECISION: fullwidth `＠`). | scenario `mentions` | - |
 | `ts.entities_unterminated` | #22 | Whether either host decodes unterminated entities before the mention filter. | scenario `mentions` | - |
 | `ts.gitlab_mentions` | #22 | GitLab: `@all` and group forms do not link. | scenario `mentions` | - |
 | `ts.gitlab_engine` | #22 | GitLab's own Markdown (`>>>` quote, `[[_TOC_]]`, math, quick actions, references) behaves as pr-comment assumes; a slash line is not run as a quick action. | scenario `gitlab_markdown` | - |
 | `ts.github_media` | #22 | A bare attachment URL on its own line renders as media on GitHub (recorded; `counts.images` does not count it). | scenario `render_probes` | - |
 | `ts.github_diagrams` | #22 | Diagram fences (`mermaid`, `geojson`, `stl`) render on GitHub (recorded). | scenario `render_probes` | - |
-| `ts.link_forms` | #22 | A `javascript:` or relative link renders inert. | scenario `render_probes` | - |
+| `ts.link_forms` | #22 | How a `javascript:` or relative link renders (recorded: the `javascript:` hrefs found). | scenario `render_probes` | - |
 | `ts.postprocess` | #22 | Host post-processing after the engine: sanitizing, emoji, issue and commit links, `@` inside a link text (recorded). | scenario `render_probes` | - |
 | `ts.marker_display` | #22 | How a host shows the hidden marker comment (not as text). | scenario `render_probes` | - |
 | `ts.engine_version` | #22 | Whether GitHub's engine is the pinned `cmarkgfm` version at all. | - | Take the pinned fuzz corpus's disagreement cases (`tests/test_text_safety_fuzz.py`), post them as comments and compare the rendered HTML with `cmarkgfm`'s. |

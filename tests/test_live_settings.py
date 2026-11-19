@@ -3,7 +3,11 @@ prints, how it reads a diff, a marker and rendered HTML. No host, no network."""
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +21,7 @@ from tests.live.settings import (
 
 REPO = "github.com/acme/widgets"
 LAB = "gitlab.com/acme/widgets"
+REPORT = os.path.join(tempfile.gettempdir(), "prc-live-settings-report")  # checked, never created
 
 
 def env(**extra: str) -> dict[str, str]:
@@ -24,7 +29,7 @@ def env(**extra: str) -> dict[str, str]:
         "PR_COMMENT_LIVE": "1",
         "PR_COMMENT_LIVE_MODE": "run",
         "PR_COMMENT_LIVE_ALLOW": f"{REPO},{LAB}",
-        "PR_COMMENT_LIVE_REPORT_DIR": "/scratch/report",
+        "PR_COMMENT_LIVE_REPORT_DIR": REPORT,
         "PR_COMMENT_LIVE_GITHUB_PR": f"{REPO}#7",
     }
     base.update(extra)
@@ -181,7 +186,7 @@ def test_the_repo_a_reference_names(ref: str, repo: str | None) -> None:
 def test_redact_replaces_the_values_of_secret_looking_variables_by_their_names() -> None:
     environment = {
         "GH_TOKEN": "ghp_abcdef123456",
-        "PATH": "/usr/bin",
+        "PATH": "/usr/bin:/usr/local/bin",
         "SLACK_WEBHOOK_URL": "https://hooks.example.com/services/XYZ",
         "SHORT_KEY": "ab",
     }
@@ -191,6 +196,21 @@ def test_redact_replaces_the_values_of_secret_looking_variables_by_their_names()
     assert "<GH_TOKEN>" in out and "<SLACK_WEBHOOK_URL>" in out
     assert "/usr/bin" in out  # not a secret
     assert out.endswith(" ab")  # too short to be worth replacing
+
+
+@pytest.mark.parametrize("name", ["GITHUB_PAT", "MY_PAT", "PAT", "API_BEARER", "SERVICE_JWT"])
+def test_redact_knows_pat_bearer_and_jwt_variables(name: str) -> None:
+    assert redact("x s3cr3t-value-1 y", {name: "s3cr3t-value-1"}) == f"x <{name}> y"
+
+
+@pytest.mark.parametrize("name", ["PATH", "PATHEXT", "PATTERN", "COMPATIBLE"])
+def test_redact_does_not_take_a_name_that_merely_contains_pat_for_a_secret(name: str) -> None:
+    assert redact("x s3cr3t-value-1 y", {name: "s3cr3t-value-1"}) == "x s3cr3t-value-1 y"
+
+
+def test_a_value_shorter_than_eight_characters_is_not_replaced() -> None:
+    assert redact("a 1234567 b 12345678", {"GH_TOKEN": "1234567"}) == "a 1234567 b 12345678"
+    assert redact("a 12345678 b", {"GH_TOKEN": "12345678"}) == "a <GH_TOKEN> b"
 
 
 # --- helpers -------------------------------------------------------------------------------------
@@ -333,3 +353,155 @@ def test_html_inspection() -> None:
     assert helpers.Html("<pre class='b a'></pre>").shape() == "pre.a b"
     assert helpers.Html("<pre><code></code></pre>").shape() != helpers.Html("<pre></pre>").shape()
     assert helpers.distinct_shapes("a", "b") and not helpers.distinct_shapes("a", "a")
+
+
+# --- stricter settings (review round 1) -----------------------------------------------------------
+
+
+def _script(directory: Path, mode: int = 0o700) -> Path:
+    path = directory / "cleanup.sh"
+    path.write_text("#!/bin/sh\n", encoding="utf-8")
+    path.chmod(mode)
+    return path
+
+
+def test_the_cleanup_command_must_be_one_existing_executable_file(tmp_path: Path) -> None:
+    good = _script(tmp_path)
+    assert from_env(env(PR_COMMENT_LIVE_CLEANUP_CMD=str(good))).cleanup_cmd == str(good)
+    for bad in (
+        str(tmp_path / "missing.sh"),  # not there
+        str(tmp_path),  # a directory
+        f"{good} --force",  # arguments
+        str(_script(tmp_path / ".." / tmp_path.name, 0o600)),  # not executable
+    ):
+        settings = from_env(env(PR_COMMENT_LIVE_CLEANUP_CMD=bad))
+        assert settings.cleanup_cmd is None, bad
+        assert any("CLEANUP_CMD" in p for p in settings.problems), bad
+        assert bad not in " ".join(settings.problems)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "github.com/acme/../widgets",
+        "github.com/acme/./widgets",
+        "github.com/acme/widgets.git",
+        "github.com/../acme",
+    ],
+)
+def test_an_allowlist_entry_with_a_dot_segment_or_a_git_suffix_is_refused(entry: str) -> None:
+    settings = from_env(env(PR_COMMENT_LIVE_ALLOW=entry))
+    assert settings.allow == () and any("ALLOW" in p for p in settings.problems)
+
+
+def test_the_allowlist_drops_empty_items_and_duplicates() -> None:
+    settings = from_env(env(PR_COMMENT_LIVE_ALLOW=f" ,{REPO},, {REPO.upper()} ,"))
+    assert settings.allow == (REPO,) and settings.problems == ()
+
+
+@pytest.mark.parametrize("value", [",", " , ,"])
+def test_an_allowlist_of_only_separators_is_empty_and_refused_beyond_plan_mode(
+    value: str,
+) -> None:
+    settings = from_env(env(PR_COMMENT_LIVE_ALLOW=value))
+    assert settings.allow == () and any("ALLOW" in p for p in settings.problems)
+
+
+@pytest.mark.parametrize("name", ["CLOSED_PR", "APPROVE_PR"])
+def test_a_closed_or_approve_pr_outside_the_allowlist_is_refused_by_variable_name(
+    name: str,
+) -> None:
+    settings = from_env(env(**{f"PR_COMMENT_LIVE_GITHUB_{name}": "github.com/elsewhere/x#4"}))
+    problems = " ".join(settings.problems)
+    assert f"PR_COMMENT_LIVE_GITHUB_{name}" in problems
+    assert "elsewhere" not in problems
+
+
+@pytest.mark.parametrize("value", [" ", "\u00a0", "\t\u00a0 "])
+@pytest.mark.parametrize(
+    "name", ["PR_COMMENT_LIVE_ALLOW", "PR_COMMENT_LIVE_MODE", "PR_COMMENT_LIVE"]
+)
+def test_a_blank_value_is_a_problem_and_not_silently_unset(name: str, value: str) -> None:
+    settings = from_env(env(**{name: value}))
+    assert any(name in p and "whitespace" in p for p in settings.problems)
+
+
+def test_a_report_directory_with_a_dot_dot_segment_is_refused(tmp_path: Path) -> None:
+    settings = from_env(env(PR_COMMENT_LIVE_REPORT_DIR=f"{tmp_path}/a/../b"))
+    assert any("REPORT_DIR" in p and ".." in p for p in settings.problems)
+    assert settings.report_dir is None
+
+
+def test_a_report_directory_is_resolved(tmp_path: Path) -> None:
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "real", target_is_directory=True)
+    (tmp_path / "real").mkdir()
+    settings = from_env(env(PR_COMMENT_LIVE_REPORT_DIR=str(link / "reports")))
+    assert settings.report_dir == (tmp_path / "real" / "reports").resolve()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can write anywhere")
+def test_a_report_directory_that_cannot_be_written_is_refused_by_variable_name(
+    tmp_path: Path,
+) -> None:
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    try:
+        settings = from_env(env(PR_COMMENT_LIVE_REPORT_DIR=str(locked / "inside")))
+    finally:
+        locked.chmod(0o700)
+    assert any("REPORT_DIR" in p and "writable" in p for p in settings.problems)
+    assert str(locked) not in " ".join(settings.problems)
+
+
+def test_a_report_directory_that_is_a_file_is_refused(tmp_path: Path) -> None:
+    (tmp_path / "file").write_text("x", encoding="utf-8")
+    settings = from_env(env(PR_COMMENT_LIVE_REPORT_DIR=str(tmp_path / "file")))
+    assert any("REPORT_DIR" in p for p in settings.problems)
+
+
+def test_an_fs_dir_with_a_dot_dot_segment_is_refused(tmp_path: Path) -> None:
+    settings = from_env(env(PR_COMMENT_LIVE_FS_DIR=f"{tmp_path}/x/../y"))
+    assert any("FS_DIR" in p for p in settings.problems) and settings.fs_dir is None
+
+
+def test_plan_mode_with_a_target_and_no_allowlist_is_refused_by_variable_name() -> None:
+    settings = from_env(
+        {OPT_IN: "1", "PR_COMMENT_LIVE_GITHUB_PR": f"{REPO}#7", "PR_COMMENT_LIVE_MODE": "plan"}
+    )
+    problems = " ".join(settings.refusals())
+    assert "PR_COMMENT_LIVE_GITHUB_PR" in problems and "PR_COMMENT_LIVE_ALLOW" in problems
+
+
+def test_plan_mode_with_no_target_needs_no_allowlist() -> None:
+    assert from_env({OPT_IN: "1"}).refusals() == []
+
+
+def test_a_run_id_with_an_earlier_ledger_is_refused_by_variable_name(tmp_path: Path) -> None:
+    (tmp_path / "ledger-abc123.jsonl").write_text("{}\n", encoding="utf-8")
+    settings = from_env(
+        env(PR_COMMENT_LIVE_REPORT_DIR=str(tmp_path), PR_COMMENT_LIVE_RUN_ID="abc123")
+    )
+    assert any("PR_COMMENT_LIVE_RUN_ID" in p for p in settings.problems)
+    assert "abc123" not in " ".join(settings.problems)
+
+
+def test_a_run_id_with_an_earlier_run_mode_result_is_refused(tmp_path: Path) -> None:
+    (tmp_path / "results-abc123-x-github.json").write_text(
+        json.dumps({"mode": "run"}), encoding="utf-8"
+    )
+    settings = from_env(
+        env(PR_COMMENT_LIVE_REPORT_DIR=str(tmp_path), PR_COMMENT_LIVE_RUN_ID="abc123")
+    )
+    assert any("PR_COMMENT_LIVE_RUN_ID" in p for p in settings.problems)
+
+
+def test_a_run_id_after_a_preflight_in_the_same_directory_is_accepted(tmp_path: Path) -> None:
+    (tmp_path / "results-abc123-x-github.json").write_text(
+        json.dumps({"mode": "preflight"}), encoding="utf-8"
+    )
+    settings = from_env(
+        env(PR_COMMENT_LIVE_REPORT_DIR=str(tmp_path), PR_COMMENT_LIVE_RUN_ID="abc123")
+    )
+    assert settings.problems == ()

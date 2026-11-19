@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 from collections.abc import Iterable, Mapping, Sequence
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Any
 
 CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -83,6 +85,58 @@ def flatten_comments(document: Mapping[str, Any] | None) -> list[dict[str, Any]]
 
 def tagged(comments: Iterable[Mapping[str, Any]], tag: str) -> list[Mapping[str, Any]]:
     return [c for c in comments if tag in str(c.get("body", ""))]
+
+
+_FENCE_LINE_RE = re.compile(r"^(`{3,}|~{3,})text$")
+RUN_SPLIT = "<run split>"
+
+
+def text_fence(body: str) -> tuple[str, int] | None:
+    """The fence (character, length) of the first ``text`` block of a stored comment body."""
+    for line in body.split("\n"):
+        match = _FENCE_LINE_RE.match(line.rstrip())
+        if match:
+            return match.group(1)[0], len(match.group(1))
+    return None
+
+
+def fence_problems(body: str, backtick_run: int, tilde_run: int) -> list[str]:
+    """What is wrong with the degraded suggestion block of a stored body whose suggestion held a
+    backtick run and a tilde run of the given lengths (docs/interface.md, Suggestions: the fence
+    is at most 255 characters, a backtick run of 255 or more gets a tilde fence, and only when both
+    kinds reach 255 are backtick runs split with the visible marker)."""
+    problems: list[str] = []
+    fence = text_fence(body)
+    if fence is None:
+        return ["no text block"]
+    char, length = fence
+    if length > 255:
+        problems.append(f"the fence is {length} characters, over 255")
+    both = backtick_run >= 255 and tilde_run >= 255
+    wants_tilde = backtick_run >= 255 and not both  # both: the backtick runs are split instead
+    if wants_tilde and char != "~":
+        problems.append("a backtick run of 255 or more needs a tilde fence")
+    if not wants_tilde and char != "`":
+        problems.append("a backtick fence was expected")
+    if both != (RUN_SPLIT in body):
+        problems.append(f"{RUN_SPLIT} {'missing' if both else 'present'}")
+    return problems
+
+
+def read_pidfile(path: Path, timeout: float = 5.0) -> int:
+    """The pid a hook wrote with ``echo $! > file``: only a complete line counts (a half-written
+    file is read again until the deadline). 0 when no pid appeared."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        if text.endswith("\n") and text.strip().isdigit():
+            return int(text.strip())
+        if time.monotonic() >= deadline:
+            return 0
+        time.sleep(0.02)
 
 
 BARE_FORWARDED = frozenset({"--dry-run", "--yes", "--override-escalation"})

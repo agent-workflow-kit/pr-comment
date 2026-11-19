@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.live.settings import REAL_ENV
+from tests.live.settings import REAL_ENV, from_env
 from tests.test_export import ATT1, audit_rec, line, log_rec
 
 pytestmark = pytest.mark.live
@@ -27,9 +27,19 @@ pytestmark = pytest.mark.live
 DEADLINE = 60.0
 
 
-def _scratch(tmp_path: Path) -> tuple[Path, dict[str, str]]:
-    base_dir = REAL_ENV.get("PR_COMMENT_LIVE_FS_DIR")
-    base = Path(base_dir) / f"prc-live-{os.getpid()}" if base_dir else tmp_path / "fs"
+@pytest.fixture
+def scratch(tmp_path: Path, request: pytest.FixtureRequest) -> tuple[Path, dict[str, str], Path]:
+    """(state directory, environment, directory for the test's own files). With
+    ``PR_COMMENT_LIVE_FS_DIR`` the whole scratch tree lives on that filesystem, in a directory of
+    its own per test that is removed afterwards (that exact path only)."""
+    settings = from_env(REAL_ENV)  # the variable is validated like every other
+    if REAL_ENV.get("PR_COMMENT_LIVE_FS_DIR", "").strip() and settings.fs_dir is None:
+        pytest.fail("PR_COMMENT_LIVE_FS_DIR is not usable (see docs/live-checklist.md)")
+    if settings.fs_dir is not None:
+        base = settings.fs_dir / f"prc-live-{os.getpid()}-{tmp_path.name}"
+        request.addfinalizer(lambda: shutil.rmtree(base, ignore_errors=True))
+    else:
+        base = tmp_path / "fs"
     home = base / "home"
     home.mkdir(parents=True, exist_ok=True, mode=0o700)
     env = {
@@ -39,7 +49,7 @@ def _scratch(tmp_path: Path) -> tuple[Path, dict[str, str]]:
         "PATH": str(tmp_path),  # no gh, glab or forgectl
         "LANG": REAL_ENV.get("LANG", "C.UTF-8"),
     }
-    return home / "state" / "pr-comment", env
+    return home / "state" / "pr-comment", env, base
 
 
 def _export(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[bytes]:
@@ -63,9 +73,11 @@ def _plant_log(state: Path, env: dict[str, str]) -> Path:
     return path
 
 
-def test_a_closed_pipe_with_head_ends_quietly_with_exit_zero(tmp_path: Path) -> None:
+def test_a_closed_pipe_with_head_ends_quietly_with_exit_zero(
+    scratch: tuple[Path, dict[str, str], Path],
+) -> None:
     """Row ex.closed_pipe: ``pr-comment export --log | head -n 1``."""
-    state, env = _scratch(tmp_path)
+    state, env, _ = scratch
     _plant_log(state, env)
     exporter = subprocess.Popen(
         [sys.executable, "-m", "pr_comment", "export", "--log"],
@@ -88,13 +100,15 @@ def test_a_closed_pipe_with_head_ends_quietly_with_exit_zero(tmp_path: Path) -> 
     assert (exporter.returncode, err) == (0, b"")
 
 
-def test_a_closed_pipe_with_less_on_a_terminal_ends_quietly(tmp_path: Path) -> None:
+def test_a_closed_pipe_with_less_on_a_terminal_ends_quietly(
+    tmp_path: Path, scratch: tuple[Path, dict[str, str], Path]
+) -> None:
     """Row ex.closed_pipe: the pager is ``less`` on a pty and the reader quits at once with ``q``;
     bash's PIPESTATUS gives pr-comment's own exit status."""
     for tool in ("bash", "less"):
         if shutil.which(tool, path=REAL_ENV.get("PATH", "")) is None:
             pytest.skip(f"no {tool} on PATH")
-    state, env = _scratch(tmp_path)
+    state, env, _ = scratch
     _plant_log(state, env)
     status = tmp_path / "status"
     errors = tmp_path / "errors"
@@ -142,19 +156,21 @@ def test_a_closed_pipe_with_less_on_a_terminal_ends_quietly(tmp_path: Path) -> N
     "case",
     ["symlink", "dangling", "fifo", "directory", "hardlink", "group_writable", "foreign_owner"],
 )
-def test_unsafe_audit_files_are_refused_on_a_real_filesystem(case: str, tmp_path: Path) -> None:
+def test_unsafe_audit_files_are_refused_on_a_real_filesystem(
+    case: str, scratch: tuple[Path, dict[str, str], Path]
+) -> None:
     """Row ex.unsafe_files: each hostile ``audit.jsonl`` ends in exit 12 ``audit_unavailable``
     within the deadline (a FIFO must not block)."""
-    state, env = _scratch(tmp_path)
+    state, env, base = scratch
     assert _export(env).returncode == 0
     audit = state / "audit.jsonl"
-    good = tmp_path / "good.jsonl"
+    good = base / "good.jsonl"  # on the filesystem under test, so a hard link can cross nothing
     good.write_bytes(line(audit_rec(ATT1)))
     good.chmod(0o600)
     if case == "symlink":
         audit.symlink_to(good)
     elif case == "dangling":
-        audit.symlink_to(tmp_path / "nowhere")
+        audit.symlink_to(base / "nowhere")
     elif case == "fifo":
         os.mkfifo(audit, 0o600)
     elif case == "directory":
@@ -162,7 +178,7 @@ def test_unsafe_audit_files_are_refused_on_a_real_filesystem(case: str, tmp_path
     elif case == "hardlink":
         shutil.copyfile(good, audit)
         audit.chmod(0o600)
-        os.link(audit, tmp_path / "second-name")
+        os.link(audit, audit.with_name("second-name"))
     elif case == "group_writable":
         shutil.copyfile(good, audit)
         audit.chmod(0o620)

@@ -5,12 +5,15 @@ host is reached."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -22,10 +25,19 @@ from tests.forgectl_harness import FakeForgectl, fail, ok
 from tests.live import checklist, helpers
 from tests.live import runner as runner_module
 from tests.live.ctx import Ctx
-from tests.live.driver import cases, run_scenario
-from tests.live.runner import LiveFailure, LiveRefusal, Outcome, Runner, Step
-from tests.live.scenarios import SCENARIOS, Scenario, skip_reason
-from tests.live.settings import Target, from_env
+from tests.live.driver import cases, run_scenario, targets_for
+from tests.live.pty_run import _prompt_is_up, run_on_pty
+from tests.live.report import scrub
+from tests.live.runner import (
+    LiveFailure,
+    LiveRefusal,
+    Outcome,
+    Runner,
+    Step,
+    landed_ids,
+)
+from tests.live.scenarios import SCENARIOS, Scenario, async_hook_config, skip_reason
+from tests.live.settings import Target, from_env, redact
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = "github.com/acme/widgets"
@@ -87,6 +99,13 @@ def test_a_scenario_in_plan_mode_records_its_steps_and_starts_nothing(
         assert any(s.write for s in runner.steps)
 
 
+PLACEHOLDER = re.compile(r"<[a-z_]+>")
+DUMMIES = {
+    "github": {"<thread_id>": "gh:rt:PRRT_kwDOdummy", "<comment_id>": "gh:ic:IC_kwDOdummy"},
+    "gitlab": {"<thread_id>": "gl:d:" + "0" * 40, "<comment_id>": "gl:n:1"},
+}
+
+
 @pytest.mark.parametrize("case", PLAN_CASES, ids=[_id(c) for c in PLAN_CASES])
 def test_every_planned_pr_comment_command_parses_with_pr_comments_own_parser(
     case: tuple[Scenario, Target], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -99,13 +118,16 @@ def test_every_planned_pr_comment_command_parses_with_pr_comments_own_parser(
         pytest.skip("not for this host")
     runner = run_scenario(PLAN, scenario, target, tmp_path / "work", env={"PATH": "/nonexistent"})
     checked = 0
-    for step in runner.steps:
-        if step.tool != "pr-comment" or any(re.fullmatch(r"<[a-z_]+>", a) for a in step.argv):
-            continue
-        args = build_parser().parse_args([*step.argv, "--json", "--config", "/dev/null"])
+    steps = [s for s in runner.steps if s.tool == "pr-comment"]
+    for step in steps:
+        argv = [
+            DUMMIES[target.backend].get(a, "dummy") if PLACEHOLDER.fullmatch(a) else a
+            for a in step.argv
+        ]
+        args = build_parser().parse_args([*argv, "--json", "--config", "/dev/null"])
         validate_args(args)
         checked += 1
-    assert checked or all(s.tool != "pr-comment" for s in runner.steps)
+    assert checked == len(steps)  # a placeholder step is checked too, with a schema-valid dummy
 
 
 def test_the_scenarios_are_registered_with_rows_hosts_and_a_description() -> None:
@@ -512,6 +534,7 @@ def _pytest_live(*args: str, env: dict[str, str]) -> subprocess.CompletedProcess
             "-rs",
             "-p",
             "no:cacheprovider",
+            f"--basetemp={home / 'basetemp'}",
             *args,
         ],
         capture_output=True,
@@ -526,7 +549,10 @@ def _pytest_live(*args: str, env: dict[str, str]) -> subprocess.CompletedProcess
 def test_without_the_opt_in_every_host_test_is_skipped_with_its_reason(tmp_path: Path) -> None:
     done = _pytest_live(env={"HOME": str(tmp_path)})
     assert done.returncode == 0, done.stdout[-2000:]
-    assert "PR_COMMENT_LIVE=1" in done.stdout and "passed" not in done.stdout.split("\n")[-2]
+    assert "PR_COMMENT_LIVE=1" in done.stdout
+    assert not re.search(r"\b\d+ passed\b", done.stdout) and re.search(
+        r"\b\d+ skipped\b", done.stdout
+    )
 
 
 def test_opted_in_without_an_allowlist_the_suite_refuses_by_variable_name(tmp_path: Path) -> None:
@@ -540,5 +566,561 @@ def test_opted_in_without_an_allowlist_the_suite_refuses_by_variable_name(tmp_pa
 def test_opted_in_in_plan_mode_prints_the_steps_and_passes(tmp_path: Path) -> None:
     done = _pytest_live("-s", env={"HOME": str(tmp_path), "PR_COMMENT_LIVE": "1"})
     assert done.returncode == 0, done.stdout[-3000:]
+    assert re.search(r"\b\d+ passed\b", done.stdout)
     assert "(WRITE)" in done.stdout and "[plan]" in done.stdout
     assert "pr-comment comment" in done.stdout
+
+
+# --- review round 1: the runner, the ledger and the redaction --------------------------------
+
+SENTINEL = "sentinel-secret-0123456789"
+SCRIPTED = """#!{python}
+import json, os, sys, time
+here = os.path.dirname(os.path.abspath(__file__))
+if sys.argv[1:2] == ["show"]:
+    json.dump({{"repo": "github.com/acme/widgets", "state": "open"}}, sys.stdout)
+    sys.exit(0)
+with open(os.path.join(here, "answer.json"), encoding="utf-8") as handle:
+    answer = json.load(handle)
+if answer.get("sleep"):
+    time.sleep(answer["sleep"])
+sys.stderr.write(answer.get("stderr", ""))
+sys.stdout.write(answer.get("stdout", ""))
+sys.exit(answer.get("code", 0))
+"""
+
+
+class Scripted:
+    """A stand-in forgectl that answers ``show`` and otherwise what ``answer`` says (a JSON file
+    beside it): exit code, stdout, stderr, and how long to sleep first."""
+
+    def __init__(self, tmp_path: Path, mode: str = "run", **extra: str) -> None:
+        self.directory = tmp_path / "scripted"
+        self.directory.mkdir()
+        self.path = self.directory / "forgectl"
+        self.path.write_text(SCRIPTED.format(python=sys.executable), encoding="utf-8")
+        self.path.chmod(0o700)
+        self.answer()
+        self.settings = settings_for(
+            mode, tmp_path, PR_COMMENT_LIVE_FORGECTL=str(self.path), **extra
+        )
+        self.env = {"PATH": "/nonexistent", "GH_TOKEN": SENTINEL}
+
+    def answer(self, **fields: Any) -> None:
+        (self.directory / "answer.json").write_text(json.dumps(fields), encoding="utf-8")
+
+    def runner(self, tmp_path: Path) -> Runner:
+        runner = Runner(self.settings, tmp_path / "work", env=self.env)
+        runner.verify_target(h.PR)
+        return runner
+
+    def write(self, runner: Runner, label: str = "w") -> Outcome:
+        return runner.fg(
+            label, "comment", "--json", h.PR, "--body-file", "-", stdin=b"x", write=True
+        )
+
+
+def _ledger_rows(tmp_path: Path) -> list[dict[str, Any]]:
+    path = tmp_path / "report" / "ledger-testrun1.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def test_wait_for_audit_counts_only_records_after_the_count_taken_before_the_launch(
+    tmp_path: Path,
+) -> None:
+    runner = Runner(settings_for("run", tmp_path), tmp_path / "work", env={"PATH": "/x"})
+    runner.audit_path.parent.mkdir(parents=True)
+    audit = runner.audit_path
+
+    def add(result: str) -> None:
+        with audit.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"result": result}) + "\n")
+
+    add("attempted")
+    add("done")
+    before = runner.audit_count("attempted")
+    assert before == 1
+    # the earlier launch's record is not this launch's: waiting on it must not return at once
+    started = time.monotonic()
+    assert runner.wait_for_audit("attempted", timeout=0.3, after=before) is False
+    assert time.monotonic() - started >= 0.25
+    add("attempted")
+    assert runner.wait_for_audit("attempted", timeout=1, after=before) is True
+    assert runner.wait_for_audit("attempted", timeout=0.1, after=before + 1) is False
+
+
+def test_a_missing_cleanup_command_is_a_note_not_a_failure_and_the_scenario_error_survives(
+    tmp_path: Path,
+) -> None:
+    cleanup = tmp_path / "cleanup.sh"
+    cleanup.write_text("#!/bin/sh\n", encoding="utf-8")
+    cleanup.chmod(0o700)
+    scripted = Scripted(tmp_path, PR_COMMENT_LIVE_CLEANUP_CMD=str(cleanup))
+    scripted.answer(stdout=json.dumps({"ids": ["gh:ic:IC_1"]}))
+
+    def scenario(ctx: Ctx) -> None:
+        scripted.write(ctx.runner)
+        cleanup.unlink()  # gone by teardown
+        ctx.check(False, "the host did something odd", "x.row")
+
+    probe = Scenario("probe", scenario, ("x.row",), ("github",), True, (), "Fails.")
+    with pytest.raises(LiveFailure, match="odd"):
+        run_scenario(
+            scripted.settings,
+            probe,
+            scripted.settings.targets["GITHUB"],
+            tmp_path / "work",
+            env=scripted.env,
+        )
+    report = json.loads(next((tmp_path / "report").glob("results-*-probe-github.json")).read_text())
+    assert report["status"] == "failed: LiveFailure"
+    assert any("cleanup command could not be started" in n for n in report["left_for_a_human"])
+
+
+def test_a_cleanup_command_that_hangs_is_killed_and_noted(tmp_path: Path) -> None:
+    cleanup = tmp_path / "cleanup.sh"
+    cleanup.write_text(
+        f"#!/bin/sh\n{shutil.which('sleep', path='/usr/bin:/bin')} 60\n", encoding="utf-8"
+    )
+    cleanup.chmod(0o700)
+    scripted = Scripted(tmp_path, PR_COMMENT_LIVE_CLEANUP_CMD=str(cleanup))
+    scripted.answer(stdout=json.dumps({"ids": ["gh:ic:IC_1"]}))
+    runner = scripted.runner(tmp_path)
+    runner.cleanup_timeout = 0.5
+    scripted.write(runner)
+    started = time.monotonic()
+    notes = runner.teardown()
+    assert time.monotonic() - started < 30
+    assert any("timed out" in n for n in notes), notes
+
+
+def test_a_step_with_a_placeholder_fails_in_run_mode_instead_of_being_deferred(
+    forgectl: FakeForgectl, tmp_path: Path
+) -> None:
+    runner = Runner(settings_for("run", tmp_path), tmp_path / "work", env=forgectl.environ())
+    with pytest.raises(LiveFailure, match="placeholder"):
+        runner.pc("r", "resolve", h.PR, "--thread", "<thread_id>")
+    assert forgectl.calls() == []
+
+
+def test_a_step_that_did_not_run_is_not_a_pass_in_run_mode(
+    forgectl: FakeForgectl, tmp_path: Path
+) -> None:
+    runner = Runner(settings_for("run", tmp_path), tmp_path / "work", env=forgectl.environ())
+    ctx = Ctx(runner, runner.settings.targets["GITHUB"], "t")
+    with pytest.raises(LiveFailure, match="did not run"):
+        ctx.want(Outcome(Step("t", "l", "pr-comment", [], True)), 0)
+    plan = Ctx(Runner(PLAN, tmp_path / "w2", env={"PATH": "/x"}), PLAN_CASES[0][1], "t")
+    plan.want(Outcome(Step("t", "l", "pr-comment", [], True)), 0)  # plan mode: nothing to want
+
+
+def test_the_ledger_reads_landed_ids_from_an_error_envelope_on_any_exit(tmp_path: Path) -> None:
+    scripted = Scripted(tmp_path)
+    error = {
+        "code": "outcome_partial",
+        "landed": None,
+        "details": {"landed": {"ids": ["gh:ic:IC_9"]}},
+    }
+    scripted.answer(code=12, stdout=json.dumps({"error": error}))
+    runner = scripted.runner(tmp_path)
+    out = scripted.write(runner)
+    assert out.code == 12
+    assert [r["id"] for r in runner.ledger] == ["gh:ic:IC_9"]
+    assert [r["id"] for r in _ledger_rows(tmp_path) if "id" in r] == ["gh:ic:IC_9"]
+    assert landed_ids({"error": {"landed": ["gh:ic:IC_8"]}}) == ["gh:ic:IC_8"]
+    assert landed_ids({"ids": ["a"], "thread_ids": ["b"], "review_id": "c"}) == ["a", "b", "c"]
+    assert landed_ids(None) == []
+
+
+def test_ids_in_unparsable_output_are_ledgered_before_the_failure(tmp_path: Path) -> None:
+    scripted = Scripted(tmp_path)
+    scripted.answer(stdout="posted gh:ic:IC_77 then crashed")
+    runner = scripted.runner(tmp_path)
+    with pytest.raises(LiveFailure, match="not one JSON document"):
+        scripted.write(runner)
+    assert [r["id"] for r in runner.ledger] == ["gh:ic:IC_77"]
+    assert runner.possible  # and the write is still listed as one whose outcome is unknown
+    notes = runner.teardown()
+    assert any("possibly posted" in n and "live-testrun1" in n for n in notes)
+
+
+def test_a_real_write_is_listed_as_possibly_posted_before_it_ends_and_after_a_timeout(
+    tmp_path: Path,
+) -> None:
+    scripted = Scripted(tmp_path)
+    scripted.answer(sleep=60)
+    runner = scripted.runner(tmp_path)
+    started = time.monotonic()
+    with pytest.raises(LiveFailure, match="no answer"):
+        runner.fg(
+            "slow",
+            "comment",
+            "--json",
+            h.PR,
+            "--body-file",
+            "-",
+            stdin=b"x",
+            write=True,
+            timeout=0.5,
+        )
+    assert time.monotonic() - started < 30  # the process group was killed, not waited for
+    statuses = [r.get("status") for r in _ledger_rows(tmp_path)]
+    assert statuses == ["possibly_posted"]
+    assert len(runner.possible) == 1
+
+
+def test_a_complete_answer_resolves_the_possibly_posted_entry(tmp_path: Path) -> None:
+    scripted = Scripted(tmp_path)
+    scripted.answer(stdout=json.dumps({"threads": []}))
+    runner = scripted.runner(tmp_path)
+    scripted.write(runner)
+    assert runner.possible == []
+    assert [r.get("status") for r in _ledger_rows(tmp_path)] == ["possibly_posted", "resolved"]
+    scripted.answer(code=20, stdout=json.dumps({"error": {"code": "stale_head"}}))
+    scripted.write(runner, "refused")
+    assert runner.possible == []  # an exit that wrote nothing needs no entry either
+
+
+def test_a_ledger_file_that_cannot_be_written_does_not_lose_the_rows(tmp_path: Path) -> None:
+    scripted = Scripted(tmp_path)
+    scripted.answer(stdout=json.dumps({"ids": ["gh:ic:IC_5"]}))
+    runner = scripted.runner(tmp_path)
+    (tmp_path / "report").mkdir(exist_ok=True)
+    (tmp_path / "report" / "ledger-testrun1.jsonl").mkdir()  # appending to it fails
+    scripted.write(runner)
+    assert [r["id"] for r in runner.ledger] == ["gh:ic:IC_5"]
+    assert any("ledger file could not be written" in n for n in runner.teardown())
+
+
+def test_an_unwritable_report_directory_is_refused_before_any_call(tmp_path: Path) -> None:
+    scripted = Scripted(tmp_path)
+    (tmp_path / "file").write_text("x", encoding="utf-8")
+    broken = dataclasses.replace(scripted.settings, report_dir=tmp_path / "file" / "sub")
+    scenario = Scenario("probe", lambda ctx: None, ("x.row",), ("github",), True, (), "Nothing.")
+    with pytest.raises(LiveRefusal, match="REPORT_DIR"):
+        run_scenario(
+            broken, scenario, broken.targets["GITHUB"], tmp_path / "work", env=scripted.env
+        )
+
+
+def test_an_interrupt_mid_scenario_keeps_the_ledger_and_writes_the_report(tmp_path: Path) -> None:
+    scripted = Scripted(tmp_path)
+    scripted.answer(stdout=json.dumps({"ids": ["gh:ic:IC_3"]}))
+
+    def interrupted(ctx: Ctx) -> None:
+        scripted.write(ctx.runner)
+        raise KeyboardInterrupt
+
+    probe = Scenario("probe", interrupted, ("x.row",), ("github",), True, (), "Interrupted.")
+    with pytest.raises(KeyboardInterrupt):
+        run_scenario(
+            scripted.settings,
+            probe,
+            scripted.settings.targets["GITHUB"],
+            tmp_path / "work",
+            env=scripted.env,
+        )
+    assert "gh:ic:IC_3" in [r.get("id") for r in _ledger_rows(tmp_path)]
+    report = json.loads(next((tmp_path / "report").glob("results-*-probe-github.json")).read_text())
+    assert report["status"] == "failed: KeyboardInterrupt"
+    assert any("IC_3" in n for n in report["left_for_a_human"])
+
+
+def test_a_secret_on_stderr_or_in_unparsable_stdout_reaches_no_message_note_or_report(
+    tmp_path: Path,
+) -> None:
+    scripted = Scripted(tmp_path)
+
+    def scenario(ctx: Ctx) -> None:
+        scripted.answer(code=5, stdout="{}", stderr=f"boom {SENTINEL}")
+        out = scripted.write(ctx.runner, "noisy")
+        assert SENTINEL not in out.stderr and SENTINEL not in out.stdout
+        ctx.observe("x.row", "stderr", out.stderr)
+        scripted.answer(code=1, stdout=f"not json {SENTINEL}")
+        try:
+            scripted.write(ctx.runner, "garbage")
+        except LiveFailure as exc:
+            assert SENTINEL not in str(exc)
+            ctx.observe("x.row", "message", str(exc))
+        scripted.answer(code=5, stdout="{}", stderr=f"boom {SENTINEL}")
+        ctx.want(scripted.write(ctx.runner, "again"), 0, row="x.row")  # fails, message built here
+
+    probe = Scenario("probe", scenario, ("x.row",), ("github",), True, (), "Noisy.")
+    with pytest.raises(LiveFailure) as caught:
+        run_scenario(
+            scripted.settings,
+            probe,
+            scripted.settings.targets["GITHUB"],
+            tmp_path / "work",
+            env=scripted.env,
+        )
+    assert SENTINEL not in str(caught.value) and "<GH_TOKEN>" in str(caught.value)
+    results = next((tmp_path / "report").glob("results-*-probe-github.json")).read_text()
+    assert SENTINEL not in results
+    assert SENTINEL not in "".join(p.read_text() for p in (tmp_path / "report").iterdir())
+
+
+def test_a_secret_with_characters_json_escapes_is_scrubbed_from_the_report(tmp_path: Path) -> None:
+    secret = 'tok"en\\with\nnewline-12345'
+    env = {"PATH": "/x", "GH_TOKEN": secret}
+
+    def scenario(ctx: Ctx) -> None:
+        ctx.observe("x.row", "value", f"seen {secret} here")
+        ctx.observe("x.row", "nested", {"list": [secret], secret: 1})
+
+    probe = Scenario("probe", scenario, ("x.row",), ("github",), True, (), "Observes.")
+    settings = settings_for("plan", tmp_path)
+    run_scenario(settings, probe, settings.targets["GITHUB"], tmp_path / "work", env=env)
+    text = next((tmp_path / "report").glob("results-*-probe-github.json")).read_text()
+    assert "newline-12345" not in text
+    assert json.dumps(secret)[1:-1] not in text
+    assert "<GH_TOKEN>" in text
+    assert scrub({"a": [secret]}, env) == {"a": ["<GH_TOKEN>"]}
+    assert redact(secret, env) == "<GH_TOKEN>"
+
+
+# --- review round 1: the pty, the tap, the environment ---------------------------------------
+
+
+def _run_python(tmp_path: Path, code: str, **kwargs: Any) -> Any:
+    return run_on_pty(
+        [sys.executable, "-c", code], env={}, cwd=tmp_path, answer=b"y\n", deadline=30, **kwargs
+    )
+
+
+def test_a_pty_child_that_prints_a_lot_to_stdout_does_not_hang_the_run(tmp_path: Path) -> None:
+    code = "import json,sys; sys.stdout.write(json.dumps({'pad': 'x' * 400000}))"
+    result = _run_python(tmp_path, code)
+    assert result.code == 0 and result.document is not None
+    assert len(result.document["pad"]) == 400000
+
+
+def test_a_pty_child_that_prints_text_instead_of_json_fails_the_run(tmp_path: Path) -> None:
+    with pytest.raises(LiveFailure, match="not one JSON document"):
+        _run_python(tmp_path, "print('x' * 300000)")
+
+
+def test_a_pty_prompt_is_found_in_the_tail_of_a_large_terminal_only() -> None:
+    prompt = b"Post? [y/N] "
+    assert _prompt_is_up(b"x" * 100_000 + b"\n" + prompt)
+    assert not _prompt_is_up(prompt + b"\n" + b"x" * 100_000)  # long gone: not scanned
+    assert not _prompt_is_up(b"x" * 100_000 + prompt)  # not at the start of a line
+    assert _prompt_is_up(b"a\r\n" + prompt)
+
+
+def test_the_tap_log_survives_a_half_written_last_line(tmp_path: Path) -> None:
+    scripted = Scripted(tmp_path)
+    runner = scripted.runner(tmp_path)
+    runner.tap_path()
+    log = tmp_path / "work" / "tap" / "calls.jsonl"
+    log.write_text(
+        json.dumps({"ts": 1, "argv": ["show"]}) + "\n" + '{"ts": 2, "ar', encoding="utf-8"
+    )
+    assert runner.tap_calls() == [["show"]]
+
+
+def test_a_pid_file_is_read_only_once_its_line_is_complete(tmp_path: Path) -> None:
+    pidfile = tmp_path / "pid"
+    assert helpers.read_pidfile(pidfile, timeout=0.1) == 0
+    pidfile.write_text("12", encoding="utf-8")  # half written: no newline yet
+    assert helpers.read_pidfile(pidfile, timeout=0.1) == 0
+    pidfile.write_text("1234\n", encoding="utf-8")
+    assert helpers.read_pidfile(pidfile, timeout=0.1) == 1234
+    pidfile.write_text("abc\n", encoding="utf-8")
+    assert helpers.read_pidfile(pidfile, timeout=0.1) == 0
+
+
+def test_children_get_a_private_home_unless_a_forgectl_config_is_set(tmp_path: Path) -> None:
+    env = {"PATH": "/x", "HOME": "/home/real", "XDG_CONFIG_HOME": "/home/real/.config"}
+    private = Runner(settings_for("plan", tmp_path), tmp_path / "a", env=env).child_env()
+    assert private["HOME"] == str(tmp_path / "a" / "home")
+    assert private["XDG_CONFIG_HOME"].startswith(str(tmp_path / "a" / "home"))
+    config = tmp_path / "forgectl.yaml"
+    config.write_text("hosts: {}\n", encoding="utf-8")
+    config.chmod(0o600)
+    chosen = settings_for("plan", tmp_path, PR_COMMENT_LIVE_FORGECTL_CONFIG=str(config))
+    shared = Runner(chosen, tmp_path / "b", env=env).child_env()
+    assert shared["HOME"] == "/home/real" and shared["XDG_CONFIG_HOME"] == "/home/real/.config"
+
+
+def test_state_a_scenario_leaves_behind_is_listed_in_the_notes(
+    forgectl: FakeForgectl, tmp_path: Path
+) -> None:
+    runner = Runner(settings_for("plan", tmp_path), tmp_path / "work", env=forgectl.environ())
+    runner.leave("a resolved thread")
+    runner.leave("a resolved thread")
+    assert runner.teardown() == ["left for a human: a resolved thread"]
+
+
+# --- review round 1: plan mode, rows and scenarios -------------------------------------------
+
+
+def test_a_plan_with_an_allowlist_and_no_target_shows_placeholder_steps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    NothingStarts(monkeypatch)
+    settings = from_env({"PR_COMMENT_LIVE": "1", "PR_COMMENT_LIVE_ALLOW": "github.com/other/repo"})
+    assert settings.refusals() == []
+    for target in targets_for(settings):
+        runner = (
+            run_scenario(
+                settings,
+                SCENARIOS["comment_post"],
+                target,
+                tmp_path / target.name,
+                env={"PATH": "/x"},
+            )
+            if target.backend == "github"
+            else None
+        )
+        assert runner is None or {s.applied for s in runner.steps} == {"plan"}
+
+
+def test_a_configured_target_is_checked_against_the_allowlist_even_in_plan_mode(
+    tmp_path: Path,
+) -> None:
+    runner = Runner(settings_for("plan", tmp_path), tmp_path / "work", env={"PATH": "/x"})
+    runner.verify_target(h.PR)
+    with pytest.raises(LiveRefusal, match="ALLOW"):
+        runner.verify_target("github.com/acme/other#1")
+    with pytest.raises(LiveRefusal, match="ALLOW"):
+        runner.verify_target("github.com/acme/widgets#1".replace("widgets", "elsewhere"))
+
+
+def test_an_approve_write_needs_the_approve_variable_in_run_mode(tmp_path: Path) -> None:
+    for approve, expected in (("", False), ("1", True)):
+        extra = {"PR_COMMENT_LIVE_APPROVE": approve} if approve else {}
+        settings = settings_for("run", tmp_path, **extra)
+        runner = Runner(settings, tmp_path / f"w{approve}", env={"PATH": "/x"})
+        ctx = Ctx(runner, settings.targets["GITHUB"], "t")
+        assert ctx.may_approve is expected
+    plan = Ctx(Runner(PLAN, tmp_path / "p", env={"PATH": "/x"}), PLAN_CASES[0][1], "t")
+    assert plan.may_approve is True  # plan and preflight show the step; nothing is written
+
+
+def _recorded_refusals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **extra: str
+) -> list[list[str]]:
+    settings = settings_for("run", tmp_path, **extra)
+    runner = Runner(settings, tmp_path / "work", env={"PATH": "/x"})
+    runner.verified.add(h.PR)
+    calls: list[list[str]] = []
+
+    def pc(label: str, *argv: str, **kw: Any) -> Outcome:
+        calls.append([*argv])
+        return Outcome(Step("s", label, "pr-comment", list(argv), False), 0, {}, real=True)
+
+    def fg(label: str, *argv: str, **kw: Any) -> Outcome:
+        doc = h.show_doc(h.PR)
+        return Outcome(Step("s", label, "forgectl", list(argv), False), 0, doc, real=True)
+
+    monkeypatch.setattr(runner, "pc", pc)
+    monkeypatch.setattr(runner, "fg", fg)
+    monkeypatch.setattr(runner, "allow_ref_text", lambda ref: None)
+    monkeypatch.setattr(Ctx, "want", lambda *a, **k: None)
+    monkeypatch.setattr(Ctx, "check", lambda *a, **k: None)
+    SCENARIOS["refusals"].fn(Ctx(runner, settings.targets["GITHUB"], "refusals"))
+    return calls
+
+
+def test_refusal_probes_that_are_approve_writes_run_only_with_the_approve_variable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def real_approves(calls: list[list[str]]) -> list[list[str]]:
+        return [c for c in calls if c[0] == "approve" and "--dry-run" not in c]
+
+    assert real_approves(_recorded_refusals(tmp_path / "a", monkeypatch)) == []
+    assert (
+        len(
+            real_approves(
+                _recorded_refusals(tmp_path / "b", monkeypatch, PR_COMMENT_LIVE_APPROVE="1")
+            )
+        )
+        == 2
+    )
+
+
+def test_the_closed_pr_scenario_writes_nothing_when_the_target_is_open(
+    forgectl: FakeForgectl, tmp_path: Path
+) -> None:
+    settings = settings_for("run", tmp_path, PR_COMMENT_LIVE_GITHUB_CLOSED_PR=h.PR)
+    forgectl.script(_show(), _show(), _show())  # the target, the closed PR, its state: open
+    with pytest.raises(LiveRefusal, match="nothing was written"):
+        run_scenario(
+            settings,
+            SCENARIOS["closed_pr"],
+            settings.targets["GITHUB"],
+            tmp_path / "work",
+            env=forgectl.environ(),
+        )
+    assert forgectl.writes() == []
+
+
+def test_the_confirmation_probe_without_yes_is_a_write_for_the_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    NothingStarts(monkeypatch)
+    target = PLAN_CASES[0][1]
+    runner = run_scenario(
+        PLAN,
+        SCENARIOS["forgectl_confirmation_order"],
+        target,
+        tmp_path / "work",
+        env={"PATH": "/nonexistent"},
+    )
+    (probe,) = [s for s in runner.steps if s.label == "write-no-yes"]
+    assert probe.write and "--yes" not in probe.argv
+
+
+def test_the_new_rows_are_there_and_say_what_they_do_not_probe() -> None:
+    assert {"fk.diff_markers", "fk.since_grammar"} <= checklist.ROW_IDS
+    rows = {row.id: row for row in checklist.ROWS}
+    assert "pr-comment's own" in rows["th.not_found"].text
+    assert "pr-comment's own" in rows["th.changed_false"].text
+    assert "pr-comment's own marker placement" in rows["fk.gitlab_no_body_marker"].text
+    assert "diff_markers" in str(checklist.automated("fk.diff_markers"))
+    assert not checklist.automated("fk.since_grammar") and rows["fk.since_grammar"].manual
+
+
+def test_the_document_says_never_to_show_locals_and_where_credentials_come_from() -> None:
+    text = checklist.render()
+    assert "--showlocals" in text and "environment variables" in text
+
+
+def test_the_mention_probe_holds_the_unterminated_numeric_forms() -> None:
+    from tests.live.scenarios import _mention_body
+
+    body = _mention_body("someone", None)
+    assert "&#64someone" in body and "&#x40someone" in body
+
+
+def test_the_async_hook_sleeps_long_enough_that_returning_early_is_no_race() -> None:
+    assert "sleep 20;" in async_hook_config(Path("/x/marker"))
+
+
+@pytest.mark.parametrize(
+    ("backticks", "tildes", "fence", "ok"),
+    [
+        (254, 0, "`" * 255 + "text", True),
+        (254, 0, "`" * 256 + "text", False),  # over 255
+        (255, 0, "~~~text", True),
+        (300, 0, "`" * 255 + "text", False),  # a backtick fence a 255 run closes
+        (0, 300, "```text", True),
+        (255, 255, "`" * 255 + "text", True),
+    ],
+)
+def test_the_fence_check_follows_the_documented_rules(
+    backticks: int, tildes: int, fence: str, ok: bool
+) -> None:
+    split = helpers.RUN_SPLIT if backticks >= 255 and tildes >= 255 else ""
+    body = f"A run.\n\n{fence}\nx {split}\n{fence[:-4]}\n"
+    assert (helpers.fence_problems(body, backticks, tildes) == []) is ok
+
+
+def test_the_run_split_marker_is_required_only_when_both_runs_reach_255() -> None:
+    body = "A.\n\n~~~text\nx\n~~~\n"
+    assert helpers.fence_problems(body, 255, 0) == []
+    assert helpers.fence_problems(body.replace("x", "x <run split>"), 255, 0) != []
+    assert helpers.text_fence("no block here") is None

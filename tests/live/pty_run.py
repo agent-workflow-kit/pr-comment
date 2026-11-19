@@ -15,7 +15,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .errors import LiveFailure
+
 PROMPT = "Post? [y/N] "
+TAIL_WINDOW = 8192  # the prompt is looked for in the end of the terminal only
+TERMINAL_KEEP = 1 << 20  # what is kept of the terminal for the report
+STDOUT_CAP = 16 << 20  # the JSON document; more than this is a failure, never an unbounded read
 
 
 @dataclass
@@ -26,7 +31,11 @@ class PtyResult:
 
 
 def _prompt_is_up(terminal: bytes) -> bool:
-    """The real prompt is flush left on a line; a draft's own text is shown behind a margin."""
+    """The real prompt is flush left on a line; a draft's own text is shown behind a margin. Only
+    the tail window is scanned, and its first (possibly cut) line is skipped."""
+    if len(terminal) > TAIL_WINDOW:
+        terminal = terminal[-TAIL_WINDOW:]
+        terminal = terminal.partition(b"\n")[2]
     lines = terminal.replace(b"\r\n", b"\n").split(b"\n")
     return any(line.startswith(PROMPT.encode()) for line in lines)
 
@@ -40,7 +49,9 @@ def run_on_pty(
     deadline: float = 120.0,
 ) -> PtyResult:
     """stdin and stderr are one pty; stdout is a pipe (the JSON document). ``answer`` is typed
-    once the prompt is on the terminal."""
+    once the prompt is on the terminal. Both are read as they arrive, so a child that writes a lot
+    to either cannot block on a full pipe."""
+    __tracebackhide__ = True
     master, slave = pty.openpty()
     out_r, out_w = os.pipe()
     proc: subprocess.Popen[bytes] | None = None
@@ -58,32 +69,53 @@ def run_on_pty(
         close(out_w)
         close(slave)
         terminal = b""
+        stdout = bytearray()
+        truncated = False
         answered = False
+        master_open = out_open = True
         limit = time.monotonic() + deadline
-        while True:
+        while master_open or out_open:
             if time.monotonic() > limit:
                 proc.kill()  # this exact child
                 proc.wait()
-                raise AssertionError("pr-comment did not finish on the pty (killed)")
-            ready, _, _ = select.select([master], [], [], 0.1)
-            if ready:
+                raise LiveFailure("pr-comment did not finish on the pty (killed)")
+            watch = ([master] if master_open else []) + ([out_r] if out_open else [])
+            ready, _, _ = select.select(watch, [], [], 0.1)
+            for fd in ready:
                 try:
-                    chunk = os.read(master, 65536)
+                    chunk = os.read(fd, 65536)
                 except OSError:
                     chunk = b""
-                if not chunk:
-                    break
-                terminal += chunk
-            elif proc.poll() is not None:
+                if fd == master:
+                    if chunk:
+                        terminal = (terminal + chunk)[-TERMINAL_KEEP:]
+                    else:
+                        master_open = False
+                elif chunk:
+                    if len(stdout) < STDOUT_CAP:
+                        stdout += chunk[: STDOUT_CAP - len(stdout)]
+                    else:
+                        truncated = True
+                else:
+                    out_open = False
+            if not ready and proc.poll() is not None:
                 break
-            if not answered and _prompt_is_up(terminal):
+            if not answered and master_open and _prompt_is_up(terminal):
                 answered = True
                 os.write(master, answer)
         code = proc.wait(timeout=deadline)
-        fds.discard(out_r)
-        with os.fdopen(out_r, "r", encoding="utf-8") as handle:
-            text = handle.read()
-        document = json.loads(text) if text.strip() else None
+        if truncated:
+            raise LiveFailure("pr-comment printed more than the stdout cap on the pty run")
+        text = stdout.decode("utf-8", "replace")
+        document = None
+        if text.strip():
+            try:
+                loaded = json.loads(text)
+            except ValueError:
+                raise LiveFailure(
+                    "the pty run's stdout is not one JSON document (details withheld)"
+                ) from None
+            document = loaded if isinstance(loaded, dict) else {"value": loaded}
         return PtyResult(code, document, terminal.decode("utf-8", "replace").replace("\r\n", "\n"))
     finally:
         if proc is not None and proc.poll() is None:

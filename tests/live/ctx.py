@@ -59,6 +59,7 @@ class Ctx:
 
     def check(self, condition: object, message: str, row: str = "") -> None:
         """Fail (in run mode only) with ``message``; never put a secret or a body in it."""
+        __tracebackhide__ = True
         if self.live and not condition:
             where = f" [{row}]" if row else ""
             raise LiveFailure(f"{self.scenario}: {message}{where}")
@@ -68,9 +69,12 @@ class Ctx:
         self.runner.observe(row, key, value)
 
     def want(self, out: Outcome, code: int = 0, error: str | None = None, row: str = "") -> None:
-        """The step ended with exit ``code`` (and error code ``error``)."""
-        if not (self.live and out.real):
+        """The step ended with exit ``code`` (and error code ``error``). In run mode a step that
+        did not run fails here: it cannot be taken for a pass."""
+        __tracebackhide__ = True
+        if not self.live:
             return
+        self.check(out.real, f"{out.step.label}: the step did not run", row)
         shown = f"exit {out.code}, code {out.error_code}, stderr {out.stderr[-300:]!r}"
         self.check(out.code == code, f"{out.step.label}: wanted exit {code}, got {shown}", row)
         if error is not None:
@@ -157,6 +161,11 @@ class Ctx:
             self.check(False, "the target's diff has no added line; it needs a PR that adds lines")
             return [("<path>", i + 1) for i in range(count)]
         return picked
+
+    @property
+    def may_approve(self) -> bool:
+        """Every approve write is behind PR_COMMENT_LIVE_APPROVE=1 in run mode."""
+        return not self.live or self.settings.approve
 
     def retarget(self, ref: str) -> Ctx:
         """The same scenario on another PR of the same kind of host (the closed PR)."""

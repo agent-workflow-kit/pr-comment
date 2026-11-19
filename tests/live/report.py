@@ -5,11 +5,24 @@ the targets. Never an environment variable, a token or a body."""
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from .runner import Runner
 from .settings import redact
+
+
+def scrub(value: Any, env: Mapping[str, str]) -> Any:
+    """``value`` with every secret-looking variable's value replaced in each string (and key), so
+    a value that JSON would escape is still found."""
+    if isinstance(value, str):
+        return redact(value, env)
+    if isinstance(value, dict):
+        return {scrub(k, env): scrub(v, env) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [scrub(v, env) for v in value]
+    return value
 
 
 def write_report(
@@ -30,7 +43,6 @@ def write_report(
         "left_for_a_human": notes,
     }
     path = directory / f"results-{runner.settings.run_id}-{scenario}-{target}.json"
-    path.write_text(
-        redact(json.dumps(document, indent=2, default=str), runner.env) + "\n", encoding="utf-8"
-    )
+    clean = scrub(json.loads(json.dumps(document, default=str)), runner.env)
+    path.write_text(json.dumps(clean, indent=2) + "\n", encoding="utf-8")
     return path

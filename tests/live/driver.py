@@ -44,12 +44,19 @@ def run_scenario(
     ctx = Ctx(runner, target, scenario.id)
     status = "passed"
     try:
+        runner.prepare_report()  # an unwritable report directory is found before any call
         runner.verify_target(target.ref)
         scenario.fn(ctx)
     except BaseException as exc:
         status = f"failed: {exc.__class__.__name__}"
         raise
     finally:
-        runner.notes = runner.teardown()
-        write_report(runner, scenario.id, target.name, status, runner.notes)
+        try:
+            runner.notes = runner.teardown()
+        except Exception as exc:  # teardown never hides the scenario's own failure
+            runner.notes = [f"teardown failed: {exc.__class__.__name__}"]
+        try:
+            write_report(runner, scenario.id, target.name, status, runner.notes)
+        except OSError:
+            runner.notes.append("the report file could not be written")
     return runner

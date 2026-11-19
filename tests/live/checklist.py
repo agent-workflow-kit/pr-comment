@@ -2,9 +2,9 @@
 """The checklist of every host behavior that was verified only against fakes or by reading source,
 each mapped to a live scenario or test, or to an explicit manual step.
 
-``docs/live-checklist.md`` is generated from this module (``python -m tests.live.checklist --write``)
-and a test checks that it is current, that every row has an automated check or a manual step, and
-that no scenario names a row that does not exist.
+``docs/live-checklist.md`` is generated from this module
+(``uv run python -m tests.live.checklist --write``) and a test checks that it is current, that every
+row has an automated check or a manual step, and that no scenario names a row that does not exist.
 """
 
 from __future__ import annotations
@@ -37,7 +37,11 @@ ROWS: tuple[Row, ...] = (
         "#8",
         "forgectl's parser accepts `--flag=value` for every flag the gateway sends (`--timeout=`, `--config=`, `--dedupe-key=` and the rest).",
     ),
-    _r("gw.version_format", "#8", "The `forgectl --version` output format."),
+    _r(
+        "gw.version_format",
+        "#8",
+        "The `forgectl --version` output format (recorded, not asserted).",
+    ),
     _r(
         "gw.signal_term",
         "#8",
@@ -124,7 +128,7 @@ ROWS: tuple[Row, ...] = (
     _r(
         "fk.gitlab_no_body_marker",
         "#9",
-        "A GitLab review with no body puts the marker on the last inline comment.",
+        "pr-comment's own marker placement for a GitLab review with no body: the marker is on the inline comment as stored (forgectl's rule for a body-less review is not probed separately).",
     ),
     _r(
         "fk.dedupe_hit",
@@ -201,8 +205,16 @@ ROWS: tuple[Row, ...] = (
         manual="On a Mac run `early_exit_stdin` and the offline stdin contract test.",
     ),
     # threads (#35, #36)
-    _r("th.not_found", "#35, #36", "A thread id that is not on the PR gives exit 10 `not_found`."),
-    _r("th.changed_false", "#35", "A no-op on a thread reports `changed: false`."),
+    _r(
+        "th.not_found",
+        "#35, #36",
+        "A thread id that is not on the PR gives exit 10 `not_found` (pr-comment's own handling of the answer; no raw forgectl call probes forgectl's not_found separately).",
+    ),
+    _r(
+        "th.changed_false",
+        "#35",
+        "A no-op on a thread reports `changed: false` (pr-comment's own result; forgectl's own answer for a repeated resolve is not probed separately).",
+    ),
     _r(
         "th.gl_d_ids",
         "#35",
@@ -247,6 +259,18 @@ ROWS: tuple[Row, ...] = (
         "#37",
         "A real PR's base ref forms are accepted by `draft new` and `draft check`.",
     ),
+    _r(
+        "fk.diff_markers",
+        "#9",
+        "forgectl's `diff` keeps a carriage return and a `\\ No newline at end of file` marker (recorded, not asserted).",
+        manual="Put a CRLF file and a file without a trailing newline in the throwaway PR; the `diff_markers` scenario records the counts it finds.",
+    ),
+    _r(
+        "fk.since_grammar",
+        "#9",
+        "The grammar of `--since` on a read (awaiting a maintainer decision: recorded by hand only, no assertion).",
+        manual="Run `forgectl comments --since` with an RFC 3339 time, a date and a relative form against a throwaway PR and record which are accepted; nothing is asserted until the maintainer decides.",
+    ),
     # hooks (#33, #82)
     _r(
         "hk.decision_ids",
@@ -256,7 +280,7 @@ ROWS: tuple[Row, ...] = (
     _r(
         "hk.scrubbed_env",
         "#33",
-        "A hook's environment holds none of the account's secret-looking variables.",
+        "A hook's environment holds none of forgectl's ambient token variables: a canary one is set for the run and must be absent, and `hook_env_deny` applies.",
     ),
     _r(
         "hk.group_kill",
@@ -266,7 +290,7 @@ ROWS: tuple[Row, ...] = (
     _r(
         "hk.async",
         "#33, #82",
-        "An async `post-post` hook is not waited for and its working directory is swept after a day only when empty (OPEN DECISION: async hooks, #82).",
+        "An async `post-post` hook (a 20 second sleep) is not waited for and its working directory is swept after a day only when empty (OPEN DECISION: async hooks, #82; the marker is recorded, nothing asserted about it).",
         manual="Leave an async hook's working directory in the state `tmp/` directory, age it by a day (`touch -d`) and run any command: confirm it is removed only when empty.",
     ),
     # escalation (#34)
@@ -280,12 +304,12 @@ ROWS: tuple[Row, ...] = (
     _r(
         "ts.fence_255",
         "#19",
-        "GitHub's and GitLab's own engines share the 255 fence-length limit: 254, 255, 256 and 300 backtick and tilde runs render as one code block.",
+        "GitHub's and GitLab's own engines share the 255 fence-length limit: 254, 255, 256 and 300 backtick and tilde runs, and a suggestion with both kinds, are stored with the right fence and render as the same single code block as a short degraded control (the shape is also compared with an applicable control, recorded).",
     ),
     _r(
         "ts.run_split",
         "#19",
-        "A degraded suggestion with backtick and tilde runs of 255 splits with the visible `<run split>` marker and renders as one block.",
+        "A degraded suggestion with backtick and tilde runs of 255 in one suggestion splits with the visible `<run split>` marker (and only then), and a backtick run of 255 or more gets a tilde fence of at most 255 characters.",
     ),
     _r(
         "ts.degraded_suggestion",
@@ -322,7 +346,7 @@ ROWS: tuple[Row, ...] = (
     _r(
         "ts.fullwidth_fold",
         "#22",
-        "Neither host folds fullwidth `＠`, `＜` or `！` to ASCII (OPEN DECISION: fullwidth `＠`).",
+        "Whether either host folds fullwidth `＠`, `＜` or `！` to ASCII (recorded: what is stored, and the image and bold tags of the render; OPEN DECISION: fullwidth `＠`).",
     ),
     _r(
         "ts.entities_unterminated",
@@ -345,7 +369,11 @@ ROWS: tuple[Row, ...] = (
         "#22",
         "Diagram fences (`mermaid`, `geojson`, `stl`) render on GitHub (recorded).",
     ),
-    _r("ts.link_forms", "#22", "A `javascript:` or relative link renders inert."),
+    _r(
+        "ts.link_forms",
+        "#22",
+        "How a `javascript:` or relative link renders (recorded: the `javascript:` hrefs found).",
+    ),
     _r(
         "ts.postprocess",
         "#22",
@@ -453,20 +481,20 @@ ENV_VARS: tuple[tuple[str, str], ...] = (
     ),
     (
         "PR_COMMENT_LIVE_REPORT_DIR",
-        "Absolute directory for the reports and the ledger of what was posted. Required in run mode.",
+        "Absolute directory (no `..`) for the reports and the ledger of what was posted. Required in run mode; it must be creatable and writable, and is created and probed before the first write.",
     ),
     (
         "PR_COMMENT_LIVE_RENDER",
-        "`1` reads rendered HTML through `gh` or `glab` (GraphQL, read only) so the rendering rows are asserted; without it they are recorded as unavailable and become manual steps.",
+        "`1` reads rendered HTML through `gh` or `glab` (GraphQL, read only; they need credentials in environment variables) so the rendering rows are observed; without it they are recorded as unavailable and become manual steps.",
     ),
     (
         "PR_COMMENT_LIVE_CLEANUP_CMD",
-        "Optional absolute path of an executable called as `<cmd> <pr> <forgectl id>` for every id the run posted. Without it the ids are printed as left for a human.",
+        "Optional absolute path of one existing executable file (no arguments) called as `<cmd> <pr> <forgectl id>` for every id the run posted, with the same private environment as the other children. Without it the ids are printed as left for a human.",
     ),
     ("PR_COMMENT_LIVE_FORGECTL", "forgectl binary name or path (default `forgectl`)."),
     (
         "PR_COMMENT_LIVE_FORGECTL_CONFIG",
-        "Optional forgectl config file passed with `--config` (declares enterprise hosts).",
+        "Optional forgectl config file passed with `--config` (declares enterprise hosts). When set, the environment's `HOME` and `XDG_CONFIG_HOME` are passed on; when unset they are private and credentials must come from environment variables.",
     ),
     (
         "PR_COMMENT_LIVE_GITLAB_GROUP",
@@ -478,7 +506,7 @@ ENV_VARS: tuple[tuple[str, str], ...] = (
     ),
     (
         "PR_COMMENT_LIVE_RUN_ID",
-        "Optional: 6 to 24 characters of a-z and 0-9. Reusing a run id repeats the same keys, so a repeated run reports `already_posted` instead of posting again.",
+        "Optional: 6 to 24 characters of a-z and 0-9. A run id fixes every draft id and dedupe key; one whose ledger or run-mode results exist in the report directory is refused.",
     ),
 )
 
@@ -525,19 +553,22 @@ def render() -> str:
         "- Allowlist: `PR_COMMENT_LIVE_ALLOW` lists the exact repo ids the suite may write to. Each target is checked as written, and again against the canonical repo forgectl reports for it, before any write. A write whose argv names no verified target never runs."
     )
     w(
-        "- Modes: `plan` (the default) calls nothing and prints every step; `preflight` runs reads and turns every write into a `--dry-run`; `run` writes. Steps that need an id only a real write produces are shown as `<name>` and are deferred in preflight."
+        "- Modes: `plan` (the default) calls nothing and prints every step; `preflight` runs reads and turns every write into a `--dry-run`; `run` writes. Steps that need an id only a real write produces are shown as `<name>` and are deferred in preflight; in `run` mode a step still holding such a placeholder fails the scenario. In plan mode a configured target must be on the allowlist like any other (a target with no `PR_COMMENT_LIVE_ALLOW` is a refused setting); only a plan with no target at all shows steps against placeholder repos, which need no allowlist because nothing is called."
     )
     w(
-        "- Isolation: pr-comment runs with its own config file, state directory and working directory, and a tap that logs each forgectl argv. Every `PR_COMMENT_*` variable is dropped; the rest of the environment reaches forgectl for its credentials and is never printed (secret-looking values are redacted from every message)."
+        "- Isolation: pr-comment runs with its own config file, state directory and working directory, and a tap that logs each forgectl argv. Every `PR_COMMENT_*` variable is dropped; the rest of the environment reaches forgectl for its credentials and is never printed (secret-looking values of eight characters or more are redacted from every message, report and note). Unless `PR_COMMENT_LIVE_FORGECTL_CONFIG` is set, every child also gets a private `HOME` and `XDG_CONFIG_HOME`, so the developer's own `gh` or `glab` login is not found: forgectl's credentials must come from environment variables (for example `GH_TOKEN` or `GITLAB_TOKEN`) or from that config file. Each child runs in a process group of its own; on a timeout or an interrupt that exact group is killed."
     )
     w(
-        "- Cleanup: every body carries the run's tag (`live-<run id>`) so what a run posted can be found. The ids it posted are written to `ledger-<run id>.jsonl` in the report directory and passed to `PR_COMMENT_LIVE_CLEANUP_CMD` when set. Hosts cannot delete a submitted review or an approval; those are listed as left for a human."
+        "- Cleanup: every body carries the run's tag (`live-<run id>`) so what a run posted can be found. The ids it posted are written to `ledger-<run id>.jsonl` in the report directory and passed to `PR_COMMENT_LIVE_CLEANUP_CMD` when set. A write whose answer could not be read is listed as possibly posted (the entry is written before the write starts and kept after a timeout or an interrupt). Hosts cannot delete a submitted review or an approval, and a thread the suite resolved stays resolved; those are listed as left for a human. A cleanup command that is missing or times out is a note, never a failure that hides the scenario's own."
     )
     w(
-        "- Idempotency: a run id fixes every draft id and dedupe key, so running the same run id again reports `already_posted`. Scenarios look only for comments with their own tag."
+        "- Idempotency: a run id fixes every draft id and dedupe key within one run (the dedupe and signal scenarios rely on it). Scenarios look only for comments with their own tag. A run id whose ledger or run-mode results already exist in the report directory is refused, so a second run cannot repeat the first one's writes by accident: use another run id or another report directory."
     )
     w(
         "- Raw probes: a few scenarios post through `forgectl` directly (a literal mention as a positive control, suggestion fences pr-comment refuses, a body that ends in a no-break space). They are marked `raw` in the step list and run only on an allowlisted target."
+    )
+    w(
+        "- Never run the suite with `-l` or `--showlocals`: a failing frame can hold a raw response. The suite hides its own frames from tracebacks, and its failure messages are redacted, but pytest's local display is not."
     )
     w(
         "- What the suite never does: print an environment variable, post outside the allowlist, change a PR's branch or state, or send a quick action that changes anything (the GitLab probe sends `/shrug`, which only appends a text)."
