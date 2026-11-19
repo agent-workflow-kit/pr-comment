@@ -380,9 +380,10 @@ def render_suggestion(
     its lines are raw. When a line has an invisible character, a fence run or a leading ``/``, or
     when ``moved`` is true, or when the finding's own body can leave a fence open
     (``open_fence_possible``, reason ``open_fence``, last in the order), it is a ``text`` block
-    with a note before it and its lines neutralized and marked; only the first cases report a
-    reason. Text pipeline step 6's leading space for a
-    ``/`` line is forgectl's pre-applied neutralizing, applied once to the whole body by
+    with a note before it and its lines neutralized and marked. A moved block reports no reason;
+    the other cases (``invisible_chars``, ``fence``, ``slash_line``, ``dedupe_text`` and
+    ``open_fence``) report theirs. Text pipeline step 6's leading space for a ``/`` line is
+    forgectl's pre-applied neutralizing, applied once to the whole body by
     ``assemble.build_body`` and ``assemble.build_inline``.
 
     A degraded or moved block has its fence runs split when the finding's own body holds a fence
