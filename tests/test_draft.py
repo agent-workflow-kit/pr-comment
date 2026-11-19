@@ -1068,7 +1068,7 @@ def test_hostile_long_pr_is_refused_quickly() -> None:
         doc["pr"] = pr
         started = time.process_time()  # CPU time: descheduling under load is not counted
         assert pointers_of(doc) == ["/pr"]
-        assert time.process_time() - started < 10.0  # linear: ~0.01 s; quadratic is minutes
+        assert time.process_time() - started < 0.1  # linear ~0.001 s; no guard 0.2 s
     doc = good()
     doc["pr"] = "a" * 250 + "/" + "b" * 100 + "#1"
     assert validate_document(doc) == []

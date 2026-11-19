@@ -202,21 +202,21 @@ def test_a_huge_line_of_runs_is_linear() -> None:
     text = "``` " * 16000 + "x"
     start = time.process_time()
     assert text_problem(text) is None
-    assert time.process_time() - start < 10
+    assert time.process_time() - start < 2
 
 
 def test_a_huge_line_of_entities_before_the_word_is_linear() -> None:
     text = "```" + "&#32;" * 12000 + "suggestion"
     start = time.process_time()
     assert text_problem(text) == SUGGESTION_FENCE
-    assert time.process_time() - start < 10
+    assert time.process_time() - start < 2
 
 
 def test_many_lines_are_linear() -> None:
     text = "```text\n" * 8000
     start = time.process_time()
     assert text_problem(text) is None
-    assert time.process_time() - start < 10
+    assert time.process_time() - start < 2
 
 
 def test_a_huge_text_without_fences() -> None:

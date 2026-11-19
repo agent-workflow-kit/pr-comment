@@ -687,7 +687,7 @@ def test_huge_repeat_lists_are_refused_quickly(
     argv = [*MINIMAL["comment"], *([flag] * 20000), "--json"]
     started = time.process_time()  # CPU time: descheduling under load is not counted
     code, doc, _ = _run_json(capsys, argv)
-    assert time.process_time() - started < 10  # linear: ~0.01 s; a per-argument scan is more
+    assert time.process_time() - started < 0.5  # linear: ~0.01 s; a per-argument scan is 2 s
     assert code == 2
     assert doc["error"]["code"] == "usage"
     assert "too many arguments" in doc["error"]["message"]

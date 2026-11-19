@@ -188,7 +188,7 @@ def test_binary_line_with_many_and_separators_is_read_in_linear_time() -> None:
         ambiguous(f"diff --git a/x b/x\n{line}")
     for size in (20_000, 100_000):
         ambiguous(f"diff --git a/x b/x\nBinary files a/{'x and ' * size} differ\n")
-    assert time.process_time() - started < 10  # linear: ~0.1 s; quadratic is minutes
+    assert time.process_time() - started < 1  # linear: ~0.002 s; quadratic is minutes
 
 
 def test_overlong_header_lines_are_ambiguous() -> None:
@@ -675,7 +675,7 @@ def test_huge_hunk_parses_quickly() -> None:
     started = time.process_time()  # CPU time: descheduling under load is not counted
     (hunk,) = only(text_diff("a/f", "b/f", body)).hunks
     assert len(hunk.lines) == n
-    assert time.process_time() - started < 20  # linear: ~0.3 s; quadratic is minutes
+    assert time.process_time() - started < 5  # linear: ~0.25 s; quadratic is minutes
 
 
 def test_many_sections_parse() -> None:

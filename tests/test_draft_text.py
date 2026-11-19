@@ -272,4 +272,4 @@ def test_a_huge_hostile_draft_is_bounded() -> None:
     ]
     start = time.process_time()
     assert parse_draft(dumps(doc))
-    assert time.process_time() - start < 20
+    assert time.process_time() - start < 8

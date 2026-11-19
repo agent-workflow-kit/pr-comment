@@ -446,7 +446,7 @@ def test_huge_and_quadratic_shaped_inputs_run_in_linear_time(text: str) -> None:
     started = time.process_time()  # CPU time: descheduling under load is not counted
     count_text(text)
     neutralize_characters(text)
-    assert time.process_time() - started < 20.0  # linear: ~0.1 s; quadratic on 0.5 MB is minutes
+    assert time.process_time() - started < 5.0  # linear: <= 0.16 s; quadratic on 0.5 MB is minutes
 
 
 def test_a_megabyte_of_text_is_counted_exactly() -> None:
