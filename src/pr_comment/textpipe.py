@@ -52,7 +52,9 @@ def is_blank_text(text: str) -> bool:
     normalized = normalize_lines(text)
     if has_forbidden_character(normalized):
         return False
-    return all(ch.isspace() or is_marked(ch) for ch in normalized)
+    # The test is per character, so run it once per distinct character: the set is built in C and
+    # a large text has few distinct characters.
+    return all(ch.isspace() or is_marked(ch) for ch in set(normalized))
 
 
 def _is_suggestion_info(segment: str) -> bool:

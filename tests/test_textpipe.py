@@ -101,6 +101,15 @@ def test_a_forbidden_character_is_not_blank_so_step_1_names_it(char: str) -> Non
     assert not is_blank_text(f" {char} ")
 
 
+def test_a_large_invisible_only_text_is_blank_and_one_visible_character_is_not() -> None:
+    unit = "".join(BLANK_CHARS) + "\n"
+    blank = unit * (1_000_000 // len(unit))
+    assert is_blank_text(blank)
+    assert not is_blank_text(blank + "x")
+    assert not is_blank_text("x" + blank)
+    assert not is_blank_text(blank + "\x00")
+
+
 SEPARATORS = ["\n", "\r\n", "\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", " ", " "]
 
 
