@@ -660,6 +660,8 @@ def s_suggestion_probes(ctx: Ctx) -> None:
     ticks = "`" * 3
     forms = {
         "control-suggestion": f"```{info}\nreplacement()\n```",
+        # the same-height control for the forms whose body is two lines
+        "control-suggestion-2line": f"```{info}\nreplacement()\nreplacement2()\n```",
         "control-code": "```text\nreplacement()\n```",
         "longer-fence": f"````{info}\nreplacement()\n````",
         "tilde-fence": f"~~~{info}\nreplacement()\n~~~",
@@ -672,6 +674,7 @@ def s_suggestion_probes(ctx: Ctx) -> None:
         "longer-fence-inner-tilde": f"````{info}\n~~~\nreplacement()\n````",
     }
     bodies = {  # the body lines each of those forms must keep, verbatim
+        "control-suggestion-2line": ["replacement()", "replacement2()"],
         "longer-fence-inner-ticks": [ticks, "replacement()"],
         "same-fence-inner-ticks": [ticks, "replacement()"],
         "longer-fence-inner-tilde": ["~~~", "replacement()"],
@@ -703,11 +706,17 @@ def s_suggestion_probes(ctx: Ctx) -> None:
         distinct = shapes["control-suggestion"] != shapes["control-code"]
         ctx.observe("ts.suggestion_variants", "controls_distinguishable", distinct)
         for name, shape in shapes.items():
+            # a two-line body renders two addition rows: compare it with the two-line control
+            applicable = (
+                shapes["control-suggestion-2line"]
+                if name in bodies and "control-suggestion-2line" in shapes
+                else shapes["control-suggestion"]
+            )
             verdict = (
                 "indistinguishable"
                 if not distinct
                 else "applicable"
-                if shape == shapes["control-suggestion"]
+                if shape == applicable
                 else "code"
                 if shape == shapes["control-code"]
                 else "other"
@@ -726,7 +735,7 @@ def s_suggestion_probes(ctx: Ctx) -> None:
             if name in bodies:
                 verbatim = htmls[name].has_body(bodies[name])
                 ctx.observe("ts.suggestion_fence_body", f"{name}_body_verbatim", verbatim)
-            if name in ("control-suggestion", "longer-fence", "tilde-fence"):
+            if verdict in ("applicable", "other"):
                 # a tilde fence renders the widget but hid the line number, so its Apply is not
                 # proven by the shape alone: compare the cell with the line the comment is on
                 cells = htmls[name].line_cells()
