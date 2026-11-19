@@ -122,7 +122,7 @@ Each row is settled by a scenario or test, by a manual step, or both. Source is 
 | `sc.yes_dedupe` | #32 | `--yes` confirmation and the dedupe-key behavior against a live host. | scenario `dedupe` | - |
 | `sc.early_exit_post_path` | #32 | Early exit without reading stdin through the post path: pr-comment's exit code and envelope equal forgectl's status. | scenario `early_exit_stdin` | - |
 | `sc.sigpipe` | #32 | The early exit relies on SIGPIPE being ignored; the post path must not reset it. | scenario `early_exit_stdin` | - |
-| `sc.versions` | #32 | forgectl versions other than the pinned 0.55.2 (the run records the version it saw). | scenario `forgectl_reads` | Run the suite once per forgectl release the project supports (OPEN DECISION: the supported range) and keep the reports. |
+| `sc.versions` | #32 | forgectl versions other than the pinned 0.55.2 (the run records the version it saw). | scenario `forgectl_reads` | Run the suite once per forgectl 0.55.x release (the supported range, docs/interface.md) and keep the reports. |
 | `sc.macos_pipes` | #32 | Pipe buffer sizes on macOS. | - | On a Mac run `early_exit_stdin` and the offline stdin contract test. |
 | `th.not_found` | #35, #36 | A thread id that is not on the PR gives exit 10 `not_found` (pr-comment's own handling of the answer; no raw forgectl call probes forgectl's not_found separately). | scenario `gitlab_body_thread`<br>scenario `resolve_unresolve`<br>scenario `refusals` | - |
 | `th.changed_false` | #35 | A no-op on a thread reports `changed: false` (pr-comment's own result; forgectl's own answer for a repeated resolve is not probed separately). | scenario `gitlab_body_thread`<br>scenario `resolve_unresolve` | - |
