@@ -39,6 +39,7 @@ from pr_comment.assemble import (
     render_text_part,
 )
 from pr_comment.config import RepoSettings
+from pr_comment.draft import MAX_INLINE_COMMENTS
 from pr_comment.forge import Show
 from pr_comment.mentions import MentionNeutralizer
 from pr_comment.neutralize import TextCounts, count_parts
@@ -57,6 +58,18 @@ MOVED_REASONS: Final = (
 PATH_MARKER: Final = "<U+"
 FORGECTL: Final = "forgectl"
 ACTIONS: Final = ("review", "comment", "reply", "approve")
+
+
+class TooManyInlineComments(ValueError):
+    """The review would post more inline comments than forgectl accepts (``MAX_INLINE_COMMENTS``).
+    Counts what is sent: findings moved to the body or without a line are not inline comments."""
+
+    def __init__(self, count: int) -> None:
+        super().__init__(
+            f"the review would post more than {MAX_INLINE_COMMENTS} inline comments, "
+            "the most forgectl accepts in one review"
+        )
+        self.count = count
 
 
 # --- the plan --------------------------------------------------------------------------------
@@ -448,8 +461,9 @@ def build_review_plan(
     moves to the review body (the pre-check rounds: ``invalid_position``, ``files_incomplete``);
     a path holding ``<U+`` moves here too, as ``invalid_position`` (Position validation).
 
-    Raises ``ValueError`` for an id that is not an inline finding, and ``ConfigError`` for an
-    attribution line that does not start with a letter.
+    Raises ``ValueError`` for an id that is not an inline finding, ``TooManyInlineComments`` for
+    more inline comments than forgectl accepts, and ``ConfigError`` for an attribution line that
+    does not start with a letter.
     """
     extra = dict(extra_moves or {})
     show = ctx.show
@@ -477,6 +491,8 @@ def build_review_plan(
             raise ValueError("unknown moved reason")
         moves.append(Move(finding, reason, _anchor_of(finding, source.head_sha), source.order[fid]))
     moves.sort(key=lambda m: m.order)
+    if len(inline_findings) > MAX_INLINE_COMMENTS:
+        raise TooManyInlineComments(len(inline_findings))
 
     mentions = ctx.mentions()
     attribution = ctx.attribution(mentions, source.head_sha)
