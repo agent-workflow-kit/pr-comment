@@ -39,6 +39,10 @@ TARGET_KEYS: dict[str, str] = {
     "GITHUB_ENTERPRISE": "github",
     "GITLAB_SELFHOSTED": "gitlab",
 }
+# Every PR_COMMENT_* variable is dropped from the children's environment, so a forgectl token_env
+# named under that prefix never reaches forgectl. The token variables a forgectl config names are
+# PRCLIVE_TOKEN_<KEY> (KEY as in TARGET_KEYS): outside the prefix, so they pass through.
+TOKEN_ENV_PREFIX = "PRCLIVE_TOKEN_"
 PLACEHOLDER_REF = {"github": "github.com/acme/widgets#1", "gitlab": "gitlab.com/acme/widgets#1"}
 MIN_SECRET_LENGTH = 8  # a shorter value is not worth replacing: it would mangle ordinary text
 
@@ -52,9 +56,9 @@ REPO_ID_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*(?::[0-9]{1,5})?/[a-z0-9._-]+(?:/[
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 RUN_ID_RE = re.compile(r"^[a-z0-9]{6,24}$")
 _URL_RE = re.compile(
-    r"^https?://([A-Za-z0-9.-]+(?::[0-9]{1,5})?)/(.+?)/(?:-/)?(?:pull|merge_requests)/[0-9]+/?$"
+    r"^https?://([A-Za-z0-9.-]+(?::[0-9]{1,5})?)/(.+?)/(?:-/)?(?:pull|merge_requests)/([0-9]+)/?$"
 )
-_SHORT_RE = re.compile(r"^([A-Za-z0-9.-]+(?::[0-9]{1,5})?)/(.+)#[0-9]+$")
+_SHORT_RE = re.compile(r"^([A-Za-z0-9.-]+(?::[0-9]{1,5})?)/(.+)#([0-9]+)$")
 
 
 def _repo_id_ok(item: str) -> bool:
@@ -66,8 +70,22 @@ def _repo_id_ok(item: str) -> bool:
     return not any(part in (".", "..") for part in segments) and not item.endswith(".git")
 
 
+def token_env_name(key: str) -> str:
+    """The variable a forgectl ``token_env`` names for the target ``key`` (see TARGET_KEYS)."""
+    return f"{TOKEN_ENV_PREFIX}{key}"
+
+
 class LiveConfigError(Exception):
     """A setting the suite refuses; the message names variables, never their values."""
+
+
+def parse_ref(ref: str) -> tuple[str, str, int] | None:
+    """``(host, path, number)`` of a PR argument as written (path keeps its case), or None."""
+    for pattern in (_URL_RE, _SHORT_RE):
+        match = pattern.match(ref)
+        if match:
+            return match.group(1), match.group(2), int(match.group(3))
+    return None
 
 
 def repo_of_ref(ref: str) -> str | None:
@@ -127,6 +145,7 @@ class LiveSettings:
     approve: bool
     slow: bool
     cleanup_cmd: str | None
+    keep: bool
     fs_dir: Path | None
     gitlab_group: str | None
     run_id: str
@@ -228,9 +247,20 @@ def from_env(env: Mapping[str, str] | None = None) -> LiveSettings:
             problem(f"{name} is set but holds only whitespace")
         return value or None
 
+    for name in sorted(source):
+        if name.startswith("PR_COMMENT_") and "TOKEN" in name.upper():
+            problem(
+                f"{name} is dropped from every child environment (the PR_COMMENT_ prefix), so "
+                f"forgectl cannot read it: name the token_env {TOKEN_ENV_PREFIX}<KEY> instead"
+            )
+
     opted_in = get(OPT_IN) == "1"
     if get(OPT_IN) not in (None, "0", "1"):
         problem(f"{OPT_IN} must be 1 (to opt in) or unset")
+
+    keep_raw = get("PR_COMMENT_LIVE_KEEP")
+    if keep_raw not in (None, "0", "1"):
+        problem("PR_COMMENT_LIVE_KEEP must be 1 (to keep what the run posted), 0 or unset")
 
     mode = get("PR_COMMENT_LIVE_MODE") or "plan"
     if mode not in MODES:
@@ -351,6 +381,7 @@ def from_env(env: Mapping[str, str] | None = None) -> LiveSettings:
         approve=get("PR_COMMENT_LIVE_APPROVE") == "1",
         slow=get("PR_COMMENT_LIVE_SLOW") == "1",
         cleanup_cmd=cleanup,
+        keep=keep_raw == "1",
         fs_dir=fs_dir,
         gitlab_group=get("PR_COMMENT_LIVE_GITLAB_GROUP"),
         run_id=run_id,

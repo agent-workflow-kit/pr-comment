@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .cleanup import delete_posted
 from .errors import LiveFailure, LiveRefusal
 from .pty_run import kill_group, run_on_pty
 from .settings import (
@@ -197,6 +198,7 @@ class Runner:
         self.observations: list[dict[str, Any]] = []
         self.cleanups: list[Callable[[], None]] = []
         self.cleanup_timeout = 120.0
+        self.cleanup_call: Callable[..., Any] = subprocess.run  # the default cleanup's calls
         self._running: list[Running] = []
         workdir.mkdir(parents=True, exist_ok=True)
         self.state_home = workdir / "state"
@@ -346,7 +348,11 @@ class Runner:
             out = self.fg("verify-target", "show", "--json", ref)
             canonical = (out.doc or {}).get("repo") if out.real else None
             if not out.real or out.code != 0 or not isinstance(canonical, str):
-                raise LiveRefusal("forgectl show could not confirm a target's repo")
+                raise LiveRefusal(
+                    "forgectl show could not confirm a target's repo (if it found no credentials: "
+                    "a forgectl token_env must name a variable outside the PR_COMMENT_ prefix, "
+                    "such as PRCLIVE_TOKEN_<KEY>, which is dropped otherwise)"
+                )
             if not self.settings.target_allowed(canonical):
                 raise LiveRefusal("a target's canonical repo is not on PR_COMMENT_LIVE_ALLOW")
         self.verified.add(ref)
@@ -386,10 +392,23 @@ class Runner:
             if note not in self.carry_notes:
                 self.carry_notes.append(note)
 
-    def _ledger_ids(self, step: Step, ids: Sequence[str]) -> None:
+    def ledger_event(self, row: Mapping[str, str], status: str) -> None:
+        """Note in the ledger file what became of one posted id (the cleanup deleted it)."""
+        self._ledger_file({**row, "status": status})
+
+    def _ledger_ids(self, step: Step, ids: Sequence[str], unverified: str = "") -> None:
+        """Ledger the ids of a write. ``unverified`` says why they may not be this run's own
+        (read from text that is not a parsed answer, or reported as already posted): the default
+        cleanup lists such an id and never deletes it. An id already ledgered for the PR is kept
+        as it is and not written again."""
         ref = next((a for a in step.argv if a in self.verified), "")
+        known = {(r["pr"], r["id"]) for r in self.ledger}
         for item in dict.fromkeys(ids):
+            if (ref, item) in known:
+                continue
             row = {"run": self.settings.run_id, "scenario": step.scenario, "pr": ref, "id": item}
+            if unverified:
+                row["unverified"] = unverified
             self._ledger_file(row)
             self.ledger.append(row)
 
@@ -416,7 +435,10 @@ class Runner:
         if not (step.write and step.applied == "real"):
             return
         ids = landed_ids(doc)
-        self._ledger_ids(step, ids)
+        again = (
+            "the answer says already_posted" if (doc or {}).get("already_posted") is True else ""
+        )
+        self._ledger_ids(step, ids, again)
         error = (doc or {}).get("error")
         # resolve and unresolve of several threads exit 10/11/13/20 per thread and carry on, so
         # those exits do not prove that nothing changed
@@ -461,7 +483,10 @@ class Runner:
                 loaded = json.loads(text)
             except ValueError as exc:
                 if step.write and step.applied == "real":
-                    self._ledger_ids(step, ID_RE.findall(text))  # what can be read, before failing
+                    # what can be read, before failing: not a parsed answer, so not trusted
+                    self._ledger_ids(
+                        step, ID_RE.findall(text), "read from output that is not one JSON document"
+                    )
                 raise LiveFailure(
                     f"{step.label}: stdout is not one JSON document ({exc.__class__.__name__}); "
                     "first 200 characters: " + redact(text[:200], self.env)
@@ -787,10 +812,12 @@ class Runner:
         self.cleanups.clear()
         command = self.settings.cleanup_cmd
         for row in self.ledger:
-            if command is None:
-                notes.append(f"left on {row['pr']}: {row['id']} (set PR_COMMENT_LIVE_CLEANUP_CMD)")
-                continue
-            problem = self._run_cleanup_cmd(command, row["pr"], row["id"])
+            if self.settings.keep:
+                problem = f"left on {row['pr']!r}: {row['id']!r} (PR_COMMENT_LIVE_KEEP=1)"
+            elif command is not None:
+                problem = self._run_cleanup_cmd(command, row["pr"], row["id"])
+            else:
+                problem = delete_posted(self, row, self.cleanup_call)
             if problem:
                 notes.append(problem)
         for row in self.possible:

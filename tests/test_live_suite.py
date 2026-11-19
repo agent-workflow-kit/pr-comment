@@ -1240,3 +1240,119 @@ def test_changed_threads_count_as_landed_and_per_thread_exits_do_not_prove_nothi
 def test_the_checklist_says_the_cleanup_command_has_no_stored_login() -> None:
     text = checklist.render()
     assert "cleanup command runs under the same private `HOME`" in text
+
+
+# --- issue #92: the raw forgectl review calls pin the head and base ------------------------------
+
+
+def _the_fake_checks(argv: list[str]) -> None:
+    """What forgectl settles before it asks a host (the pinned fake reproduces the recorded
+    refusals); raises ``Fail`` for an argv forgectl refuses."""
+    from io import BytesIO
+
+    from tests import fake_forgectl as ff
+
+    ff.build_call(argv, {}, BytesIO(b'{"event":"comment","body":"x"}'))
+
+
+def test_every_raw_review_and_approve_call_pins_head_and_base_and_the_fake_refuses_them_without(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests import fake_forgectl as ff
+
+    NothingStarts(monkeypatch)
+    seen: set[str] = set()
+    for scenario, target in PLAN_CASES:
+        runner = run_scenario(
+            PLAN, scenario, target, tmp_path / _id((scenario, target)), env={"PATH": "/nonexistent"}
+        )
+        for step in runner.steps:
+            if step.tool != "forgectl" or step.argv[0] not in ("review", "approve"):
+                continue
+            seen.add(scenario.id)
+            _the_fake_checks(step.argv)
+            unpinned = [
+                a for a in step.argv if not a.startswith(("--expected-head", "--expected-base"))
+            ]
+            with pytest.raises(ff.Fail) as refused:
+                _the_fake_checks(unpinned)
+            assert refused.value.code == "usage"
+            assert "--expected-head and --expected-base" in str(refused.value)
+    assert {"forgectl_confirmation_order", "suggestion_probes"} <= seen
+
+
+def test_a_token_env_outside_the_stripped_prefix_reaches_forgectl_and_one_inside_does_not(
+    forgectl: FakeForgectl, tmp_path: Path
+) -> None:
+    from tests.live.settings import token_env_name
+
+    name = token_env_name("GITHUB")
+    env = forgectl.environ({name: "fake-token-value-1", "PR_COMMENT_LIVE_TOKEN_GITHUB": "other"})
+    forgectl.script(_show())
+    runner = Runner(settings_for("preflight", tmp_path), tmp_path / "work", env=env)
+    out = runner.fg("show", "show", "--json", h.PR)
+    assert out.code == 0
+    (call,) = forgectl.calls()
+    assert call.env.get(name) == "fake-token-value-1"
+    assert "PR_COMMENT_LIVE_TOKEN_GITHUB" not in call.env
+    assert not [k for k in call.env if k.startswith("PR_COMMENT_")]
+
+
+def test_the_refusal_after_a_failed_show_names_the_token_variable_pattern(
+    forgectl: FakeForgectl, tmp_path: Path
+) -> None:
+    forgectl.script(fail("show", "not_found"))
+    runner = Runner(settings_for("preflight", tmp_path), tmp_path / "work", env=forgectl.environ())
+    with pytest.raises(LiveRefusal, match=r"PRCLIVE_TOKEN_<KEY>"):
+        runner.verify_target(h.PR)
+
+
+def test_the_document_names_the_token_variable_pattern() -> None:
+    text = checklist.render()
+    assert "PRCLIVE_TOKEN_<KEY>" in text and "token_env" in text
+
+
+# --- issue #92, round 1: pins never hold a placeholder in run mode ------------------------------
+
+
+def _ctx_with_show(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, out: Outcome) -> Ctx:
+    settings = settings_for("run", tmp_path)
+    runner = Runner(settings, tmp_path / "work", env={"PATH": "/x"})
+    monkeypatch.setattr(runner, "fg", lambda *a, **k: out)
+    return Ctx(runner, settings.targets["GITHUB"], "t")
+
+
+def test_pins_in_run_mode_after_a_failed_show_raise_instead_of_pinning_placeholders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    failed = Outcome(Step("t", "show", "forgectl", [], False), 3, None, real=True)
+    ctx = _ctx_with_show(tmp_path, monkeypatch, failed)
+    with pytest.raises(LiveFailure, match="show"):
+        ctx.pins()
+
+
+def test_pins_in_run_mode_without_a_base_ref_raise_and_never_emit_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    doc = {"head": {"sha": "a" * 40}, "base": {}}
+    shown = Outcome(Step("t", "show", "forgectl", [], False), 0, doc, real=True)
+    ctx = _ctx_with_show(tmp_path, monkeypatch, shown)
+    with pytest.raises(LiveFailure, match="base"):
+        ctx.pins()
+
+
+def test_pins_from_a_good_show_name_its_head_and_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    doc = {"head": {"sha": "a" * 40}, "base": {"ref": "main"}}
+    shown = Outcome(Step("t", "show", "forgectl", [], False), 0, doc, real=True)
+    ctx = _ctx_with_show(tmp_path, monkeypatch, shown)
+    assert ctx.pins() == [f"--expected-head={'a' * 40}", "--expected-base=main"]
+    assert ctx.pins(head="b" * 40)[0] == f"--expected-head={'b' * 40}"
+
+
+def test_pins_in_plan_mode_use_placeholders_and_never_none(tmp_path: Path) -> None:
+    settings = settings_for("plan", tmp_path)
+    runner = Runner(settings, tmp_path / "work", env={"PATH": "/x"})
+    pins = Ctx(runner, settings.targets["GITHUB"], "t").pins()
+    assert pins == ["--expected-head=" + "0" * 40, "--expected-base=main"]
