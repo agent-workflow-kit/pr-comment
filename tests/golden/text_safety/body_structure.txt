@@ -55,7 +55,9 @@ Drafted with AI assistance · posted by `alice` after review · 0123456789ab
 ```
 open
 
-```suggestion
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
 x = 1
 ```
 
@@ -64,7 +66,9 @@ x = 1
 <p><strong>minor</strong></p>
 <pre><code>open
 
-```suggestion
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
 x = 1
 </code></pre>
 <!-- raw HTML omitted -->
@@ -541,7 +545,9 @@ Drafted with AI assistance · posted by `alice` after review · 0123456789ab
 ```mermaid
 graph TD; A-->B
 
-```suggestion
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
 x = 1
 ```
 
@@ -550,7 +556,9 @@ x = 1
 <p><strong>minor</strong></p>
 <pre lang="mermaid"><code>graph TD; A--&gt;B
 
-```suggestion
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
 x = 1
 </code></pre>
 <!-- raw HTML omitted -->
@@ -670,7 +678,9 @@ Drafted with AI assistance · posted by `alice` after review · 0123456789ab
 ~~~mermaid
 graph TD; A-->B
 
-```suggestion
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
 x = 1
 ```
 
@@ -679,7 +689,9 @@ x = 1
 <p><strong>minor</strong></p>
 <pre lang="mermaid"><code>graph TD; A--&gt;B
 
-```suggestion
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
 x = 1
 ```
 
@@ -808,7 +820,9 @@ Drafted with AI assistance · posted by `alice` after review · 0123456789ab
 > - ```
 >   open
 
-```suggestion
+_Suggestion shown as code: it cannot be posted as an applicable suggestion safely._
+
+```text
 x = 1
 ```
 
@@ -823,7 +837,8 @@ x = 1
 </li>
 </ul>
 </blockquote>
-<pre lang="suggestion"><code>x = 1
+<p><em>Suggestion shown as code: it cannot be posted as an applicable suggestion safely.</em></p>
+<pre lang="text"><code>x = 1
 </code></pre>
 <!-- raw HTML omitted -->
 <!-- raw HTML omitted -->

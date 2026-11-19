@@ -454,8 +454,11 @@ def violations(text: str, expect: Expect | None = None) -> list[str]:
         want = "".join(line + "\n" for line in lines)
         if len(suggestions) > 1 or any(s != (info, want) for s in suggestions):
             found.append("an applicable suggestion pr-comment did not write")
+        if not suggestions and is_suggestion_lang(info):
+            # issue #88: an applicable block is degraded when a body can leave a fence open
+            found.append("an applicable suggestion was swallowed by an open fence")
         if not suggestions:
-            # swallowed by an open fence of the body: inert, and it must then show as code
+            # a degraded or moved block inside an open fence of the body must show as code
             written = f"```{info}\n{want}"
             if not any(_unindented(written) in _unindented(n.text) for n in safe.nodes if n.in_pre):
                 found.append(

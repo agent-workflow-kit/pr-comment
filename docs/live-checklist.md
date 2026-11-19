@@ -149,7 +149,7 @@ Each row is settled by a scenario or test, by a manual step, or both. Source is 
 | `ts.degraded_suggestion` | #19 | A degraded suggestion is posted inline as a text block and is not applicable. | scenario `fence_limit`<br>scenario `review_suggestions` | - |
 | `ts.applicable_suggestion` | #22 | An applicable suggestion is stored with the host's own fence (`suggestion`, or GitLab's `suggestion:-N+0`). | scenario `review_suggestions` | Open the inline comment in the web UI and confirm the Apply suggestion button is there. |
 | `ts.moved_finding` | #9 | A finding whose line is not in the diff moves to the review body. | scenario `review_suggestions` | - |
-| `ts.suggestion_infostring` | #22 | Whether either host treats a `suggestion` info string after the first word as a suggestion (recorded, not asserted; OPEN DECISION: a suggestion swallowed by an open fence). | scenario `suggestion_probes` | - |
+| `ts.suggestion_infostring` | #22 | Whether either host treats a `suggestion` info string after the first word as a suggestion (recorded, not asserted). | scenario `suggestion_probes` | - |
 | `ts.suggestion_longer_fence` | #22 | Whether either host applies a suggestion with a fence longer than three backticks (decides whether the `fence` degrade can be dropped; recorded, not asserted). | scenario `suggestion_probes` | - |
 | `ts.suggestion_variants` | #22 | Tilde and indented suggestion fences (recorded). | scenario `suggestion_probes` | - |
 | `ts.mention_filters` | #22 | Neutral mentions, `a@user` and `1@user` do not link on either host; a literal mention does (the positive control). | scenario `mentions` | - |

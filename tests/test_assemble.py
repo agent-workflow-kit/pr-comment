@@ -505,9 +505,11 @@ def test_a_closed_body_fence_leaves_an_applicable_block_applicable() -> None:
     assert langs == ["", "suggestion"] or langs[-1] == "suggestion"
 
 
-def test_an_applicable_block_after_an_open_fence_is_inert_never_live() -> None:
+def test_a_suggestion_after_an_open_fence_degrades_as_open_fence_never_live() -> None:
     f = finding(body="x\n```\nopen", suggestion={"lines": ["# H", "y"]})
-    page = cmark(build_inline(render_inline_finding(f, mn(), host="github").text).text)
+    inline = render_inline_finding(f, mn(), host="github")
+    assert inline.degraded == "open_fence"
+    page = cmark(build_inline(inline.text).text)
     assert "<h1" not in page and 'lang="suggestion"' not in page
 
 

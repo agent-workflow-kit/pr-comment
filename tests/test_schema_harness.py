@@ -201,6 +201,8 @@ def test_non_json_file_under_schemas_fails(schema_dir: Path) -> None:
         load_schemas()
 
 
-@pytest.mark.parametrize("reason", ["invisible_chars", "fence", "slash_line", "dedupe_text"])
+@pytest.mark.parametrize(
+    "reason", ["invisible_chars", "fence", "slash_line", "dedupe_text", "open_fence"]
+)
 def test_degraded_entry_accepts_every_degrade_reason(reason: str) -> None:
     validate("pr-comment/defs.json#/$defs/degraded", {"id": "f1", "reason": reason})
