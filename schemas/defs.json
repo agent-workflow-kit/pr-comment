@@ -112,7 +112,8 @@
         "invisible_chars",
         "fence",
         "slash_line",
-        "dedupe_text"
+        "dedupe_text",
+        "open_fence"
       ]
     },
     "text_kind": {

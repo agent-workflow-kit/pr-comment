@@ -330,7 +330,7 @@ ROWS: tuple[Row, ...] = (
     _r(
         "ts.suggestion_infostring",
         "#22",
-        "Whether either host treats a `suggestion` info string after the first word as a suggestion (recorded, not asserted; OPEN DECISION: a suggestion swallowed by an open fence).",
+        "Whether either host treats a `suggestion` info string after the first word as a suggestion (recorded, not asserted).",
     ),
     _r(
         "ts.suggestion_longer_fence",

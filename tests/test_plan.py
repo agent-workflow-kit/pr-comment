@@ -386,6 +386,8 @@ def test_degraded_suggestions_are_collected_with_their_reasons() -> None:
             finding("f3", "c.py", 5, suggestion={"lines": ["/slash"]}),
             finding("f4", "d.py", 6, suggestion={"lines": ["a‮b"]}),
             finding("f5", "e.py", 7, suggestion={"lines": ["forgectl:dedupe:x"]}),
+            finding("f6", "f.py", 8, body="```\nopen", suggestion={"lines": ["y = 2"]}),
+            finding("f7", "g.py", 9, body="```\nclosed\n```", suggestion={"lines": ["z = 3"]}),
         ]
     )
     assert [(d.id, d.reason) for d in plan.suggestions_degraded] == [
@@ -393,8 +395,10 @@ def test_degraded_suggestions_are_collected_with_their_reasons() -> None:
         ("f3", "slash_line"),
         ("f4", "invisible_chars"),
         ("f5", "dedupe_text"),
+        ("f6", "open_fence"),
     ]
-    assert plan.counts["suggestions_degraded"] == 4
+    assert plan.counts["suggestions_degraded"] == 5
+    assert "```suggestion\nz = 3\n```" in plan.bodies[7].text
     assert "```suggestion\nok = 1\n```" in plan.bodies[1].text
 
 

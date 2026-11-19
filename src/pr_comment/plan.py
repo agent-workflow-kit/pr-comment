@@ -16,9 +16,9 @@ findings), then the inline comments in draft order.
 
 Counts (``Plan.counts``, the ``counts`` of schemas/defs.json) are taken over the untrusted parts as
 the pipeline gave them (after step 1, before step 3). Open decision 1: ``counts.links`` counts 0
-for ordinary and ``javascript:`` links, so it is not an upper bound. Open decision 2: an applicable
-suggestion swallowed by an open body fence is inert and silent (not in ``suggestions_degraded``).
-Open decision 3: a fullwidth ``＠`` passes unchanged.
+for ordinary and ``javascript:`` links, so it is not an upper bound. (The former open decision 2,
+a suggestion swallowed by an open body fence, is resolved: it degrades as ``open_fence``.) Open
+decision 3: a fullwidth ``＠`` passes unchanged.
 """
 
 from __future__ import annotations
