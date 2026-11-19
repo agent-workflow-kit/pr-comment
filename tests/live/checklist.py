@@ -389,7 +389,8 @@ ROWS: tuple[Row, ...] = (
     _r(
         "ts.line_separators",
         "#22",
-        "Whether hosts treat U+2028, U+2029, VT, FF and NEL as line breaks (cmark does not; D-21 and the goldens rely on that; recorded).",
+        "Whether hosts treat U+2028, U+2029, VT, FF and NEL as line breaks (observe: recorded, not asserted). cmark does not, and the first live run on GitHub did not match that expectation: the probe came back as line breaks (one `p` and six `br` in the rendered HTML), so the cmark-based expectation of no break was not observed to hold. The run did not separate the five characters, and forgectl itself splits on these characters and rejoins with LF (its neutralizing step 1), so the break may come from forgectl and not from the host: which of the two does it, and for which character, is still open. GitLab was not run.",
+        manual="Read the stored text of the probe comment (does it still hold the separator characters, or LF?) and, for each of the five characters alone between two words, the rendered HTML, to tell the host's doing from forgectl's.",
     ),
     _r(
         "ts.dedupe_line_format",
@@ -489,7 +490,15 @@ ENV_VARS: tuple[tuple[str, str], ...] = (
     ),
     (
         "PR_COMMENT_LIVE_CLEANUP_CMD",
-        "Optional absolute path of one existing executable file (no arguments) called as `<cmd> <pr> <forgectl id>` for every id the run posted, with the same private environment as the other children. Without it the ids are printed as left for a human.",
+        "Optional absolute path of one existing executable file (no arguments) called as `<cmd> <pr> <forgectl id>` for every id the run posted, with the same private environment as the other children. It replaces the default cleanup (which deletes general and inline comments on allowlisted repos through `gh` or `glab` and lists the rest).",
+    ),
+    (
+        "PR_COMMENT_LIVE_KEEP",
+        "`1` skips every cleanup: what the run posted stays on the host and is listed as left.",
+    ),
+    (
+        "PRCLIVE_TOKEN_<KEY>",
+        "Not read by the suite: the name to give a forgectl `token_env` (in the config of `PR_COMMENT_LIVE_FORGECTL_CONFIG`) for the target `<KEY>`. It must lie outside the `PR_COMMENT_` prefix, because every `PR_COMMENT_*` variable is dropped from the children's environment; the suite refuses a token variable under that prefix by name.",
     ),
     ("PR_COMMENT_LIVE_FORGECTL", "forgectl binary name or path (default `forgectl`)."),
     (
@@ -556,10 +565,10 @@ def render() -> str:
         "- Modes: `plan` (the default) calls nothing and prints every step; `preflight` runs reads and turns every write into a `--dry-run`; `run` writes. Steps that need an id only a real write produces are shown as `<name>` and are deferred in preflight; in `run` mode a step still holding such a placeholder fails the scenario. In plan mode a configured target must be on the allowlist like any other (a target with no `PR_COMMENT_LIVE_ALLOW` is a refused setting); only a plan with no target at all shows steps against placeholder repos, which need no allowlist because nothing is called."
     )
     w(
-        "- Isolation: pr-comment runs with its own config file, state directory and working directory, and a tap that logs each forgectl argv. Every `PR_COMMENT_*` variable is dropped; the rest of the environment reaches forgectl for its credentials and is never printed (secret-looking values of eight characters or more are redacted from every message, report and note). Unless `PR_COMMENT_LIVE_FORGECTL_CONFIG` is set, every child also gets a private `HOME` and `XDG_CONFIG_HOME`, so the developer's own `gh` or `glab` login is not found: forgectl's credentials must come from environment variables (for example `GH_TOKEN` or `GITLAB_TOKEN`) or from that config file. Each child runs in a process group of its own; on a timeout or an interrupt that exact group is killed."
+        "- Isolation: pr-comment runs with its own config file, state directory and working directory, and a tap that logs each forgectl argv. Every `PR_COMMENT_*` variable is dropped, so a forgectl `token_env` must name a variable outside that prefix: use `PRCLIVE_TOKEN_<KEY>` (`<KEY>` as under Variables, for example `PRCLIVE_TOKEN_GITHUB`), and a token variable under `PR_COMMENT_` is refused by name. The rest of the environment reaches forgectl for its credentials and is never printed (secret-looking values of eight characters or more are redacted from every message, report and note). Unless `PR_COMMENT_LIVE_FORGECTL_CONFIG` is set, every child also gets a private `HOME` and `XDG_CONFIG_HOME`, so the developer's own `gh` or `glab` login is not found: forgectl's credentials must come from environment variables (for example `GH_TOKEN` or `GITLAB_TOKEN`, or the `PRCLIVE_TOKEN_<KEY>` a `token_env` in your forgectl config names) or from that config file. Each child runs in a process group of its own; on a timeout or an interrupt that exact group is killed."
     )
     w(
-        "- Cleanup: every body carries the run's tag (`live-<run id>`) so what a run posted can be found. The ids it posted are written to `ledger-<run id>.jsonl` in the report directory and passed to `PR_COMMENT_LIVE_CLEANUP_CMD` when set. A write whose answer could not be read is listed as possibly posted (the entry is written before the write starts and kept after a timeout or an interrupt). Hosts cannot delete a submitted review or an approval, and a thread the suite resolved stays resolved; those are listed as left for a human. The cleanup command runs under the same private `HOME` as every other child, so it must authenticate through environment variables or `PR_COMMENT_LIVE_FORGECTL_CONFIG`, never through a stored `gh` or `glab` login in the real home. A cleanup command that is missing or times out is a note, never a failure that hides the scenario's own."
+        "- Cleanup: every body carries the run's tag (`live-<run id>`) so what a run posted can be found. The ids it posted are written to `ledger-<run id>.jsonl` in the report directory. A run leaves nothing behind by default: at the end of each scenario every id in the ledger is cleaned up, by `PR_COMMENT_LIVE_CLEANUP_CMD` when set, else by the default cleanup, which deletes the general comments and inline review comments (GitLab notes too) of a PR on the allowlist through `gh api graphql` or `glab api` (so `gh` or `glab` must be on `PATH` with a token in an environment variable such as `GH_TOKEN` or `GITLAB_TOKEN`) and writes a `deleted` row to the ledger for each. `PR_COMMENT_LIVE_KEEP=1` leaves everything for you to look at on the host. The expectation for a run against a real repo: run only against a throwaway repo (an archived one is fine afterwards), because what hosts cannot delete stays, and the notes at the end list each such item as left for a human: submitted reviews and approvals, review threads, and a thread the suite resolved. Anything the cleanup could not delete (no `gh`, a failed call, a repo off the allowlist) is listed too. A write whose answer could not be read is listed as possibly posted (the entry is written before the write starts and kept after a timeout or an interrupt). The cleanup command runs under the same private `HOME` as every other child, so it must authenticate through environment variables or `PR_COMMENT_LIVE_FORGECTL_CONFIG`, never through a stored `gh` or `glab` login in the real home. A cleanup command that is missing or times out is a note, never a failure that hides the scenario's own."
     )
     w(
         "- Idempotency: a run id fixes every draft id and dedupe key within one run (the dedupe and signal scenarios rely on it). Scenarios look only for comments with their own tag. A run id whose ledger or run-mode results already exist in the report directory is refused, so a second run cannot repeat the first one's writes by accident: use another run id or another report directory."

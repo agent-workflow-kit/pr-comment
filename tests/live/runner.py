@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .cleanup import delete_posted
 from .errors import LiveFailure, LiveRefusal
 from .pty_run import kill_group, run_on_pty
 from .settings import (
@@ -197,6 +198,7 @@ class Runner:
         self.observations: list[dict[str, Any]] = []
         self.cleanups: list[Callable[[], None]] = []
         self.cleanup_timeout = 120.0
+        self.cleanup_call: Callable[..., Any] = subprocess.run  # the default cleanup's calls
         self._running: list[Running] = []
         workdir.mkdir(parents=True, exist_ok=True)
         self.state_home = workdir / "state"
@@ -346,7 +348,11 @@ class Runner:
             out = self.fg("verify-target", "show", "--json", ref)
             canonical = (out.doc or {}).get("repo") if out.real else None
             if not out.real or out.code != 0 or not isinstance(canonical, str):
-                raise LiveRefusal("forgectl show could not confirm a target's repo")
+                raise LiveRefusal(
+                    "forgectl show could not confirm a target's repo (if it found no credentials: "
+                    "a forgectl token_env must name a variable outside the PR_COMMENT_ prefix, "
+                    "such as PRCLIVE_TOKEN_<KEY>, which is dropped otherwise)"
+                )
             if not self.settings.target_allowed(canonical):
                 raise LiveRefusal("a target's canonical repo is not on PR_COMMENT_LIVE_ALLOW")
         self.verified.add(ref)
@@ -385,6 +391,10 @@ class Runner:
             note = "the ledger file could not be written: the rows below are all there is"
             if note not in self.carry_notes:
                 self.carry_notes.append(note)
+
+    def ledger_event(self, row: Mapping[str, str], status: str) -> None:
+        """Note in the ledger file what became of one posted id (the cleanup deleted it)."""
+        self._ledger_file({**row, "status": status})
 
     def _ledger_ids(self, step: Step, ids: Sequence[str]) -> None:
         ref = next((a for a in step.argv if a in self.verified), "")
@@ -787,10 +797,12 @@ class Runner:
         self.cleanups.clear()
         command = self.settings.cleanup_cmd
         for row in self.ledger:
-            if command is None:
-                notes.append(f"left on {row['pr']}: {row['id']} (set PR_COMMENT_LIVE_CLEANUP_CMD)")
-                continue
-            problem = self._run_cleanup_cmd(command, row["pr"], row["id"])
+            if command is not None:
+                problem = self._run_cleanup_cmd(command, row["pr"], row["id"])
+            elif self.settings.keep:
+                problem = f"left on {row['pr']}: {row['id']} (PR_COMMENT_LIVE_KEEP=1)"
+            else:
+                problem = delete_posted(self, row, self.cleanup_call)
             if problem:
                 notes.append(problem)
         for row in self.possible:

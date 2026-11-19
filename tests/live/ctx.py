@@ -123,6 +123,17 @@ class Ctx:
             }
         return self._show
 
+    def pins(self, head: str | None = None) -> list[str]:
+        """``--expected-head`` and ``--expected-base`` for a raw forgectl ``review`` or ``approve``:
+        forgectl exits 2 ``usage`` without both unless the run is interactive, which a suite call is
+        not. The head is the target's current one unless ``head`` says otherwise."""
+        shown = self.show()
+        pinned = head or (shown.get("head") or {}).get("sha") or ZERO_SHA
+        return [
+            f"--expected-head={pinned}",
+            f"--expected-base={(shown.get('base') or {}).get('ref')}",
+        ]
+
     def whoami(self) -> dict[str, Any]:
         """This account on the target's host (``login``, ``id``)."""
         if self._whoami is None:
@@ -283,6 +294,7 @@ class Ctx:
             "-",
             "--actor",
             "auto:live-suite",
+            *self.pins(),
             stdin=json.dumps(document).encode("utf-8"),
             write=True,
         )

@@ -505,3 +505,27 @@ def test_a_run_id_after_a_preflight_in_the_same_directory_is_accepted(tmp_path: 
         env(PR_COMMENT_LIVE_REPORT_DIR=str(tmp_path), PR_COMMENT_LIVE_RUN_ID="abc123")
     )
     assert settings.problems == ()
+
+
+# --- issue #92: the token variable lives outside the stripped prefix -----------------------------
+
+
+def test_a_token_variable_under_the_stripped_prefix_is_refused_by_name_never_by_value() -> None:
+    secret = "ghp_not-a-real-token-0123456789"
+    settings = from_env(env(PR_COMMENT_LIVE_TOKEN_GH=secret))
+    refused = " ".join(settings.refusals())
+    assert "PR_COMMENT_LIVE_TOKEN_GH" in refused
+    assert "PRCLIVE_TOKEN_<KEY>" in refused
+    assert secret not in refused
+
+
+def test_a_token_variable_outside_the_prefix_is_fine() -> None:
+    settings = from_env(env(PRCLIVE_TOKEN_GITHUB="ghp_not-a-real-token-0123456789"))
+    assert settings.refusals() == []
+
+
+def test_the_token_variable_convention_is_one_named_pattern() -> None:
+    from tests.live.settings import TOKEN_ENV_PREFIX, token_env_name
+
+    assert not TOKEN_ENV_PREFIX.startswith("PR_COMMENT_")
+    assert token_env_name("GITHUB") == "PRCLIVE_TOKEN_GITHUB"

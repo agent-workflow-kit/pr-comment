@@ -1142,6 +1142,55 @@
    }
   },
   {
+   "name": "review-dry-run-needs-pins",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--dry-run"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"x\"}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review needs --expected-head and --expected-base unless the run is interactive (stdin and stderr terminals, a human actor, no --yes, no '-' input)"
+     }
+    },
+    "stderr": "forgectl: error: usage: review needs --expected-head and --expected-base unless the run is interactive (stdin and stderr terminals, a human actor, no --yes, no '-' input)\n"
+   }
+  },
+  {
+   "name": "review-dry-run-needs-head",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--dry-run",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"x\"}"
+   },
+   "expect": {
+    "exit": 2,
+    "stdout": {
+     "error": {
+      "code": "usage",
+      "message": "review needs --expected-head unless the run is interactive (stdin and stderr terminals, a human actor, no --yes, no '-' input)"
+     }
+    },
+    "stderr": "forgectl: error: usage: review needs --expected-head unless the run is interactive (stdin and stderr terminals, a human actor, no --yes, no '-' input)\n"
+   }
+  },
+  {
    "name": "approve-needs-pins",
    "argv": [
     "approve",
@@ -4361,6 +4410,26 @@
    ],
    "stdin": {
     "text": ""
+   },
+   "reaches_host": true,
+   "expect": {
+    "reaches_host": true
+   }
+  },
+  {
+   "name": "accept-review-dry-run-pins",
+   "argv": [
+    "review",
+    "--json",
+    "github.com/o/r#1",
+    "--file",
+    "-",
+    "--dry-run",
+    "--expected-head=0123456789abcdef0123456789abcdef01234567",
+    "--expected-base=main"
+   ],
+   "stdin": {
+    "text": "{\"event\":\"comment\",\"body\":\"x\"}"
    },
    "reaches_host": true,
    "expect": {

@@ -1240,3 +1240,73 @@ def test_changed_threads_count_as_landed_and_per_thread_exits_do_not_prove_nothi
 def test_the_checklist_says_the_cleanup_command_has_no_stored_login() -> None:
     text = checklist.render()
     assert "cleanup command runs under the same private `HOME`" in text
+
+
+# --- issue #92: the raw forgectl review calls pin the head and base ------------------------------
+
+
+def _raw_review_argvs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> list[list[str]]:
+    NothingStarts(monkeypatch)
+    runner = run_scenario(
+        PLAN, SCENARIOS[name], PLAN_CASES[0][1], tmp_path / name, env={"PATH": "/nonexistent"}
+    )
+    return [s.argv for s in runner.steps if s.tool == "forgectl" and s.argv[0] == "review"]
+
+
+def _the_fake_checks(argv: list[str]) -> None:
+    """What forgectl settles before it asks a host (the pinned fake reproduces the recorded
+    refusals); raises ``Fail`` for an argv forgectl refuses."""
+    from io import BytesIO
+
+    from tests import fake_forgectl as ff
+
+    ff.build_call(argv, {}, BytesIO(b'{"event":"comment","body":"x"}'))
+
+
+@pytest.mark.parametrize("name", ["forgectl_confirmation_order", "suggestion_probes"])
+def test_the_raw_review_calls_pin_head_and_base_and_the_fake_refuses_them_without(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests import fake_forgectl as ff
+
+    argvs = _raw_review_argvs(tmp_path, monkeypatch, name)
+    assert argvs
+    for argv in argvs:
+        _the_fake_checks(argv)
+        unpinned = [a for a in argv if not a.startswith(("--expected-head", "--expected-base"))]
+        with pytest.raises(ff.Fail) as refused:
+            _the_fake_checks(unpinned)
+        assert refused.value.code == "usage"
+        assert "--expected-head and --expected-base" in str(refused.value)
+
+
+def test_a_token_env_outside_the_stripped_prefix_reaches_forgectl_and_one_inside_does_not(
+    forgectl: FakeForgectl, tmp_path: Path
+) -> None:
+    from tests.live.settings import token_env_name
+
+    name = token_env_name("GITHUB")
+    env = forgectl.environ({name: "fake-token-value-1", "PR_COMMENT_LIVE_TOKEN_GITHUB": "other"})
+    forgectl.script(_show())
+    runner = Runner(settings_for("preflight", tmp_path), tmp_path / "work", env=env)
+    out = runner.fg("show", "show", "--json", h.PR)
+    assert out.code == 0
+    (call,) = forgectl.calls()
+    assert call.env.get(name) == "fake-token-value-1"
+    assert not [k for k in call.env if k.startswith("PR_COMMENT_")]
+
+
+def test_the_refusal_after_a_failed_show_names_the_token_variable_pattern(
+    forgectl: FakeForgectl, tmp_path: Path
+) -> None:
+    forgectl.script(fail("show", "not_found"))
+    runner = Runner(settings_for("preflight", tmp_path), tmp_path / "work", env=forgectl.environ())
+    with pytest.raises(LiveRefusal, match=r"PRCLIVE_TOKEN_<KEY>"):
+        runner.verify_target(h.PR)
+
+
+def test_the_document_names_the_token_variable_pattern() -> None:
+    text = checklist.render()
+    assert "PRCLIVE_TOKEN_<KEY>" in text and "token_env" in text
