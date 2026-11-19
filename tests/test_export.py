@@ -172,6 +172,29 @@ def test_audit_records_are_printed_as_jsonl_in_file_order(
     assert out.count("\n") == len(records)
 
 
+def test_a_write_closed_with_the_interrupted_code_is_exported_and_validates(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    closing = audit_rec(ATT1, "failed", T1)
+    closing["writes"][0]["result"] = "failed"
+    closing["writes"][0]["lower"] = {
+        "exit": 1,
+        "code": "interrupted",
+        "reason": None,
+        "ids": [],
+        "thread_ids": [],
+        "review_id": None,
+        "already_posted": None,
+    }
+    records = [audit_rec(ATT1, "attempted", T0), closing]
+    put("audit.jsonl", *records)
+    code, out, err = run(capsys, "--json")
+    assert (code, err) == (0, "")
+    document = json.loads(out)
+    validate("pr-comment/cli/export.json", document)
+    assert document == records
+
+
 def test_json_prints_one_array_that_validates_and_matches_the_golden(
     capsys: pytest.CaptureFixture[str], golden_json: Callable[[str, Any], None]
 ) -> None:
