@@ -777,6 +777,25 @@ def test_an_empty_or_non_utf8_comment_body_is_a_usage_error_with_no_call(
     assert check_outcome(caught.value.outcome).exit_code == 2 and gateway.calls == []
 
 
+@pytest.mark.parametrize("command", ["comment", "reply"])
+def test_an_over_cap_invisible_only_body_file_is_the_size_usage_error(
+    tmp_path: Path, command: str
+) -> None:
+    # 22000 zero width spaces are 66000 bytes: the 64 KiB read limit answers before the blank rule.
+    text = "\u200b" * 22000
+    gateway = PinnedGateway([])
+    with pytest.raises(RunFailure) as caught:
+        prepare(
+            request(command, body_file=body_file(tmp_path, text), to="gh:ic:IC_1"), env(gateway)
+        )
+    outcome = check_outcome(caught.value.outcome)
+    assert outcome.exit_code == 2 and gateway.calls == []
+    assert outcome.document is not None
+    assert outcome.document["error"]["message"] == (
+        "the body could not be read or is larger than 64 KiB"
+    )
+
+
 @pytest.mark.parametrize(
     ("text", "kind"),
     [
@@ -850,11 +869,12 @@ def test_an_approve_without_a_body_file_posts_the_attribution_and_the_marker() -
     assert gateway.calls[1].stdin == done.plan.input != b""
 
 
-def test_a_blank_approve_body_file_counts_as_no_body_file(tmp_path: Path) -> None:
+@pytest.mark.parametrize("text", [" \n\t\r\n", "\u200b", "\u3164\n", ""])
+def test_a_blank_approve_body_file_counts_as_no_body_file(tmp_path: Path, text: str) -> None:
     blank, _ = run(
         request(
             "approve",
-            body_file=body_file(tmp_path, " \n\t\r\n"),
+            body_file=body_file(tmp_path, text),
             expected_head=A,
             expected_base="main",
         ),
@@ -865,6 +885,22 @@ def test_a_blank_approve_body_file_counts_as_no_body_file(tmp_path: Path) -> Non
         request("approve", expected_head=A, expected_base="main"), show_reply(), dry_reply()
     )
     assert blank.plan.plan_sha256 == none.plan.plan_sha256
+    assert blank.plan.bodies[0].text == none.plan.bodies[0].text
+
+
+def test_an_approve_body_file_with_a_control_character_is_invalid_text_not_blank(
+    tmp_path: Path,
+) -> None:
+    error = error_of(
+        request(
+            "approve",
+            body_file=body_file(tmp_path, "\u200b\x00"),
+            expected_head=A,
+            expected_base="main",
+        )
+    )
+    assert error["code"] == "invalid_text"
+    assert error["details"] == {"pointer": "/body", "kind": "control_character"}
 
 
 def test_an_approve_checks_state_head_and_base(tmp_path: Path) -> None:
