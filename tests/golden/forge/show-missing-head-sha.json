@@ -4,7 +4,7 @@
     "decision_ids": [],
     "details": {
       "command": "show",
-      "lower_version": "forgectl 0.1.0"
+      "lower_version": "forgectl <pinned>"
     },
     "escalated_by": null,
     "escalated_hooks": null,

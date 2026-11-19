@@ -32,7 +32,7 @@ from typing import Any, BinaryIO, Final
 from pr_comment import approve, textpipe
 from pr_comment.config import ConfigError, LoadedConfig
 from pr_comment.diffmap import DiffMapper
-from pr_comment.draft import DraftError, load_draft, read_limited
+from pr_comment.draft import MAX_INLINE_COMMENTS, DraftError, load_draft, read_limited
 from pr_comment.errors import cut_bytes
 from pr_comment.forge import Forge, PostRead, Show, match_draft_pr
 from pr_comment.gateway import Gateway
@@ -42,6 +42,7 @@ from pr_comment.output import Outcome, error_outcome
 from pr_comment.plan import (
     Context,
     Plan,
+    TooManyInlineComments,
     build_review_plan,
     build_text_plan,
     review_source,
@@ -219,6 +220,10 @@ def _guarded(build: Callable[[Mapping[str, str]], Plan]) -> Callable[[Mapping[st
             return build(moves)
         except ConfigError as exc:
             raise _config_failure(exc) from None
+        except TooManyInlineComments as exc:
+            raise _usage(
+                str(exc), details={"limit": MAX_INLINE_COMMENTS, "inline_comments": exc.count}
+            ) from None
 
     return run
 

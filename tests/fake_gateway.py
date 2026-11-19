@@ -18,6 +18,10 @@ from tests import fake_forgectl
 
 Reply = ForgectlResult | Callable[["Call"], ForgectlResult] | BaseException
 
+# What ``forgectl --version`` prints for the release pinned in ``forgectl_pin.json`` (the single
+# source of the supported version; do not write the number again in a test).
+PINNED_LOWER_VERSION: str = f"forgectl {fake_forgectl.VERSION}"
+
 
 @dataclass(frozen=True)
 class Call:
@@ -40,7 +44,7 @@ class FakeGateway:
     def __init__(
         self,
         replies: Sequence[Reply] = (),
-        version: str | None = "forgectl 0.1.0",
+        version: str | None = PINNED_LOWER_VERSION,
         *,
         missing: ToolMissing | None = None,
     ) -> None:
@@ -104,7 +108,7 @@ class PinnedGateway(FakeGateway):
     ) -> None:
         super().__init__(
             replies,
-            version=f"forgectl {fake_forgectl.VERSION}" if version is None else version,
+            version=PINNED_LOWER_VERSION if version is None else version,
             missing=missing,
         )
         self.hosts = hosts or {}

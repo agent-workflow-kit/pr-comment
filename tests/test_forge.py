@@ -17,14 +17,14 @@ from pr_comment.grammars import GrammarError
 from pr_comment.lower import LowerFailure
 from pr_comment.output import check_outcome
 from tests import forgectl_harness as h
-from tests.fake_gateway import FakeGateway, PinnedGateway, ok
+from tests.fake_gateway import PINNED_LOWER_VERSION, FakeGateway, PinnedGateway, ok
 from tests.fakes import Tracker
 from tests.forgectl_harness import FakeForgectl
 from tests.schema_harness import validate
 
 PR = h.PR
 HEAD, OTHER, BASE = h.HEAD, h.OTHER_HEAD, h.BASE_SHA
-GATEWAY_VERSION = "forgectl 0.1.0"
+GATEWAY_VERSION = PINNED_LOWER_VERSION
 
 
 def raw(subcommand: str, stdout: bytes, exit_code: int = 0) -> ForgectlResult:
@@ -1378,9 +1378,16 @@ def test_a_huge_draft_pr_is_cut_in_the_details() -> None:
 # --- goldens and the config seam -----------------------------------------------------------------
 
 
+def unpinned(document: Any) -> Any:
+    """The document with the pinned release replaced by a placeholder, so a golden holds no copy
+    of the number in ``forgectl_pin.json``."""
+    text = json.dumps(document).replace(json.dumps(PINNED_LOWER_VERSION)[1:-1], "forgectl <pinned>")
+    return json.loads(text)
+
+
 def test_golden_outcomes(golden_json: Callable[[str, Any], None]) -> None:
     missing_head = failure_of(lambda f: f.show(PR), ok("show", without(h.show_doc(), "head.sha")))
-    golden_json("forge/show-missing-head-sha.json", missing_head.document)
+    golden_json("forge/show-missing-head-sha.json", unpinned(missing_head.document))
     cases = {
         "not-found": failing("show", 10, error_envelope("not_found", "no such PR")),
         "rate-limited": failing(
@@ -1392,7 +1399,8 @@ def test_golden_outcomes(golden_json: Callable[[str, Any], None]) -> None:
         ),
     }
     for name, reply in cases.items():
-        golden_json(f"forge/show-{name}.json", failure_of(lambda f: f.show(PR), reply).document)
+        document = failure_of(lambda f: f.show(PR), reply).document
+        golden_json(f"forge/show-{name}.json", unpinned(document))
     too_large = failing("diff", 20, error_envelope("refused", "too big", reason="too_large"))
     golden_json("forge/diff-too-large.json", failure_of(lambda f: f.diff(PR), too_large).document)
     stale = failure_of(lambda f: f.diff(PR, expect_head=OTHER), ok("diff", h.diff_doc()))
