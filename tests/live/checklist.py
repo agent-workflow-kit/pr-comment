@@ -346,7 +346,7 @@ ROWS: tuple[Row, ...] = (
     _r(
         "ts.suggestion_line_cell",
         "#103",
-        "The line-number cell of a rendered suggestion against the line the comment is on: `match`, `mismatch`, `hidden` (dots or empty, as GitHub showed for tilde fences), `hidden-class+match` or `hidden-class+mismatch` (the cell shows a real number but carries the hidden class, so the two signals disagree) or `absent`. Every form classed `applicable` or `other` is probed. A tilde suggestion is not proven applicable by its widget alone (recorded, not asserted).",
+        "The line-number cell of a rendered suggestion against the line the comment is on: `match`, `mismatch`, `hidden` (dots or empty, as GitHub showed for tilde fences), `hidden-class+match` or `hidden-class+mismatch` (the cell shows a real number but carries the hidden class, so the two signals disagree; the first live run decides which of these tilde fences produce, so any of `match`, `mismatch`, `hidden`, `hidden-class+match`, `hidden-class+mismatch` or `absent` may be recorded) or `absent`. Every form classed `applicable` or `other` is probed. A tilde suggestion is not proven applicable by its widget alone (recorded, not asserted).",
     ),
     _r(
         "ts.mention_filters",

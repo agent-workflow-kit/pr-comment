@@ -503,6 +503,53 @@ def test_a_rendered_suggestion_widget_has_a_verbatim_body_without_a_pre() -> Non
     assert html.has_body(["```x"]) is False
 
 
+def _widget(*cells: str) -> str:
+    rows = "".join(f"<tr><td class='blob-num blob-num-addition'></td>{cell}</tr>" for cell in cells)
+    return f"<table>{rows}</table>"
+
+
+@pytest.mark.parametrize(
+    "cells",
+    [
+        # inner class on a child span, addition class on the td
+        ['<td class="blob-code-addition"><span class="blob-code-inner">```</span></td>'] * 1
+        + ['<td class="blob-code-addition"><span class="blob-code-inner">x</span></td>'],
+        # addition class on a child span, inner class on the td
+        ['<td class="blob-code-inner"><span class="blob-code-addition">```</span></td>']
+        + ['<td class="blob-code-inner"><span class="blob-code-addition">x</span></td>'],
+        # padding newlines around the cell text
+        ['<td class="blob-code-inner blob-code-addition">\n```\n</td>']
+        + ['<td class="blob-code-inner blob-code-addition">\nx  \n</td>'],
+    ],
+)
+def test_addition_rows_are_found_in_each_class_layout(cells: list[str]) -> None:
+    assert helpers.Html(_widget(*cells)).has_body(["```", "x"]) is True
+
+
+def test_a_deletion_row_with_only_the_inner_class_is_not_an_addition() -> None:
+    cells = ['<td class="blob-code-inner blob-code-deletion"><span>```</span></td>']
+    assert helpers.Html(_widget(*cells)).has_body(["```"]) is False
+
+
+def test_leading_spaces_of_a_body_line_are_still_compared() -> None:
+    cell = '<td class="blob-code-inner blob-code-addition">\n  x\n</td>'
+    assert helpers.Html(_widget(cell)).has_body(["  x"]) is True
+    assert helpers.Html(_widget(cell)).has_body(["x"]) is False
+
+
+def test_a_body_spread_over_two_tables_is_not_verbatim() -> None:
+    cell = '<td class="blob-code-inner blob-code-addition">{}</td>'
+    source = _widget(cell.format("```")) + _widget(cell.format("x"))
+    assert helpers.Html(source).has_body(["```", "x"]) is False
+    assert helpers.Html(source).has_body(["x"]) is True
+
+
+def test_a_very_long_digit_string_is_not_a_line_number() -> None:
+    long = "9" * 19
+    assert helpers.Html(f'<td data-line-number="{long}"></td>').line_cells() == [long]
+    assert helpers.Html(f'<td data-line-number="{"1" * 18}"></td>').line_cells() == ["1" * 18]
+
+
 # --- stricter settings (review round 1) -----------------------------------------------------------
 
 

@@ -185,7 +185,9 @@ _HIDDEN_CLASS = "hidden-class:"
 def _normalized_number(value: str) -> str | None:
     """``"03"`` -> ``"3"`` for ASCII digits only; anything else is not a number."""
     value = value.strip()
-    return str(int(value)) if _ASCII_NUMBER.fullmatch(value) else None
+    if len(value) > 18 or not _ASCII_NUMBER.fullmatch(value):
+        return None
+    return str(int(value))
 
 
 class _Collector(HTMLParser):
@@ -195,13 +197,15 @@ class _Collector(HTMLParser):
         self.text: list[str] = []
         self.pre: list[str] = []  # the text of each closed outermost <pre> block
         self.cells: list[str] = []  # the line-number cells, in document order
-        self.rows: list[str] = []  # the text of each addition code cell of a rendered diff
+        # the text of each addition code cell of a rendered diff, grouped per <table>
+        self.groups: list[list[str]] = [[]]
         self._pre_depth = 0
         self._pre_buf = ""
         self._cell: list[str] | None = None  # text of the open numbered cell
         self._cell_attr = ""
         self._cell_hidden = False
         self._add: list[str] | None = None  # text of the open addition code cell
+        self._add_ok = False  # the open code cell is known to be an addition
 
     def _separate(self) -> None:
         if self._pre_depth and self._pre_buf and not self._pre_buf.endswith("\n"):
@@ -218,11 +222,17 @@ class _Collector(HTMLParser):
             self._pre_depth += 1
         elif tag in _BLOCK_TAGS:
             self._separate()
+        classes = values.get("class", "").split()
+        if tag == "table":
+            self.groups.append([])
+        elif tag not in ("td", "th") and self._add is not None:
+            if "blob-code-addition" in classes:
+                self._add_ok = True
         if tag in ("td", "th"):
-            classes = values.get("class", "").split()
-            if "blob-code-inner" in classes and "blob-code-addition" in classes:
+            if "blob-code-addition" in classes or "blob-code-inner" in classes:
                 if self._add is None:
                     self._add = []
+                    self._add_ok = "blob-code-addition" in classes
             elif self._cell is None and ("data-line-number" in values or "blob-num" in classes):
                 self._cell = []
                 # a hidden number (tilde fences) is marked by a class (an assumption about the host)
@@ -241,9 +251,11 @@ class _Collector(HTMLParser):
         self._cell = None
 
     def _flush_add(self) -> None:
-        if self._add is not None:
-            self.rows.append("".join(self._add))
-            self._add = None
+        if self._add is not None and self._add_ok:
+            # padding newlines around the cell and trailing spaces are not part of the body
+            self.groups[-1].append("".join(self._add).strip("\r\n").rstrip())
+        self._add = None
+        self._add_ok = False
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "pre" and self._pre_depth:
@@ -289,7 +301,7 @@ class Html:
         self.text = "".join(parser.text)
         self.pre = parser.pre
         self._cells = parser.cells
-        self._rows = parser.rows
+        self._groups = parser.groups
 
     def line_cells(self) -> list[str]:
         """The line-number cells of any rendered diff: the ``data-line-number`` value, else the
@@ -303,7 +315,9 @@ class Html:
         if not lines or any(not line or "\n" in line or "\r" in line for line in lines):
             return False
         sources = [block.splitlines() for block in self.pre]
-        sources.append([part for row in self._rows for part in (row.splitlines() or [""])])
+        sources.extend(
+            [part for row in group for part in (row.splitlines() or [""])] for group in self._groups
+        )
         width = len(lines)
         return any(
             list(lines) == source[i : i + width]
