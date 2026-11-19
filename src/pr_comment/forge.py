@@ -20,8 +20,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Sequence
-from dataclasses import replace
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
 from typing import Annotated, Any, Final, Literal, TypeVar
 
 from pydantic import (
@@ -457,26 +457,71 @@ class ResolveRead(_Model):
     dry_run: bool
 
 
-def read_resolve(document: Any, *, thread: str, pr: str, gateway: Gateway) -> ResolveRead:
-    """The checked result of a ``resolve`` that exited 0 (the GitLab body thread follow-up). A
-    document that is not a real run's answer for ``thread`` on ``pr``, or that does not say the
-    thread is resolved, is ``lower_contract_mismatch`` with the write's own pair (``landed:
-    true``: forgectl said it succeeded)."""
+@dataclass(frozen=True)
+class ResolveWording:
+    """What a mismatched ``resolve``/``unresolve`` answer says: one message per kind of mismatch
+    (the answer is not a real run's for this PR or action, is for another thread, or does not
+    carry the state asked for). A caller may use one message for all three."""
+
+    pr: str
+    thread: str
+    state: str
+
+
+def check_resolve_answer(
+    document: Any,
+    *,
+    command: str,
+    pr: str,
+    same_pr: Callable[[str, str], bool],
+    thread: str,
+    want_resolved: bool,
+    wording: ResolveWording,
+    gateway: Gateway,
+) -> ResolveRead:
+    """The one strict check of forgectl's answer to a ``resolve``/``unresolve`` that exited 0: a
+    real run's result (not a dry run's) of ``command`` for ``thread`` on ``pr``, in the asked state
+    (``resolved`` is ``want_resolved``). Anything else is ``lower_contract_mismatch`` with the
+    write's own pair (``landed: true``: forgectl said it succeeded), never a retry. ``same_pr``
+    compares the answer's PR with ``pr``; each caller keeps its own reading of PR equality."""
 
     def mismatch(why: str) -> LowerFailure:
-        return LowerFailure(mismatch_outcome("resolve", why, gateway=gateway, write=(True, "none")))
+        return LowerFailure(mismatch_outcome(command, why, gateway=gateway, write=(True, "none")))
 
     try:
         read = ResolveRead.model_validate(document)
     except ValidationError as exc:
         raise mismatch(_why(exc)) from None
-    if read.action != "resolve" or read.dry_run or _canonical(read.pr) != _canonical(pr):
-        raise mismatch("the document is not the real run's result for this PR")
+    if read.action != command or read.dry_run or not same_pr(read.pr, pr):
+        raise mismatch(wording.pr)
     if read.thread_id != thread:
-        raise mismatch("the document is for another thread")
-    if read.resolved is not True:
-        raise mismatch("the thread is not resolved")
+        raise mismatch(wording.thread)
+    if read.resolved is not want_resolved:
+        raise mismatch(wording.state)
     return read
+
+
+_BODY_THREAD_WORDING: Final = ResolveWording(
+    pr="the document is not the real run's result for this PR",
+    thread="the document is for another thread",
+    state="the thread is not resolved",
+)
+
+
+def read_resolve(document: Any, *, thread: str, pr: str, gateway: Gateway) -> ResolveRead:
+    """The checked result of a ``resolve`` that exited 0 (the GitLab body thread follow-up). A
+    document that is not a real run's answer for ``thread`` on ``pr``, or that does not say the
+    thread is resolved, is ``lower_contract_mismatch`` (see ``check_resolve_answer``)."""
+    return check_resolve_answer(
+        document,
+        command="resolve",
+        pr=pr,
+        same_pr=lambda answered, asked: _canonical(answered) == _canonical(asked),
+        thread=thread,
+        want_resolved=True,
+        wording=_BODY_THREAD_WORDING,
+        gateway=gateway,
+    )
 
 
 def _why(exc: ValidationError) -> str:
