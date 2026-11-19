@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from tests.deadlines import short_write_deadline  # noqa: F401  (a fixture)
 from tests.fakes import Tracker
 from tests.forgectl_harness import FakeForgectl
 from tests.golden_harness import check_golden, refuse_regen_in_ci, render_json

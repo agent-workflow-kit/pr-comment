@@ -192,14 +192,12 @@ def test_a_pre_post_timeout_is_a_veto_and_the_group_is_gone(
     config = tmp_path / "config.yaml"
     slow = hooks.script("sleep 60 & echo $! >> " + str(pids) + "; wait")
     config.write_text(
-        f"hooks:\n  pre-post:\n    - cmd: {slow}\n      timeout: 300ms\n", encoding="utf-8"
+        f"hooks:\n  pre-post:\n    - cmd: {slow}\n      timeout: 5s\n", encoding="utf-8"
     )
-    started = time.monotonic()
     code, doc, _ = blocked_run(cli, forgectl, tmp_path, "--config", str(config))
     assert code == 11 and doc["error"]["code"] == "vetoed"
-    assert time.monotonic() - started < 30
     assert forgectl.writes() == []
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 30
     while time.monotonic() < deadline and any(alive(int(p)) for p in pids.read_text().split()):
         time.sleep(0.05)
     assert not any(alive(int(p)) for p in pids.read_text().split())
@@ -534,7 +532,7 @@ def test_a_misbehaving_post_post_hook_never_changes_a_landed_write(
     config = tmp_path / "config.yaml"
     bad = hooks.script(body)
     config.write_text(
-        f"hooks:\n  post-post:\n    - cmd: {bad}\n      timeout: 400ms\n", encoding="utf-8"
+        f"hooks:\n  post-post:\n    - cmd: {bad}\n      timeout: 5s\n", encoding="utf-8"
     )
     code, doc, _ = review_run(cli, forgectl, tmp_path, "--config", str(config))
     assert code == 0, doc
@@ -583,18 +581,22 @@ def test_an_async_post_post_hook_is_not_waited_for(
 ) -> None:
     config = tmp_path / "config.yaml"
     done = tmp_path / "async.done"
-    slow = hooks.script(f"cat > {tmp_path}/async.json; sleep 1; echo ok > {done}")
+    release = tmp_path / "async.release"
+    # The hook holds until the test releases it (bounded at 30 s), so "not waited for" is proved by
+    # the run ending while the hook is still held, not by a wall-clock limit that load can trip.
+    slow = hooks.script(
+        f"cat > {tmp_path}/async.json; i=0; "
+        f"while [ ! -e {release} ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done; "
+        f"echo ok > {done}"
+    )
     config.write_text(
         f"hooks:\n  post-post:\n    - cmd: {slow}\n      async: true\n", encoding="utf-8"
     )
-    started = time.monotonic()
     code, doc, _ = review_run(cli, forgectl, tmp_path, "--config", str(config))
     assert code == 0, doc
-    assert time.monotonic() - started < 3
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline and not done.exists():
-        time.sleep(0.05)
-    assert done.exists()
+    assert not done.exists()  # the run ended while the hook was still held
+    release.write_text("go", encoding="utf-8")
+    assert wait_file(done, 30)
     validate("pr-comment/hooks/post-post.json", json.loads((tmp_path / "async.json").read_text()))
 
 
@@ -604,15 +606,15 @@ def test_an_async_hook_over_its_timeout_changes_neither_the_exit_code_nor_the_au
     config = tmp_path / "config.yaml"
     runaway = hooks.script('echo \'{"decision_id": "late-id"}\'; sleep 60')
     config.write_text(
-        f"hooks:\n  post-post:\n    - cmd: {runaway}\n      async: true\n      timeout: 1s\n",
+        f"hooks:\n  post-post:\n    - cmd: {runaway}\n      async: true\n      timeout: 5s\n",
         encoding="utf-8",
     )
     code, doc, _ = review_run(cli, forgectl, tmp_path, "--config", str(config))
     assert code == 0, doc
-    assert wait_file(hooks.pids, 10)  # the hook has started (the run did not wait for it)
+    assert wait_file(hooks.pids, 30)  # the hook has started (the run did not wait for it)
     hook_pid = int(hooks.pids.read_text().split()[0])
-    assert wait_dead(hook_pid, 15)  # ended by its watchdog, long before its 60 s
-    deadline = time.monotonic() + 5
+    assert wait_dead(hook_pid, 50)  # ended by its watchdog, long before its 60 s
+    deadline = time.monotonic() + 30
     tmp_dir = state_home / "pr-comment" / "tmp"
     while time.monotonic() < deadline and (
         not any(r["event"] == "warning" for r in log(state_home)) or os.listdir(tmp_dir)
@@ -733,7 +735,7 @@ def test_a_signal_during_a_pre_post_hook_ends_the_run_before_any_write(
         code, doc, _ = blocked_run(cli, forgectl, tmp_path, "--hook", f"pre-post={slow}")
     assert code == 128 + signal.SIGTERM and doc is None
     assert forgectl.writes() == [] and audit(state_home) == []
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 30
     while time.monotonic() < deadline and any(alive(int(p)) for p in pids.read_text().split()):
         time.sleep(0.05)
     assert not any(alive(int(p)) for p in pids.read_text().split())

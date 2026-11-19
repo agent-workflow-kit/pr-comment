@@ -181,14 +181,14 @@ def test_binary_rename_with_spaces_and_quotes_agrees() -> None:
 
 
 def test_binary_line_with_many_and_separators_is_read_in_linear_time() -> None:
-    started = time.monotonic()
+    started = time.process_time()  # CPU time: descheduling under load is not counted
     for repeat in (500, 5000):  # under the line cap, then over it
         unit = " and b/x"
         line = f"Binary files a/x{unit * repeat} differ\n"
         ambiguous(f"diff --git a/x b/x\n{line}")
     for size in (20_000, 100_000):
         ambiguous(f"diff --git a/x b/x\nBinary files a/{'x and ' * size} differ\n")
-    assert time.monotonic() - started < 2
+    assert time.process_time() - started < 1  # linear: ~0.002 s; quadratic is minutes
 
 
 def test_overlong_header_lines_are_ambiguous() -> None:
@@ -672,10 +672,10 @@ def test_ambiguity_error_names_line_and_reason_without_echoing_content() -> None
 def test_huge_hunk_parses_quickly() -> None:
     n = 300_000
     body = f"@@ -1,{n} +1,{n} @@\n" + "".join(f" line{i}\n" for i in range(n))
-    started = time.monotonic()
+    started = time.process_time()  # CPU time: descheduling under load is not counted
     (hunk,) = only(text_diff("a/f", "b/f", body)).hunks
     assert len(hunk.lines) == n
-    assert time.monotonic() - started < 5
+    assert time.process_time() - started < 5  # linear: ~0.25 s; quadratic is minutes
 
 
 def test_many_sections_parse() -> None:
