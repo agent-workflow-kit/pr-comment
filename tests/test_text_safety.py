@@ -112,9 +112,12 @@ def test_the_oracle_flags_a_processing_instruction_that_swallows_the_marker() ->
 
 def test_the_oracle_exempts_only_the_exact_written_suggestion_block() -> None:
     expect = Expect(suggestion=(("@victim",), "suggestion"))
-    # swallowed by an open fence of the body: the written block is the tail of the code block
+    # swallowed by an open fence of the body: the written block is the tail of the code block;
+    # no live mention, but since #88 the pipeline never writes an applicable block there
     swallowed = "```\nopen\n\n```suggestion\n@victim\n```\n\n" + MARKER
-    assert violations(swallowed, expect) == []
+    assert violations(swallowed, expect) == [
+        "an applicable suggestion was swallowed by an open fence"
+    ]
     # the body's own line equal to a suggestion line is a live mention
     forged = "```\n@victim\n\n```suggestion\n@victim\n```\n\n" + MARKER
     assert "live mention (safe rendering)" in violations(forged, expect)
@@ -563,21 +566,20 @@ def test_decision_1_cmark_gfm_drops_the_javascript_href_itself() -> None:
     assert count_text("[x](javascript:alert(1))").links >= 1
 
 
-def test_decision_2_a_suggestion_swallowed_by_an_open_body_fence_is_inert_and_silent() -> None:
-    """characterizes open decision 2: an applicable suggestion after a body that leaves a fence
-    open is shown as code and not applied, and nothing reports it (``degraded`` is None)."""
+def test_a_suggestion_after_an_open_body_fence_is_degraded_and_reported() -> None:
+    """issue #88: a suggestion that a fence left open by the body would swallow is written as a
+    ``text`` block (never an applicable block) and reported as ``open_fence``."""
     (case,) = [c for c in ALL_CASES if c.name == "open_fence/inline_body"]
     review_body, inline = run_case(case)
     assert suggestion_blocks(inline) == []
     code = [text for lang, text in parse(render_safe(inline.text)).pres]
-    # the body's open fence ends at the suggestion's own closing fence
-    assert len(code) == 1 and code[0].endswith("```suggestion\nx = 1\n")
+    # the body's open fence ends at the degraded block's own closing fence
+    assert len(code) == 1 and code[0].endswith("```text\nx = 1\n")
     assert case.document is not None
     result = render_inline_finding(
         case.document["findings"][0], MentionNeutralizer(), host="github"
     )
-    assert result.degraded is None
-    # the swallowed suggestion text is inside the code block, as the oracle requires
+    assert result.degraded == "open_fence"
     assert "x = 1" in code[0]
 
 
