@@ -14,9 +14,101 @@ import pytest
 from pr_comment.textpipe import (
     CONTROL_CHARACTER,
     SUGGESTION_FENCE,
+    is_blank_text,
     normalize_lines,
     text_problem,
 )
+
+# Whitespace (str.isspace) that is not a step 1 separator, and characters forgectl's Sanitizing
+# marks as invisible (Cf, Co, Cn, variation selectors, the listed fillers), alone or mixed.
+BLANK_WHITESPACE = [
+    " ",
+    "\t",
+    "\u00a0",
+    "\u1680",
+    "\u2000",
+    "\u200a",
+    "\u202f",
+    "\u205f",
+    "\u3000",
+]
+BLANK_INVISIBLE = [
+    "\u00ad",  # soft hyphen (Cf)
+    "\u034f",  # combining grapheme joiner
+    "\u061c",  # Arabic letter mark (Cf)
+    "\u115f",  # Hangul choseong filler
+    "\u1160",  # Hangul jungseong filler
+    "\u17b4",
+    "\u17b5",
+    "\u180b",
+    "\u180e",  # Mongolian vowel separator (Cf)
+    "\u200b",  # zero width space (Cf)
+    "\u200c",
+    "\u200d",
+    "\u200e",
+    "\u202e",  # right-to-left override (Cf)
+    "\u2060",  # word joiner (Cf)
+    "\u2800",  # braille pattern blank (So, listed)
+    "\u3164",  # Hangul filler (Lo, listed)
+    "\ufe0f",  # variation selector 16
+    "\ufeff",  # BOM (Cf)
+    "\uffa0",  # halfwidth Hangul filler
+    "\U000e0100",  # variation selector 17
+    "\ue000",  # private use (Co)
+    "\u0378",  # unassigned (Cn)
+]
+BLANK_CHARS = BLANK_WHITESPACE + BLANK_INVISIBLE
+
+
+@pytest.mark.parametrize("char", BLANK_CHARS)
+def test_a_blank_character_alone_is_blank_text(char: str) -> None:
+    assert is_blank_text(char)
+    assert is_blank_text(char * 5)
+
+
+@pytest.mark.parametrize(
+    "separator",
+    ["\n", "\r\n", "\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"],
+)
+def test_every_step_1_separator_alone_is_blank_text(separator: str) -> None:
+    assert is_blank_text(separator)
+
+
+def test_the_empty_text_is_blank() -> None:
+    assert is_blank_text("")
+
+
+def test_every_blank_character_mixed_is_blank_text() -> None:
+    assert is_blank_text("".join(BLANK_CHARS) + "\n\r\n\x85")
+
+
+@pytest.mark.parametrize("char", BLANK_CHARS)
+def test_one_visible_character_among_blank_ones_is_not_blank(char: str) -> None:
+    assert not is_blank_text(f"{char}a{char}")
+    assert not is_blank_text(f"\n{char}é")
+    assert not is_blank_text("".join(BLANK_CHARS) + "." + "".join(BLANK_CHARS))
+
+
+@pytest.mark.parametrize("char", ["a", "0", "é", "中", "\U0001f600", "•", "\ufffc"])
+def test_visible_characters_are_not_blank(char: str) -> None:
+    assert not is_blank_text(char)
+
+
+@pytest.mark.parametrize("char", ["\x00", "\x08", "\x1b", "\x7f", "\x9f", "\ud800"])
+def test_a_forbidden_character_is_not_blank_so_step_1_names_it(char: str) -> None:
+    """Cc other than tab and LF, and Cs, are refused by step 1 with their own kind."""
+    assert not is_blank_text(char)
+    assert not is_blank_text(f" {char} ")
+
+
+def test_a_large_invisible_only_text_is_blank_and_one_visible_character_is_not() -> None:
+    unit = "".join(BLANK_CHARS) + "\n"
+    blank = unit * (1_000_000 // len(unit))
+    assert is_blank_text(blank)
+    assert not is_blank_text(blank + "x")
+    assert not is_blank_text("x" + blank)
+    assert not is_blank_text(blank + "\x00")
+
 
 SEPARATORS = ["\n", "\r\n", "\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", " ", " "]
 

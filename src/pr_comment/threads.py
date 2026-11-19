@@ -44,8 +44,6 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Final
 
-from pydantic import BaseModel, ConfigDict, ValidationError
-
 from .audit import (
     AuditInputs,
     AuditUnavailableError,
@@ -58,7 +56,7 @@ from .audit import (
 )
 from .confirm import GUTTER, Interrupted, _gutter, confirm_with, encodable
 from .display import sanitize_line
-from .forge import Forge, Pr, Show, _why
+from .forge import Forge, ResolveRead, ResolveWording, Show, check_resolve_answer
 from .gateway import (
     ForgectlInterrupted,
     ForgectlResult,
@@ -78,7 +76,7 @@ from .hooks import (
     run_post,
     run_pre,
 )
-from .lower import LowerFailure, mismatch_outcome, require_ok, tool_missing_outcome
+from .lower import LowerFailure, require_ok, tool_missing_outcome
 from .output import LOG, Outcome, error_outcome
 from .plan import empty_counts
 from .post import (
@@ -354,52 +352,36 @@ def confirm_threads(run: ThreadRun, *, stdin_fd: int, write: Callable[[str], Non
 # --- the write ---------------------------------------------------------------------------------
 
 
-class _ThreadWrite(BaseModel):
-    """The fields of a real ``resolve``/``unresolve`` result pr-comment uses (forgectl
-    ``cli/resolve.json``)."""
-
-    model_config = ConfigDict(strict=True, frozen=True, extra="ignore")
-
-    pr: Pr
-    action: str
-    thread_id: str
-    resolved: bool | None
-    changed: bool
-    dry_run: bool
-
-
 @dataclass(frozen=True)
 class _Lowered:
-    read: _ThreadWrite | None
+    read: ResolveRead | None
     failure: Outcome | None
     lower: LowerResult
 
 
+_THREAD_WORDING: Final = ResolveWording(
+    pr="the document is not the real run's result for this thread",
+    thread="the document is not the real run's result for this thread",
+    state="the document is not the real run's result for this thread",
+)
+
+
 def _checked_answer(
     document: Any, request: ThreadRequest, item: Item, show: Show, gateway: Gateway
-) -> _ThreadWrite:
+) -> ResolveRead:
     """The checked result of a write that exited 0. An answer that is not a real run's for this
     PR, thread and action is ``lower_contract_mismatch`` with ``landed: true`` (forgectl said it
-    succeeded), never a retry."""
-
-    def mismatch(why: str) -> LowerFailure:
-        return LowerFailure(
-            mismatch_outcome(request.command, why, gateway=gateway, write=(True, "none"))
-        )
-
-    try:
-        read = _ThreadWrite.model_validate(document)
-    except ValidationError as exc:
-        raise mismatch(_why(exc)) from None
-    if (
-        read.action != request.command
-        or read.dry_run
-        or read.pr != show.pr
-        or read.thread_id != item.thread_id
-        or read.resolved is not request.want_resolved
-    ):
-        raise mismatch("the document is not the real run's result for this thread")
-    return read
+    succeeded), never a retry (``check_resolve_answer``)."""
+    return check_resolve_answer(
+        document,
+        command=request.command,
+        pr=show.pr,
+        same_pr=lambda answered, asked: answered == asked,
+        thread=item.thread_id,
+        want_resolved=request.want_resolved,
+        wording=_THREAD_WORDING,
+        gateway=gateway,
+    )
 
 
 def _name_the_thread(outcome: Outcome, thread_id: str) -> Outcome:
@@ -658,9 +640,9 @@ def write_threads(run: ThreadRun, env: PostEnv) -> Outcome:
                 attempted = True
                 if held.received:
                     # A signal arrived during the ``attempted`` append: nothing was sent and
-                    # nothing will be. Close the pair as a failed write (exit 1, ``internal``),
+                    # nothing will be. Close the pair as a failed write (exit 1, ``interrupted``),
                     # then end ``128 + signum`` with no document.
-                    unsent = LowerResult(exit=1, code="internal", reason=None)
+                    unsent = LowerResult(exit=1, code="interrupted", reason=None)
                     write = WriteRecord.from_lower(
                         index, format_ts(now_utc()), request.command, item.thread_id, None, unsent
                     )

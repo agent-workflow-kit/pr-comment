@@ -327,6 +327,24 @@ RULES: list[tuple[str, Mutator, str, bool]] = [
         False,
     ),
     (
+        "finding-body-nbsp-only",
+        _set(["findings", 0, "body"], "\u00a0"),
+        "/findings/0/body",
+        False,
+    ),
+    (
+        "finding-body-invisible-only",
+        _set(["findings", 1, "body"], "\u200b\ufeff\u3000\u3164\u2800"),
+        "/findings/1/body",
+        False,
+    ),
+    (
+        "unanchored-body-invisible-only",
+        _set(["unanchored", 0, "finding", "body"], "\u2800\u3164 \n\u200b"),
+        "/unanchored/0/finding/body",
+        False,
+    ),
+    (
         "finding-body-blank-and-over-cap",
         _set(["findings", 0, "body"], " " * 65537),
         "/findings/0/body",
@@ -458,11 +476,37 @@ def test_rule_refuses_with_pointer(
         assert error["message"]
 
 
-@pytest.mark.parametrize("body", ["a", "\na\n", " a ", " ", "​", "　", "﻿"])
-def test_finding_body_with_a_non_blank_character_is_accepted(body: str) -> None:
-    """Only line separators, space and tab are blank; other whitespace is left to the maintainer."""
+@pytest.mark.parametrize(
+    "body",
+    ["a", "\na\n", " a ", "\u00a0a", "\u200bx\u200b", "\u3000.\u3164", "\u2800a\u2800", "\ufeffé"],
+)
+def test_finding_body_with_a_visible_character_is_accepted(body: str) -> None:
     doc = good()
     doc["findings"][0]["body"] = body
+    assert validate_document(doc) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["\u00a0", "\u200b", "\ufeff", "\u3000", "\u3164", "\u2800", "\u00a0\u200b\u2800 \n"],
+)
+def test_finding_and_unanchored_bodies_of_invisible_characters_only_are_refused(body: str) -> None:
+    """One predicate (issue #89): whitespace and invisible characters are blank for both."""
+    doc = good()
+    doc["findings"][0]["body"] = body
+    doc["unanchored"][0]["finding"]["body"] = body
+    assert validate_document(doc) == [
+        {"pointer": "/findings/0/body", "message": "must contain a character that is not blank"},
+        {
+            "pointer": "/unanchored/0/finding/body",
+            "message": "must contain a character that is not blank",
+        },
+    ]
+
+
+def test_the_review_body_may_still_be_blank() -> None:
+    doc = good()
+    doc["body"] = "\u00a0\u200b"
     assert validate_document(doc) == []
 
 

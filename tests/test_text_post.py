@@ -347,6 +347,7 @@ HOSTILE = [
     "line\n\n\n    indented\n```\nunclosed fence",
     "unicode: ünï ｅｖｉｌ 日本語 🙂 ‮ rtl",
     "a" * 60000,
+    "\u200b\u3164\u00a0x\u2800\ufeff",  # one visible character among blank ones is accepted
     "'; DROP TABLE x; -- $(rm -rf /) `id` {{7*7}}",
 ]
 
@@ -395,7 +396,25 @@ def test_a_bad_body_exits_2_with_nothing_sent_or_recorded(
 
 
 @pytest.mark.parametrize("kind", KINDS)
-@pytest.mark.parametrize("text", ["\n", "\r\n", "  ", "  \n\n", "\x0b", "\u0085", "  \t"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "\n",
+        "\r\n",
+        "  ",
+        "  \n\n",
+        "\x0b",
+        "\u0085",
+        "  \t",
+        "\u00a0",
+        "\u200b",
+        "\ufeff",
+        "\u3000",
+        "\u3164",
+        "\u2800",
+        "\u200b\u3164\u2800 \n\u00a0",
+    ],
+)
 def test_a_whitespace_only_body_is_empty_and_exits_2_with_nothing_sent_or_recorded(
     cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path, kind: str, text: str
 ) -> None:
@@ -1108,6 +1127,9 @@ def test_a_signal_while_attempted_is_appended_sends_no_write(
     validate_audit(records)
     assert [r["result"] for r in records] == ["attempted", "failed"]
     assert records[1]["attempt_id"] == records[0]["attempt_id"]
+    # an expected interruption, not an internal error: exit slot 1, code `interrupted`
+    (write,) = records[1]["writes"]
+    assert (write["lower"]["exit"], write["lower"]["code"]) == (1, "interrupted")
 
 
 # --- an unexpected error after ``attempted`` -----------------------------------------------------
