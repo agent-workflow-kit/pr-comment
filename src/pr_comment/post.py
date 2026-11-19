@@ -897,9 +897,9 @@ def _post_with_audit(
     started = format_ts(now_utc())
     if held.received:
         # A signal arrived during the ``attempted`` append: nothing was sent and nothing will be.
-        # Close the pair as a failed write (exit 1, ``internal``: no forgectl call, no code of its
-        # own), then end 128 + signum with no envelope, as a signal before any write does.
-        unsent = LowerResult(exit=1, code="internal", reason=None)
+        # Close the pair as a failed write (exit 1, ``interrupted``: no forgectl call), then end
+        # 128 + signum with no envelope, as a signal before any write does.
+        unsent = LowerResult(exit=1, code="interrupted", reason=None)
         write = WriteRecord.from_lower(0, started, plan.action, None, plan.dedupe_key, unsent)
         stopped = Outcome(1)
         final = _record(env, [write], stopped)

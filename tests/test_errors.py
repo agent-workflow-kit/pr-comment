@@ -31,6 +31,7 @@ ENVELOPE_KEYS = {
 # Every error.code the schema lists, with the exit code docs/interface.md assigns it.
 EXPECTED_EXIT = {
     "internal": 1,
+    "interrupted": 1,
     "usage": 2,
     "config_invalid": 2,
     "invalid_pr": 2,
@@ -64,6 +65,9 @@ EXPECTED_EXIT = {
     "escalated": 13,
     "refused": 20,
 }
+
+# `interrupted` is audit-only: no error envelope carries it.
+ENVELOPE_EXIT = {c: e for c, e in EXPECTED_EXIT.items() if c != "interrupted"}
 
 
 def _details_for(code: str) -> dict[str, Any] | None:
@@ -103,9 +107,26 @@ def _build(code: str, **kwargs: Any) -> dict[str, Any]:
 
 
 def test_every_schema_error_code_has_the_documented_exit_code() -> None:
+    # the envelope enum omits `interrupted` (audit only); CODE_EXIT still maps it for lower.py
     schema_codes = set(load_schemas()["pr-comment/defs.json"]["$defs"]["error_code"]["enum"])
-    assert schema_codes == set(EXPECTED_EXIT)
+    assert "interrupted" not in schema_codes
+    assert schema_codes | {"interrupted"} == set(EXPECTED_EXIT)
     assert errors.CODE_EXIT == EXPECTED_EXIT
+
+
+def test_an_error_envelope_carrying_interrupted_fails_the_schema() -> None:
+    bad = _build("internal")
+    bad["error"]["code"] = "interrupted"
+    with pytest.raises(Exception, match="interrupted"):
+        validate("pr-comment/cli/error.json", bad)
+
+
+def test_the_audit_write_code_accepts_interrupted_and_every_envelope_code() -> None:
+    envelope_codes = load_schemas()["pr-comment/defs.json"]["$defs"]["error_code"]["enum"]
+    for code in [*envelope_codes, "interrupted"]:
+        validate("pr-comment/defs.json#/$defs/audit_error_code", code)
+    with pytest.raises(Exception, match="nope"):
+        validate("pr-comment/defs.json#/$defs/audit_error_code", "nope")
 
 
 def test_the_defined_exit_codes_are_exactly_the_documented_set() -> None:
@@ -208,7 +229,7 @@ def test_a_write_with_an_unknown_retry_is_rejected() -> None:
         landed_retry("audit_failed", write=(True, "later"))
 
 
-@pytest.mark.parametrize("code", [c for c, e in EXPECTED_EXIT.items() if e != 12])
+@pytest.mark.parametrize("code", [c for c, e in ENVELOPE_EXIT.items() if e != 12])
 def test_other_exits_have_landed_and_retry_null(code: str) -> None:
     error = _build(code)["error"]
     assert error["landed"] is None
@@ -227,7 +248,7 @@ def test_a_hand_made_envelope_with_a_wrong_pair_fails_the_schema() -> None:
 
 
 def test_every_envelope_carries_all_thirteen_fields() -> None:
-    for code in EXPECTED_EXIT:
+    for code in ENVELOPE_EXIT:
         error = _build(code)["error"]
         assert set(error) == ENVELOPE_KEYS, code
 
@@ -689,7 +710,7 @@ def test_sanitize_keeps_tab_and_lf_only_for_multi_line_text() -> None:
     assert errors.sanitize("a\rb", one_line=False) == "a<U+000D>b"
 
 
-@pytest.mark.parametrize("code", sorted(EXPECTED_EXIT))
+@pytest.mark.parametrize("code", sorted(ENVELOPE_EXIT))
 def test_minimal_schema_valid_details_build_a_schema_valid_envelope_for_every_code(
     code: str,
 ) -> None:

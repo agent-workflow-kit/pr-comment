@@ -640,9 +640,9 @@ def write_threads(run: ThreadRun, env: PostEnv) -> Outcome:
                 attempted = True
                 if held.received:
                     # A signal arrived during the ``attempted`` append: nothing was sent and
-                    # nothing will be. Close the pair as a failed write (exit 1, ``internal``),
+                    # nothing will be. Close the pair as a failed write (exit 1, ``interrupted``),
                     # then end ``128 + signum`` with no document.
-                    unsent = LowerResult(exit=1, code="internal", reason=None)
+                    unsent = LowerResult(exit=1, code="interrupted", reason=None)
                     write = WriteRecord.from_lower(
                         index, format_ts(now_utc()), request.command, item.thread_id, None, unsent
                     )

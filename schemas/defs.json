@@ -164,7 +164,8 @@
       "x-codes": {
         "0": [],
         "1": [
-          "internal"
+          "internal",
+          "interrupted"
         ],
         "2": [
           "usage",
@@ -212,6 +213,17 @@
         ]
       }
     },
+    "audit_error_code": {
+      "description": "An audit write's lower.code: every error_code, plus `interrupted` (a write never sent because a signal arrived during the attempted append; the run exits 128+N with no envelope). Only the audit record can carry `interrupted`; error_code, used by every error envelope, does not list it.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/error_code"
+        },
+        {
+          "const": "interrupted"
+        }
+      ]
+    },
     "error_code": {
       "enum": [
         "internal",
@@ -248,7 +260,7 @@
         "escalated",
         "refused"
       ],
-      "description": "error.code. Exit 20 uses 'refused', with error.reason."
+      "description": "error.code. Exit 20 uses 'refused', with error.reason. Never `interrupted`: that code exists only in an audit write's lower.code (see audit_error_code), and the schema enforces it."
     },
     "refusal_reason": {
       "enum": [

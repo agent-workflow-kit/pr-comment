@@ -497,6 +497,13 @@ def test_a_document_with_a_duplicate_key_is_a_contract_mismatch() -> None:
     assert caught.value.outcome.document["error"]["code"] == "lower_contract_mismatch"  # type: ignore[index]
 
 
+def test_forgectl_cannot_pass_interrupted_through_exit_one() -> None:
+    # pins that _PASSTHROUGH[1] stays {"internal"}
+    # `interrupted` is pr-comment's own audit code; a forgectl exit 1 with it is a mismatch
+    outcome = outcome_of(result(1, envelope("interrupted")))
+    assert error_of(outcome)["code"] == "lower_contract_mismatch"
+
+
 def test_a_duplicate_key_in_an_error_envelope_is_a_mismatch() -> None:
     raw = b'{"error": {"code": "not_found", "code": "internal", "message": "m"}}'
     outcome = outcome_of(result(10, raw=raw))
