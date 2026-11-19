@@ -31,6 +31,7 @@ ENVELOPE_KEYS = {
 # Every error.code the schema lists, with the exit code docs/interface.md assigns it.
 EXPECTED_EXIT = {
     "internal": 1,
+    "interrupted": 1,
     "usage": 2,
     "config_invalid": 2,
     "invalid_pr": 2,

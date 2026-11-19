@@ -812,6 +812,8 @@ def test_a_signal_during_the_attempted_append_sends_nothing_and_closes_the_pair_
     records = audit(state_home)
     assert [r["result"] for r in records] == ["attempted", "failed"]
     assert _write_results(state_home) == [(T1, "failed")]
+    (write,) = records[1]["writes"]
+    assert (write["lower"]["exit"], write["lower"]["code"]) == (1, "interrupted")
 
 
 @pytest.mark.usefixtures("default_signals")

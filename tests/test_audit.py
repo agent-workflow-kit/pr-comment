@@ -348,6 +348,7 @@ def test_a_veto_before_the_first_write_is_listed_in_the_outcome(dirs: files.Stat
         ({"exit": 12, "code": "network_error"}, "failed"),
         ({"exit": 12, "code": None}, "failed"),
         ({"exit": 1, "code": "internal"}, "failed"),
+        ({"exit": 1, "code": "interrupted"}, "failed"),
         ({"exit": 10, "code": "not_found"}, "failed"),
         ({"exit": 2, "code": "usage"}, "failed"),
         ({"exit": 13, "code": "escalated"}, "failed"),

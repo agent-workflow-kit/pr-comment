@@ -75,6 +75,9 @@ _FAILED_CODES = (
 CODE_EXIT: Final[Mapping[str, int]] = MappingProxyType(
     {
         "internal": EXIT_INTERNAL,
+        # Audit-only: the closing record of a write never sent because a signal arrived during the
+        # ``attempted`` append. The run ends 128 + signum with no envelope.
+        "interrupted": EXIT_INTERNAL,
         **dict.fromkeys(_USAGE_CODES, EXIT_USAGE),
         "not_found": EXIT_NOT_FOUND,
         "vetoed": EXIT_VETOED,

@@ -1058,6 +1058,9 @@ def test_a_signal_while_attempted_is_appended_sends_no_write(
     validate_audit(records)
     assert [r["result"] for r in records] == ["attempted", "failed"]
     assert records[1]["attempt_id"] == records[0]["attempt_id"]
+    # an expected interruption, not an internal error: exit slot 1, code `interrupted`
+    (write,) = records[1]["writes"]
+    assert (write["lower"]["exit"], write["lower"]["code"]) == (1, "interrupted")
 
 
 # --- an unexpected error after ``attempted`` ----------------------------------------------------
