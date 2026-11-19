@@ -27,9 +27,9 @@ from pr_comment.lower import (
     tool_missing_outcome,
 )
 from pr_comment.output import check_outcome
-from tests.fake_gateway import FakeGateway, ok
+from tests.fake_gateway import PINNED_LOWER_VERSION, FakeGateway, ok
 
-GATEWAY = FakeGateway(version="forgectl 0.1.0")
+GATEWAY = FakeGateway()
 
 
 def result(
@@ -85,7 +85,7 @@ def test_exit_zero_without_a_usable_document_is_a_contract_mismatch(raw: bytes) 
         require_ok(result(0, raw=raw), gateway=GATEWAY)
     error = error_of(info.value.outcome)
     assert error["code"] == "lower_contract_mismatch" and info.value.outcome.exit_code == 12
-    assert error["details"] == {"command": "review", "lower_version": "forgectl 0.1.0"}
+    assert error["details"] == {"command": "review", "lower_version": PINNED_LOWER_VERSION}
     assert (error["landed"], error["retry"]) == (False, "same_command")  # a read: nothing landed
 
 
@@ -512,6 +512,31 @@ def test_lower_version_cut_never_leaves_part_of_a_marker() -> None:
         "lower_version"
     ]
     assert version == "a" * 60
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "forgectl 0.54.9",
+        "forgectl 0.55.0",
+        "forgectl 0.55.99",
+        "forgectl 9.9.9",
+        "not a version",
+        None,
+    ],
+)
+def test_no_forgectl_is_refused_by_its_version(version: str | None) -> None:
+    """interface.md: 0.55.x is the supported range, but no version check is made up front;
+    only the fields are checked, so a valid answer is accepted whatever forgectl says it is."""
+    gateway = FakeGateway(version=version)
+    assert require_ok(ok("show", {"pr": "x"}), gateway=gateway) == {"pr": "x"}
+    assert gateway.calls == []  # the version is not even read on success
+
+
+@pytest.mark.parametrize("version", ["forgectl 0.54.9", "forgectl 0.55.7"])
+def test_a_mismatch_reports_the_version_as_is_for_both_sides_of_the_range(version: str) -> None:
+    outcome = mismatch_outcome("show", "why", gateway=FakeGateway(version=version))
+    assert outcome.document["error"]["details"]["lower_version"] == version  # type: ignore[index]
 
 
 def test_lower_version_of_none_stays_none() -> None:
