@@ -7,7 +7,8 @@ or a GitLab note: those are what a host lets the author delete. A submitted revi
 a resolved thread cannot be deleted, so they are listed for a human. Like ``render.py`` this is a
 test helper that calls ``gh`` or ``glab`` itself (pr-comment and forgectl have no delete): it needs
 credentials in environment variables (the ``PRCLIVE_TOKEN_<KEY>`` of the PR's target, passed as
-``GH_TOKEN`` or ``GITLAB_TOKEN``), because the child environment has a private ``HOME``. A
+``GH_TOKEN`` or ``GITLAB_TOKEN``, and also ``GH_ENTERPRISE_TOKEN`` for a ``gh`` call to a GitHub
+Enterprise host), because the child environment has a private ``HOME``. A
 problem is a note with the exit status only, never the output.
 """
 
@@ -125,6 +126,10 @@ def _call_env(runner: Runner, pr: str, tool: str) -> dict[str, str]:
             token = runner.env.get(token_env_name(target.key))
             if token:
                 env[TOKEN_VARIABLE[tool]] = token
+                parsed = parse_ref(pr)
+                # gh reads GH_ENTERPRISE_TOKEN, not GH_TOKEN, for a host other than github.com
+                if tool == "gh" and parsed is not None and parsed[0].lower() != "github.com":
+                    env["GH_ENTERPRISE_TOKEN"] = token
             break
     return env
 

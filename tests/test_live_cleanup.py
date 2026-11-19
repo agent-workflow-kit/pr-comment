@@ -443,3 +443,46 @@ def test_the_document_says_what_is_left_on_gitlab_and_that_the_route_is_unverifi
     text = checklist.render()
     assert "discussion" in text and "`gl:n:`" in text and "not verified live" in text
     assert "`PRCLIVE_TOKEN_<KEY>` of the target" in text
+
+
+GHE_REPO = "ghe.example.test/acme/widgets"
+GHE_FAKE_GH = """#!/bin/sh
+if [ "$GH_ENTERPRISE_TOKEN" = "sentinel-ghe" ] && [ "$GH_TOKEN" = "sentinel-ghe" ]; then
+  echo '{"data":{"deleteIssueComment":{"clientMutationId":null}}}'
+else
+  echo '{"data":null}'
+fi
+"""
+
+
+def test_a_gh_call_to_an_enterprise_host_also_gets_gh_enterprise_token(tmp_path: Path) -> None:
+    ghe_pr = f"{GHE_REPO}#5"
+    runner, recorder = runner_with(
+        tmp_path,
+        [(ghe_pr, "gh:ic:IC_1"), (PR, "gh:ic:IC_2")],
+        env={
+            "PRCLIVE_TOKEN_GITHUB_ENTERPRISE": "sentinel-ghe",
+            "PRCLIVE_TOKEN_GITHUB": "sentinel-gh",
+        },
+        PR_COMMENT_LIVE_ALLOW=f"{REPO},{LAB},{GHE_REPO}",
+        PR_COMMENT_LIVE_GITHUB_ENTERPRISE_PR=ghe_pr,
+    )
+    runner.teardown()
+    ghe_env, github_env = recorder.envs
+    assert ghe_env.get("GH_ENTERPRISE_TOKEN") == "sentinel-ghe"
+    assert "GH_ENTERPRISE_TOKEN" not in github_env
+
+
+def test_the_enterprise_token_authenticates_a_fake_gh_end_to_end(tmp_path: Path) -> None:
+    ghe_pr = f"{GHE_REPO}#5"
+    runner, _ = runner_with(
+        tmp_path,
+        [(ghe_pr, "gh:ic:IC_1")],
+        env={"PRCLIVE_TOKEN_GITHUB_ENTERPRISE": "sentinel-ghe"},
+        PR_COMMENT_LIVE_ALLOW=f"{REPO},{LAB},{GHE_REPO}",
+        PR_COMMENT_LIVE_GITHUB_ENTERPRISE_PR=ghe_pr,
+    )
+    gh = Path(runner.env["PATH"]) / "gh"
+    gh.write_text(GHE_FAKE_GH, encoding="utf-8")
+    runner.cleanup_call = subprocess.run
+    assert runner.teardown() == []
