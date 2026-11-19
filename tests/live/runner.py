@@ -21,7 +21,6 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-import os
 import re
 import shutil
 import signal
@@ -34,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import LiveFailure, LiveRefusal
-from .pty_run import run_on_pty
+from .pty_run import kill_group, run_on_pty
 from .settings import (
     PLACEHOLDER_REPOS,
     REAL_ENV,
@@ -153,6 +152,13 @@ def landed_ids(doc: Mapping[str, Any] | None) -> list[str]:
             for key in ("review_id", "body_thread_id"):
                 if isinstance(obj.get(key), str):
                     found.append(obj[key])
+            for entry in obj.get("threads") or []:
+                if (
+                    isinstance(entry, dict)
+                    and entry.get("changed") is True
+                    and isinstance(entry.get("thread_id"), str)
+                ):
+                    found.append(entry["thread_id"])
         elif isinstance(obj, list):
             found.extend(i for i in obj if isinstance(i, str))
 
@@ -412,7 +418,10 @@ class Runner:
         ids = landed_ids(doc)
         self._ledger_ids(step, ids)
         error = (doc or {}).get("error")
-        not_landed = code in NOT_POSTED_EXITS or (
+        # resolve and unresolve of several threads exit 10/11/13/20 per thread and carry on, so
+        # those exits do not prove that nothing changed
+        per_thread = "resolve" in step.argv[:1] or "unresolve" in step.argv[:1]
+        not_landed = (code in NOT_POSTED_EXITS and not per_thread) or (
             isinstance(error, dict) and error.get("landed") is False
         )
         if ids or not_landed or (code == 0 and doc is not None):
@@ -476,15 +485,7 @@ class Runner:
         return "real" if step.write else "read"
 
     def _kill_group(self, proc: subprocess.Popen[bytes]) -> None:
-        """SIGKILL the process group this runner created for ``proc`` (``start_new_session``: the
-        group id is the child's pid), and only while the child is still its leader."""
-        if proc.poll() is not None:
-            return
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            if os.getpgid(proc.pid) == proc.pid:
-                os.killpg(proc.pid, signal.SIGKILL)
-            else:
-                proc.kill()
+        kill_group(proc)
 
     def _reap(self, proc: subprocess.Popen[bytes]) -> tuple[bytes, bytes]:
         """Kill ``proc``'s group and collect what it printed; a child that keeps its pipes open

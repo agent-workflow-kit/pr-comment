@@ -1124,3 +1124,119 @@ def test_the_run_split_marker_is_required_only_when_both_runs_reach_255() -> Non
     assert helpers.fence_problems(body, 255, 0) == []
     assert helpers.fence_problems(body.replace("x", "x <run split>"), 255, 0) != []
     assert helpers.text_fence("no block here") is None
+
+
+# --- review of the live suite: notes, pty groups, per-thread exits, cleanup auth ---------------
+
+
+def _live_ctx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcomes: dict[str, Outcome]) -> Ctx:
+    settings = settings_for("run", tmp_path, PR_COMMENT_LIVE_APPROVE="1")
+    runner = Runner(settings, tmp_path / "work", env={"PATH": "/x"})
+    monkeypatch.setattr(runner, "verify_target", lambda ref: None)
+
+    def fake(label: str, *args: Any, **kwargs: Any) -> Outcome:
+        return outcomes.get(label) or Outcome(
+            Step("t", label, "pr-comment", [], True), 0, {}, real=True
+        )
+
+    monkeypatch.setattr(runner, "pc", fake)
+    monkeypatch.setattr(runner, "pc_pty", fake)
+    return Ctx(runner, settings.targets["GITHUB"], "t")
+
+
+def _failed(label: str) -> Outcome:
+    return Outcome(Step("t", label, "pr-comment", [], True), 1, {}, real=True)
+
+
+@pytest.mark.parametrize(
+    ("name", "failing", "needle"),
+    [
+        ("approve_interactive", "approve-confirmed", "approval"),
+        ("resolve_unresolve", "resolve", "review thread"),
+    ],
+)
+def test_a_write_that_ran_is_noted_for_a_human_even_when_its_check_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, failing: str, needle: str
+) -> None:
+    declined = Outcome(
+        Step("t", "d", "pr-comment", [], True),
+        13,
+        {"error": {"code": "confirmation_required"}},
+        real=True,
+    )
+    ctx = _live_ctx(
+        tmp_path, monkeypatch, {failing: _failed(failing), "approve-declined": declined}
+    )
+    monkeypatch.setattr(
+        Ctx,
+        "post_review",
+        lambda self, *a, **k: Outcome(Step("t", "r", "pr-comment", [], True), 0, {}, real=True),
+    )
+    monkeypatch.setattr(Ctx, "diff_lines", lambda self, n: [("f.py", 1)])
+    monkeypatch.setattr(
+        Ctx,
+        "threads",
+        lambda self: [{"id": "gh:rt:X", "comments": [{"body": self.label_tag("thread")}]}],
+    )
+    monkeypatch.setattr(Ctx, "text", lambda self, *a: "text")
+    monkeypatch.setattr(Ctx, "draft", lambda self, *a, **k: Path("d"))
+    monkeypatch.setattr(runner_module.Runner, "verify_target", lambda self, ref: None)
+    ctx.runner.workdir.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(LiveFailure):
+        SCENARIOS[name].fn(ctx)
+    assert any(needle in n for n in ctx.runner.teardown())
+
+
+def test_a_pty_child_that_ignores_the_deadline_is_killed_with_its_group(tmp_path: Path) -> None:
+    pidfile = tmp_path / "grandchild.pid"
+    code = (
+        "import subprocess,sys,time\n"
+        f"p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])\n"
+        f"open({str(pidfile)!r},'w').write(str(p.pid))\n"
+        "time.sleep(60)\n"
+    )
+    with pytest.raises(LiveFailure, match="pty"):
+        run_on_pty([sys.executable, "-c", code], env={}, cwd=tmp_path, answer=b"y\n", deadline=1.5)
+    grandchild = int(pidfile.read_text())
+    for _ in range(50):
+        try:
+            os.kill(grandchild, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    with pytest.raises(ProcessLookupError):
+        os.kill(grandchild, 0)
+
+
+def test_changed_threads_count_as_landed_and_per_thread_exits_do_not_prove_nothing_landed(
+    tmp_path: Path,
+) -> None:
+    doc = {
+        "threads": [
+            {"thread_id": "gh:rt:A", "changed": True},
+            {"thread_id": "gh:rt:B", "changed": False},
+        ]
+    }
+    assert landed_ids(doc) == ["gh:rt:A"]
+    runner = Runner(settings_for("run", tmp_path), tmp_path / "work", env={"PATH": "/x"})
+    step = Step("t", "res", "pr-comment", ["resolve", h.PR], True, applied="real")
+    row = {
+        "run": "testrun1",
+        "scenario": "t",
+        "pr": h.PR,
+        "step": "res",
+        "status": "possibly_posted",
+    }
+    runner.possible.append(row)
+    runner._settle(
+        step, 10, {"threads": [{"thread_id": "gh:rt:B", "error": {"code": "not_found"}}]}
+    )
+    assert runner.possible == [row]  # a per-thread exit does not clear the possibly-posted entry
+    runner._settle(step, 10, doc)
+    assert [r["id"] for r in runner.ledger] == ["gh:rt:A"]
+    assert runner.possible == []
+
+
+def test_the_checklist_says_the_cleanup_command_has_no_stored_login() -> None:
+    text = checklist.render()
+    assert "cleanup command runs under the same private `HOME`" in text

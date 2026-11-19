@@ -8,6 +8,7 @@ import json
 import os
 import pty
 import select
+import signal
 import subprocess
 import time
 from collections.abc import Mapping, Sequence
@@ -21,6 +22,18 @@ PROMPT = "Post? [y/N] "
 TAIL_WINDOW = 8192  # the prompt is looked for in the end of the terminal only
 TERMINAL_KEEP = 1 << 20  # what is kept of the terminal for the report
 STDOUT_CAP = 16 << 20  # the JSON document; more than this is a failure, never an unbounded read
+
+
+def kill_group(proc: subprocess.Popen[bytes]) -> None:
+    """SIGKILL the process group this suite created for ``proc`` (``start_new_session``: the group
+    id is the child's pid), and only while the child is still its leader."""
+    if proc.poll() is not None:
+        return
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        if os.getpgid(proc.pid) == proc.pid:
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
 
 
 @dataclass
@@ -64,7 +77,13 @@ def run_on_pty(
 
     try:
         proc = subprocess.Popen(
-            list(cmd), stdin=slave, stdout=out_w, stderr=slave, env=dict(env), cwd=cwd
+            list(cmd),
+            stdin=slave,
+            stdout=out_w,
+            stderr=slave,
+            env=dict(env),
+            cwd=cwd,
+            start_new_session=True,
         )
         close(out_w)
         close(slave)
@@ -76,7 +95,7 @@ def run_on_pty(
         limit = time.monotonic() + deadline
         while master_open or out_open:
             if time.monotonic() > limit:
-                proc.kill()  # this exact child
+                kill_group(proc)
                 proc.wait()
                 raise LiveFailure("pr-comment did not finish on the pty (killed)")
             watch = ([master] if master_open else []) + ([out_r] if out_open else [])
@@ -103,7 +122,12 @@ def run_on_pty(
             if not answered and master_open and _prompt_is_up(terminal):
                 answered = True
                 os.write(master, answer)
-        code = proc.wait(timeout=deadline)
+        try:
+            code = proc.wait(timeout=deadline)
+        except subprocess.TimeoutExpired:
+            kill_group(proc)
+            proc.wait()
+            raise LiveFailure("pr-comment did not exit on the pty (killed)") from None
         if truncated:
             raise LiveFailure("pr-comment printed more than the stdout cap on the pty run")
         text = stdout.decode("utf-8", "replace")
@@ -119,7 +143,7 @@ def run_on_pty(
         return PtyResult(code, document, terminal.decode("utf-8", "replace").replace("\r\n", "\n"))
     finally:
         if proc is not None and proc.poll() is None:
-            proc.kill()
+            kill_group(proc)
             proc.wait()
         for fd in list(fds):
             with contextlib.suppress(OSError):

@@ -855,8 +855,8 @@ def s_gitlab_body_thread(ctx: Ctx) -> None:
             un.doc["threads"][0].get("changed") is True, "unresolve changes it", "th.gl_d_ids"
         )
     res = ctx.runner.pc("resolve", "resolve", ctx.ref, "--thread", str(thread))
-    ctx.want(res, 0)
     ctx.runner.leave(f"the GitLab body thread of {ctx.ref} (a note and a thread resolved)")
+    ctx.want(res, 0)
     missing = ctx.runner.pc("missing", "resolve", ctx.ref, "--thread", "gl:d:" + "0" * 40)
     ctx.want(missing, 10, "not_found", row="th.not_found")
 
@@ -898,6 +898,7 @@ def s_resolve_unresolve(ctx: Ctx) -> None:
         thread = str(found[0]["id"]) if found else thread
         ctx.check(thread.startswith("gh:rt:"), "a gh:rt: thread id", "fk.id_prefixes")
     first = ctx.runner.pc("resolve", "resolve", ctx.ref, "--thread", thread)
+    ctx.runner.leave(f"a review thread of {ctx.ref} that was resolved and unresolved again")
     ctx.want(first, 0)
     second = ctx.runner.pc("resolve-again", "resolve", ctx.ref, "--thread", thread)
     ctx.want(second, 0)
@@ -914,7 +915,6 @@ def s_resolve_unresolve(ctx: Ctx) -> None:
         )
     un = ctx.runner.pc("unresolve", "unresolve", ctx.ref, "--thread", thread)
     ctx.want(un, 0)
-    ctx.runner.leave(f"a review thread of {ctx.ref} that was resolved and unresolved again")
     missing = ctx.runner.pc("missing", "resolve", ctx.ref, "--thread", "gh:rt:PRRT_kwDOZZZZZZZZZZ")
     ctx.want(missing, 10, "not_found", row="th.not_found")
 
@@ -1131,13 +1131,13 @@ def s_approve_interactive(ctx: Ctx) -> None:
     approved = ctx.runner.pc_pty(
         "approve-confirmed", "approve", ref or ctx.ref, "--body-file", str(body), answer=b"y\n"
     )
+    ctx.runner.leave(f"an approval on {ref or ctx.ref}: dismiss or unapprove it by hand")
     ctx.want(approved, 0, row="fk.approve_interactive")
     ctx.check(
         _doc(approved.doc, "event") == "approve",
         "the result says approve",
         "fk.approve_interactive",
     )
-    ctx.runner.leave(f"an approval on {ref or ctx.ref}: dismiss or unapprove it by hand")
 
 
 # --- signals, hooks, escalation, config ----------------------------------------------------------
