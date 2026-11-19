@@ -323,6 +323,9 @@ def test_the_watchdog_outlives_the_main_process_and_still_enforces_the_timeout(
     (hook_pid,) = recorded(pids)
     assert alive(hook_pid)  # the main process is gone, the hook still runs
     assert wait_dead(hook_pid, 10)  # and the timeout still ends it
+    end = time.monotonic() + 10  # the watchdog logs and cleans up just after the hook is gone
+    while time.monotonic() < end and (tmp_entries(dirs) or not log_lines(dirs)):
+        time.sleep(0.02)
     assert tmp_entries(dirs) == []
     assert [r["details"]["reason"] for r in log_lines(dirs)] == ["hook_timeout"]
 

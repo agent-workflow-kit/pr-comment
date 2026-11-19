@@ -613,13 +613,16 @@ def test_an_async_hook_over_its_timeout_changes_neither_the_exit_code_nor_the_au
     hook_pid = int(hooks.pids.read_text().split()[0])
     assert wait_dead(hook_pid, 15)  # ended by its watchdog, long before its 60 s
     deadline = time.monotonic() + 5
-    while time.monotonic() < deadline and not any(r["event"] == "warning" for r in log(state_home)):
-        time.sleep(0.05)
+    tmp_dir = state_home / "pr-comment" / "tmp"
+    while time.monotonic() < deadline and (
+        not any(r["event"] == "warning" for r in log(state_home)) or os.listdir(tmp_dir)
+    ):
+        time.sleep(0.05)  # the watchdog logs, then removes the directory
     warnings = [r for r in log(state_home) if r["event"] == "warning"]
     assert [r["details"]["reason"] for r in warnings] == ["hook_timeout"]
     assert warnings[0]["details"]["hook"] == "post-post" and "late-id" not in json.dumps(warnings)
     assert "late-id" not in json.dumps(audit(state_home))  # no ids from an async hook
-    assert os.listdir(state_home / "pr-comment" / "tmp") == []
+    assert os.listdir(tmp_dir) == []
 
 
 # --- comment: the null fields of the payload ---------------------------------------------------
