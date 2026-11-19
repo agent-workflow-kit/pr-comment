@@ -23,6 +23,7 @@ import pytest
 from pr_comment import cli as cli_module
 from pr_comment.cli import main
 from tests import forgectl_harness as h
+from tests.deadlines import ShortWriteDeadline
 from tests.forgectl_harness import (
     FakeForgectl,
     ProcessCall,
@@ -94,26 +95,6 @@ def posted(pr: str = PR, **kw: Any) -> dict[str, Any]:
     kw.setdefault("ids", ["gh:rc:RC_1", "gh:rc:RC_2"])
     kw.setdefault("review_id", "gh:r:R_1")
     return ok("review", h.post_doc("review", pr, **kw))
-
-
-def short_write_deadline(monkeypatch: pytest.MonkeyPatch, seconds: float = 6.0) -> None:
-    """Give only the forgectl calls that can write a short deadline (issue #94).
-
-    The earlier ``show``, pre-check and ``--version`` calls keep the normal deadline, so a stall
-    under load cannot turn into a ``network_error`` before the write is reached. The write's own
-    deadline stays at least 5 s: a hung write is killed at it either way, and a loaded machine
-    that is slow to start the fake still ends in the same outcome.
-    """
-    from pr_comment import gateway
-
-    real = gateway.run_process
-
-    def run_process(*args: Any, **kwargs: Any) -> Any:
-        if kwargs.get("write"):
-            kwargs["deadline"] = seconds
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(gateway, "run_process", run_process)
 
 
 def args_for(draft: str, *extra: str, pr: str = PR) -> tuple[str, ...]:
@@ -930,9 +911,9 @@ def test_the_deadline_of_a_write_is_outcome_unknown_and_never_retried(
     forgectl: FakeForgectl,
     tmp_path: Path,
     state_home: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    short_write_deadline: ShortWriteDeadline,
 ) -> None:
-    short_write_deadline(monkeypatch)
+    short_write_deadline()
     draft = draft_file(tmp_path, [finding("f1")])
     forgectl.script(
         show(),
@@ -958,11 +939,11 @@ def test_the_deadline_during_a_pre_write_hook_of_a_review_is_outcome_unknown(
     forgectl: FakeForgectl,
     tmp_path: Path,
     state_home: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    short_write_deadline: ShortWriteDeadline,
 ) -> None:
     # the live deadline_kill scenario (#93): a slow forgectl hook, killed at the deadline before
     # forgectl's own write; from outside that is a write of unknown outcome, never `landed: false`
-    short_write_deadline(monkeypatch)
+    short_write_deadline()
     draft = draft_file(tmp_path, [finding("f1")])
     forgectl.script(
         show(),
@@ -1017,6 +998,12 @@ def test_attempted_is_on_disk_while_forgectl_runs(
 
 # --- a signal between the forgectl answer and the end of the audit outcome -----------------------
 
+
+def release_slow_append(ready: Path) -> None:
+    """Let the held append of ``_SLOW_OUTCOME`` or ``_SLOW_ATTEMPTED`` go on, after the signal."""
+    Path(str(ready) + ".release").touch()
+
+
 _SLOW_OUTCOME = """\
 import os
 import sys
@@ -1030,8 +1017,11 @@ original = appendfile.AppendFile.append
 
 def slow(self, line, *, sync=False):
     if sync and b"attempted" not in line:  # the outcome record: slow and announced
-        open(os.environ["PRC_TEST_READY"], "w").close()
-        time.sleep(2)
+        ready = os.environ["PRC_TEST_READY"]
+        open(ready, "w").close()
+        end = time.monotonic() + 60  # held until the test has sent its signal and releases it
+        while not os.path.exists(ready + ".release") and time.monotonic() < end:
+            time.sleep(0.02)
     original(self, line, sync=sync)
 
 
@@ -1070,6 +1060,7 @@ def test_a_signal_while_the_outcome_is_appended_waits_for_the_record(
             time.sleep(0.02)
         assert ready.exists(), "the outcome append never started"
         os.kill(proc.pid, signum)  # the exact pid this test started
+        release_slow_append(ready)
         stdout, stderr = proc.communicate(timeout=60)
     finally:
         if proc.poll() is None:
@@ -1121,6 +1112,7 @@ def test_a_signal_while_attempted_is_appended_sends_no_write(
             time.sleep(0.02)
         assert ready.exists(), "the attempted append never started"
         os.kill(proc.pid, signum)  # the exact pid this test started
+        release_slow_append(ready)
         stdout, stderr = proc.communicate(timeout=60)
     finally:
         if proc.poll() is None:

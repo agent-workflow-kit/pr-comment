@@ -22,6 +22,7 @@ import pytest
 from pr_comment import hooks as hooks_module
 from pr_comment import keys
 from tests import forgectl_harness as h
+from tests.deadlines import ShortWriteDeadline
 from tests.forgectl_harness import FakeForgectl, ProcessCall, fail, ok, refuse
 from tests.posting import DRAFT_ID, A, finding
 from tests.schema_harness import validate
@@ -621,12 +622,9 @@ def test_the_deadline_of_the_resolve_is_a_failed_follow_up_not_a_failed_review(
     forgectl: FakeForgectl,
     tmp_path: Path,
     state_home: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    short_write_deadline: ShortWriteDeadline,
 ) -> None:
-    from pr_comment import gateway
-
-    monkeypatch.setattr(gateway, "DEADLINE_SLACK_SECONDS", 0.0)
-    monkeypatch.setenv("PR_COMMENT_TIMEOUT", "5s")
+    short_write_deadline()  # the resolve is the call that hangs; the earlier calls keep the default
     steps = [
         gl_post(),
         comments(body_thread()),

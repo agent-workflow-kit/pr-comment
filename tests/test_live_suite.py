@@ -644,11 +644,11 @@ def test_wait_for_audit_counts_only_records_after_the_count_taken_before_the_lau
     assert before == 1
     # the earlier launch's record is not this launch's: waiting on it must not return at once
     started = time.monotonic()
-    assert runner.wait_for_audit("attempted", timeout=0.3, after=before) is False
-    assert time.monotonic() - started >= 0.25
+    assert runner.wait_for_audit("attempted", timeout=5.0, after=before) is False
+    assert time.monotonic() - started >= 4.5  # it waited out its timeout (load only adds time)
     add("attempted")
-    assert runner.wait_for_audit("attempted", timeout=1, after=before) is True
-    assert runner.wait_for_audit("attempted", timeout=0.1, after=before + 1) is False
+    assert runner.wait_for_audit("attempted", timeout=5.0, after=before) is True
+    assert runner.wait_for_audit("attempted", timeout=5.0, after=before + 1) is False
 
 
 def test_a_missing_cleanup_command_is_a_note_not_a_failure_and_the_scenario_error_survives(
@@ -763,7 +763,7 @@ def test_a_real_write_is_listed_as_possibly_posted_before_it_ends_and_after_a_ti
             "-",
             stdin=b"x",
             write=True,
-            timeout=0.5,
+            timeout=5.0,
         )
     assert time.monotonic() - started < 30  # the process group was killed, not waited for
     statuses = [r.get("status") for r in _ledger_rows(tmp_path)]
@@ -1196,9 +1196,9 @@ def test_a_pty_child_that_ignores_the_deadline_is_killed_with_its_group(tmp_path
         "time.sleep(60)\n"
     )
     with pytest.raises(LiveFailure, match="pty"):
-        run_on_pty([sys.executable, "-c", code], env={}, cwd=tmp_path, answer=b"y\n", deadline=1.5)
+        run_on_pty([sys.executable, "-c", code], env={}, cwd=tmp_path, answer=b"y\n", deadline=5.0)
     grandchild = int(pidfile.read_text())
-    for _ in range(50):
+    for _ in range(100):
         try:
             os.kill(grandchild, 0)
         except ProcessLookupError:

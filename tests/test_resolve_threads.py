@@ -723,6 +723,11 @@ def _signal_after_hook(monkeypatch: pytest.MonkeyPatch, which: str, *, nth: int 
     monkeypatch.setattr(hooks_module.HookRunner, "run_sync", run_then_signal)
 
 
+def _hold(release: Path) -> str:
+    """A shell fragment that holds until ``release`` exists (bounded at 60 s), not a fixed time."""
+    return f"i=0; while [ ! -e {release} ] && [ $i -lt 1200 ]; do sleep 0.05; i=$((i+1)); done"
+
+
 def _write_results(state_home: Path) -> list[tuple[str, str]]:
     return [(w["thread_id"], w["result"]) for r in audit(state_home) for w in r.get("writes", [])]
 
@@ -733,7 +738,8 @@ def test_a_signal_during_a_post_post_hook_stops_the_run_after_that_write(
 ) -> None:
     script_reads(forgectl, thread(T1), thread(T2))
     forgectl.script(resolved("resolve", T1))
-    slow = hooks.script("cat >/dev/null; sleep 3")  # the first (and only started) post hook
+    # the first (and only started) post hook; it holds until the signal ends it (never released)
+    slow = hooks.script(f"cat >/dev/null; {_hold(pids.parent / 'never-released')}")
     with signal_self_when_started(pids, 1, signal.SIGTERM):
         code, doc, _ = cli(*args("resolve", T1, T2, extra=("--hook", f"post-post={slow}")))
     assert code == 128 + signal.SIGTERM and doc is None
@@ -821,7 +827,8 @@ def test_a_signal_during_a_later_threads_pre_post_hook_ends_the_run_after_the_fi
     script_reads(forgectl, thread(T1), thread(T2))
     forgectl.script(resolved("resolve", T1))
     marker = pids.parent / "seen"  # the hook is fast for T1 and slow for T2
-    pre = hooks.script(f"cat >/dev/null; if [ -e {marker} ]; then sleep 3; else touch {marker}; fi")
+    hold = _hold(pids.parent / "never-released")  # the signal ends the held hook
+    pre = hooks.script(f"cat >/dev/null; if [ -e {marker} ]; then {hold}; else touch {marker}; fi")
     with signal_self_when_started(pids, 2, signal.SIGTERM):
         code, doc, _ = cli(*args("resolve", T1, T2, extra=("--hook", f"pre-post={pre}")))
     assert code == 128 + signal.SIGTERM and doc is None

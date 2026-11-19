@@ -393,7 +393,7 @@ def test_hang_is_killed_at_the_deadline_with_its_group(tmp_path: Path, tracker: 
     )
     started = time.monotonic()
     result = _gateway(tmp_path, deadline=5.0, term_grace=0.3).call("show", [PR])
-    assert time.monotonic() - started < 50  # ended by the deadline, not by the 60 s sleeps
+    assert time.monotonic() - started < 30  # ended by the deadline, not by the 60 s sleeps
     assert result.timed_out and result.exit_code is None
     rows = recorded(tmp_path)
     assert len(rows) == 2
@@ -487,7 +487,7 @@ def test_group_member_holding_the_pipes_is_ended_and_the_call_returns(
     )
     started = time.monotonic()
     result = _gateway(tmp_path, drain_grace=0.3).call("show", [PR])
-    assert time.monotonic() - started < 50  # not held for the grandchild's 60 s
+    assert time.monotonic() - started < 30  # not held for the grandchild's 60 s
     assert result.exit_code == 0 and result.leftover
     if hasattr(os, "waitid"):  # the group is signaled while its leader is still unreaped
         for pid, _pgid, start in recorded(tmp_path):

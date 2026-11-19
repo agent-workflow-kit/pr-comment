@@ -23,6 +23,7 @@ import pytest
 from pr_comment import cli as cli_module
 from pr_comment.cli import main
 from tests import forgectl_harness as h
+from tests.deadlines import ShortWriteDeadline
 from tests.forgectl_harness import (
     FakeForgectl,
     ProcessCall,
@@ -39,7 +40,7 @@ from tests.test_review_post import (
     _stable,
     audit,
     log,
-    short_write_deadline,
+    release_slow_append,
     state_dir,
     validate_audit,
 )
@@ -927,10 +928,10 @@ def test_the_deadline_of_a_write_is_outcome_unknown_and_never_retried(
     forgectl: FakeForgectl,
     tmp_path: Path,
     state_home: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    short_write_deadline: ShortWriteDeadline,
     kind: str,
 ) -> None:
-    short_write_deadline(monkeypatch)
+    short_write_deadline()
     body = body_file(tmp_path)
     forgectl.script(
         show(),
@@ -953,12 +954,12 @@ def test_the_deadline_during_a_pre_write_hook_is_outcome_unknown_never_a_safe_re
     forgectl: FakeForgectl,
     tmp_path: Path,
     state_home: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    short_write_deadline: ShortWriteDeadline,
     kind: str,
 ) -> None:
     # a forgectl `pre-post` hook that outlasts the deadline: forgectl is killed before its own
     # write, but from outside that cannot be told from a kill after it, so the run is unknown (#93)
-    short_write_deadline(monkeypatch)
+    short_write_deadline()
     body = body_file(tmp_path)
     forgectl.script(
         show(),
@@ -980,13 +981,13 @@ def test_a_deadline_before_a_slow_forgectl_answers_network_error_is_outcome_unkn
     forgectl: FakeForgectl,
     tmp_path: Path,
     state_home: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    short_write_deadline: ShortWriteDeadline,
     kind: str,
 ) -> None:
     # forgectl's own network_error answer comes after the deadline kill here, so nothing was printed
     # (the fake prints after its delay); the printed-envelope case is the unit test
     # `test_a_killed_write_with_a_network_error_envelope_printed_stays_outcome_unknown`
-    short_write_deadline(monkeypatch)
+    short_write_deadline()
     body = body_file(tmp_path)
     forgectl.script(
         show(),
@@ -1067,6 +1068,7 @@ def test_a_signal_while_the_outcome_is_appended_waits_for_the_record(
     try:
         _wait_for(ready, proc)
         os.kill(proc.pid, signum)  # the exact pid this test started
+        release_slow_append(ready)
         stdout, stderr = proc.communicate(timeout=60)
     finally:
         if proc.poll() is None:
@@ -1095,6 +1097,7 @@ def test_a_signal_while_attempted_is_appended_sends_no_write(
     try:
         _wait_for(ready, proc)
         os.kill(proc.pid, signum)  # the exact pid this test started
+        release_slow_append(ready)
         stdout, stderr = proc.communicate(timeout=60)
     finally:
         if proc.poll() is None:

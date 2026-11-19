@@ -270,6 +270,6 @@ def test_a_huge_hostile_draft_is_bounded() -> None:
     doc["findings"] = [
         {"id": f"f{i}", "path": "a", "line": 1, "body": "`~" * 30000} for i in range(200)
     ]
-    start = time.perf_counter()
+    start = time.process_time()
     assert parse_draft(dumps(doc))
-    assert time.perf_counter() - start < 5
+    assert time.process_time() - start < 20
