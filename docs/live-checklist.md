@@ -82,7 +82,7 @@ The live suite re-checks, against real hosts, every behavior that was verified o
 | `hooks_timeout_and_async` | github/gitlab | reads | - | A hook that times out is vetoed and its children die; an async hook is not waited for. |
 | `override_escalation` | github/gitlab | writes | - | A forgectl hook that escalates (exit 13): refused, then allowed with the override. |
 | `config_flag` | github/gitlab | reads | - | forgectl's --config: a directory or an unparsable file is config_invalid. |
-| `deadline_kill` | github/gitlab | writes | slow | A forgectl hook that outlasts the deadline: outcome_unknown. |
+| `deadline_kill` | github/gitlab | writes | slow | A forgectl hook that outlasts the deadline: outcome_unknown, landed null. |
 | `dedupe_event_change` | github/gitlab | writes | - | The same draft id with another event: GitHub outcome_partial, GitLab completes it. |
 | `marker_whitespace` | github/gitlab | writes | - | Where forgectl puts its dedupe line when the last line is a no-break space (raw probe). |
 | `diff_markers` | github/gitlab | reads | - | What forgectl's diff keeps of a carriage return and of the no-newline marker (recorded). |
@@ -159,7 +159,7 @@ Each row is settled by a scenario or test, by a manual step, or both. Source is 
 | `ts.gitlab_engine` | #22 | GitLab's own Markdown (`>>>` quote, `[[_TOC_]]`, math, quick actions, references) behaves as pr-comment assumes; a slash line is not run as a quick action. | scenario `gitlab_markdown` | - |
 | `ts.github_media` | #22 | A bare attachment URL on its own line renders as media on GitHub (recorded; `counts.images` does not count it). | scenario `render_probes` | - |
 | `ts.github_diagrams` | #22 | Diagram fences (`mermaid`, `geojson`, `stl`) render on GitHub (recorded). | scenario `render_probes` | - |
-| `ts.link_forms` | #22 | How a `javascript:` or relative link renders (recorded: the `javascript:` hrefs found). | scenario `render_probes` | - |
+| `ts.link_forms` | #22 | How a `javascript:` or relative link renders on the hosts (unverified; the pinned cmark-gfm renders an empty href) (recorded: the `javascript:` hrefs found). | scenario `render_probes` | - |
 | `ts.postprocess` | #22 | Host post-processing after the engine: sanitizing, emoji, issue and commit links, `@` inside a link text (recorded). | scenario `render_probes` | - |
 | `ts.marker_display` | #22 | How a host shows the hidden marker comment (not as text). | scenario `render_probes` | - |
 | `ts.engine_version` | #22 | Whether GitHub's engine is the pinned `cmarkgfm` version at all. | - | Take the pinned fuzz corpus's disagreement cases (`tests/test_text_safety_fuzz.py`), post them as comments and compare the rendered HTML with `cmarkgfm`'s. |
