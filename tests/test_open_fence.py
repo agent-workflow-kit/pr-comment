@@ -50,6 +50,12 @@ OPEN = [
     "```py\ncode\n``` x",
     "   ```\ncode",
     "```\n```\n```",
+    "- a\n  ```\n```",
+    "- a\n  ~~~\n~~~",
+    "1. a\n   ```\n```",
+    "- a\n\n  ```\n```",
+    "- a\n   ```\n   x\n```",
+    "- a\n  ```\n  x\n\n```",
 ]
 
 
@@ -190,6 +196,8 @@ HARD_LINES = [
     "- item",
     "    code",
     "a ```b",
+    "- a",
+    "1. a",
 ]
 
 
@@ -213,3 +221,20 @@ def test_fuzz_any_line_is_never_applicable_while_swallowed(seed: int) -> None:
 
 def test_the_oracle_itself_sees_a_live_block_after_a_closed_body() -> None:
     assert "suggestion" in cmark("x\n\n```suggestion\ny\n```")
+
+
+def test_a_top_level_indented_fence_with_no_container_line_stays_exact() -> None:
+    assert not open_fence_possible("   ```\ncode\n   ```")
+
+
+def test_an_open_fence_loses_to_slash_line_and_invisible_chars() -> None:
+    for text, reason in (("/x", "slash_line"), ("a\u202eb", "invisible_chars")):
+        shown = render_suggestion(sug(text, body="```\nopen"), mn(), host="github")
+        assert shown is not None and shown.degraded == reason
+
+
+def test_a_gitlab_multi_line_suggestion_with_an_open_body_degrades_as_open_fence() -> None:
+    f = sug("new", body="- a\n  ```\n```", line=5, start_line=3)
+    shown = render_suggestion(f, mn(), host="gitlab")
+    assert shown is not None and shown.degraded == "open_fence"
+    assert "suggestion:-" not in shown.block
