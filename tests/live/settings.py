@@ -258,6 +258,10 @@ def from_env(env: Mapping[str, str] | None = None) -> LiveSettings:
     if get(OPT_IN) not in (None, "0", "1"):
         problem(f"{OPT_IN} must be 1 (to opt in) or unset")
 
+    keep_raw = get("PR_COMMENT_LIVE_KEEP")
+    if keep_raw not in (None, "0", "1"):
+        problem("PR_COMMENT_LIVE_KEEP must be 1 (to keep what the run posted), 0 or unset")
+
     mode = get("PR_COMMENT_LIVE_MODE") or "plan"
     if mode not in MODES:
         problem(f"PR_COMMENT_LIVE_MODE must be one of {', '.join(MODES)}")
@@ -377,7 +381,7 @@ def from_env(env: Mapping[str, str] | None = None) -> LiveSettings:
         approve=get("PR_COMMENT_LIVE_APPROVE") == "1",
         slow=get("PR_COMMENT_LIVE_SLOW") == "1",
         cleanup_cmd=cleanup,
-        keep=get("PR_COMMENT_LIVE_KEEP") == "1",
+        keep=keep_raw == "1",
         fs_dir=fs_dir,
         gitlab_group=get("PR_COMMENT_LIVE_GITLAB_GROUP"),
         run_id=run_id,
