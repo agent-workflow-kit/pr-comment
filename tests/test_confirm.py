@@ -153,10 +153,11 @@ def test_summary_counts_are_the_plans() -> None:
     assert "blocker 1" in text and "nit 1" in text
 
 
-def test_upper_bound_counts_are_labelled_and_links_are_not_claimed_complete() -> None:
+def test_upper_bound_counts_are_labelled_and_links_count_written_destinations() -> None:
     plan = review_plan([finding("f1", body="see https://example.test/x and ![i](u) <b>")])
     text = "\n".join(confirm.summary_lines(prepared_of(plan)))
-    assert re.search(r"links at most \d+ \(not every link form is counted\)", text)
+    assert re.search(r"links at most [1-9]\d*", text)
+    assert "not every link form" not in text
     assert re.search(r"images at most \d+", text) and re.search(r"raw HTML at most \d+", text)
     assert re.search(r"invisible characters marked \d+", text)
 
