@@ -391,6 +391,18 @@ def test_escalated_by_forgectl_copies_hooks_and_decision_ids() -> None:
     assert missing["code"] == "lower_contract_mismatch"
 
 
+def test_a_killed_write_with_a_network_error_envelope_printed_stays_outcome_unknown() -> None:
+    env = envelope("network_error", "budget ran out")
+    res = result(None, env, write=True, timed_out=True)
+    error = error_of(outcome_of(res))
+    assert (error["code"], error["landed"], error["retry"]) == (
+        "outcome_unknown",
+        None,
+        "same_command",
+    )
+    assert error["lower_error"] == env["error"]
+
+
 def test_timeouts_and_signals() -> None:
     read = error_of(outcome_of(result(None, timed_out=True)))
     assert (read["code"], read["landed"], read["retry"]) == ("network_error", False, "same_command")

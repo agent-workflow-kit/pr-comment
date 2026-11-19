@@ -199,6 +199,12 @@ def _dry_run_cannot_give(plan: Plan, code: object) -> bool:
     ``outcome_partial`` with nothing sent. It is passed through with the table's GitHub pair
     (``landed: false``, ``retry: new_key``). GitLab runs that state step instead, and a text action
     has none, so there it stays a mismatch.
+
+    Evidence: the ``review`` dedupe hit was observed live against forgectl 0.55.2. ``approve`` is
+    inferred from the shared forgectl code path and not yet observed live. forgectl's doc orders
+    this error after the dry-run stop, so the observed behavior is a recorded deviation from it.
+    todo(#39): capture a live approve dry-run dedupe hit and record both cases in
+    tests/forgectl_cases.json
     """
     if code == "outcome_partial":
         return not (plan.action in ("review", "approve") and plan.backend == "github")

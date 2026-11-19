@@ -964,6 +964,8 @@ def test_the_deadline_during_a_pre_write_hook_is_outcome_unknown_never_a_safe_re
 
     monkeypatch.setattr(gateway, "DEADLINE_SLACK_SECONDS", 0.0)
     monkeypatch.setenv("PR_COMMENT_TIMEOUT", "4s")  # the reads before the write fit in it
+    # todo(#94): this deadline also bounds the show and dry-run calls; a load stall there reads
+    # as network_error
     body = body_file(tmp_path)
     forgectl.script(
         show(),
@@ -980,7 +982,7 @@ def test_the_deadline_during_a_pre_write_hook_is_outcome_unknown_never_a_safe_re
 
 
 @pytest.mark.parametrize("kind", KINDS)
-def test_a_deadline_with_forgectls_network_error_already_printed_stays_outcome_unknown(
+def test_a_deadline_before_a_slow_forgectl_answers_network_error_is_outcome_unknown(
     cli: Run,
     forgectl: FakeForgectl,
     tmp_path: Path,
@@ -988,12 +990,15 @@ def test_a_deadline_with_forgectls_network_error_already_printed_stays_outcome_u
     monkeypatch: pytest.MonkeyPatch,
     kind: str,
 ) -> None:
-    # forgectl's own budget may answer network_error (nothing sent) in the same moment the deadline
-    # kills it; whatever was printed, a killed write is never reported as not landed
+    # forgectl's own network_error answer comes after the deadline kill here, so nothing was printed
+    # (the fake prints after its delay); the printed-envelope case is the unit test
+    # `test_a_killed_write_with_a_network_error_envelope_printed_stays_outcome_unknown`
     from pr_comment import gateway
 
     monkeypatch.setattr(gateway, "DEADLINE_SLACK_SECONDS", 0.0)
     monkeypatch.setenv("PR_COMMENT_TIMEOUT", "4s")  # the reads before the write fit in it
+    # todo(#94): this deadline also bounds the show and dry-run calls; a load stall there reads
+    # as network_error
     body = body_file(tmp_path)
     forgectl.script(
         show(),

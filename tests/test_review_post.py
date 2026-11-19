@@ -949,6 +949,8 @@ def test_the_deadline_during_a_pre_write_hook_of_a_review_is_outcome_unknown(
 
     monkeypatch.setattr(gateway, "DEADLINE_SLACK_SECONDS", 0.0)
     monkeypatch.setenv("PR_COMMENT_TIMEOUT", "4s")  # the reads before the write must finish in it
+    # todo(#94): this deadline also bounds the show and dry-run calls; a load stall there reads
+    # as network_error
     draft = draft_file(tmp_path, [finding("f1")])
     forgectl.script(
         show(),
