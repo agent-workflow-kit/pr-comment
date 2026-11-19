@@ -30,6 +30,7 @@ class Ctx:
         self.renderer = Renderer(runner)
         self._whoami: dict[str, Any] | None = None
         self._show: dict[str, Any] | None = None
+        self._show_real = False
         self._tap_seen = 0
         self.values: dict[str, Any] = {}
 
@@ -113,6 +114,7 @@ class Ctx:
         if self._show is None:
             out = self.runner.fg("show", "show", "--json", self.ref)
             doc = out.doc if out.real and out.code == 0 and out.doc else None
+            self._show_real = doc is not None
             self._show = doc or {
                 "pr": "host/path#1",
                 "head": {"sha": ZERO_SHA, "ref": "topic"},
@@ -122,6 +124,27 @@ class Ctx:
                 "repo": "host/path",
             }
         return self._show
+
+    def pins(self, head: str | None = None) -> list[str]:
+        """``--expected-head`` and ``--expected-base`` for a raw forgectl ``review`` or ``approve``:
+        forgectl exits 2 ``usage`` without both unless the run is interactive, which a suite call is
+        not. The head is the target's current one unless ``head`` says otherwise."""
+        shown = self.show()
+        head_sha = (shown.get("head") or {}).get("sha")
+        base_ref = (shown.get("base") or {}).get("ref")
+        if self.live and not self._show_real:
+            raise LiveFailure(
+                f"{self.scenario}: forgectl show gave no usable answer, so there is no head or "
+                "base to pin; the step was not run"
+            )
+        pinned = head or (head_sha if isinstance(head_sha, str) and head_sha else None)
+        base = base_ref if isinstance(base_ref, str) and base_ref else None
+        if self.live and (pinned is None or base is None):
+            missing = "head sha" if pinned is None else "base ref"
+            raise LiveFailure(
+                f"{self.scenario}: forgectl show names no {missing} to pin; the step was not run"
+            )
+        return [f"--expected-head={pinned or ZERO_SHA}", f"--expected-base={base or 'main'}"]
 
     def whoami(self) -> dict[str, Any]:
         """This account on the target's host (``login``, ``id``)."""
@@ -283,6 +306,7 @@ class Ctx:
             "-",
             "--actor",
             "auto:live-suite",
+            *self.pins(),
             stdin=json.dumps(document).encode("utf-8"),
             write=True,
         )

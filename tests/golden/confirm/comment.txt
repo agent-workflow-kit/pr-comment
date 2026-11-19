@@ -17,6 +17,6 @@ actor human:alice
 inline 0, file-level 0, moved 0
 findings by severity: none
 suggestions degraded 0, mentions neutralized 0
-links at most 0 (not every link form is counted), images at most 0, raw HTML at most 0
+links at most 0, images at most 0, raw HTML at most 0
 invisible characters marked 0
 text: `<` and `![` are neutralized in what is posted (replaced by look-alike characters; 0 command lines spaced, 0 markers removed)

@@ -27,9 +27,9 @@ from pr_comment.lower import (
     tool_missing_outcome,
 )
 from pr_comment.output import check_outcome
-from tests.fake_gateway import FakeGateway, ok
+from tests.fake_gateway import PINNED_LOWER_VERSION, FakeGateway, ok
 
-GATEWAY = FakeGateway(version="forgectl 0.1.0")
+GATEWAY = FakeGateway()
 
 
 def result(
@@ -85,7 +85,7 @@ def test_exit_zero_without_a_usable_document_is_a_contract_mismatch(raw: bytes) 
         require_ok(result(0, raw=raw), gateway=GATEWAY)
     error = error_of(info.value.outcome)
     assert error["code"] == "lower_contract_mismatch" and info.value.outcome.exit_code == 12
-    assert error["details"] == {"command": "review", "lower_version": "forgectl 0.1.0"}
+    assert error["details"] == {"command": "review", "lower_version": PINNED_LOWER_VERSION}
     assert (error["landed"], error["retry"]) == (False, "same_command")  # a read: nothing landed
 
 
@@ -391,6 +391,18 @@ def test_escalated_by_forgectl_copies_hooks_and_decision_ids() -> None:
     assert missing["code"] == "lower_contract_mismatch"
 
 
+def test_a_killed_write_with_a_network_error_envelope_printed_stays_outcome_unknown() -> None:
+    env = envelope("network_error", "budget ran out")
+    res = result(None, env, write=True, timed_out=True)
+    error = error_of(outcome_of(res))
+    assert (error["code"], error["landed"], error["retry"]) == (
+        "outcome_unknown",
+        None,
+        "same_command",
+    )
+    assert error["lower_error"] == env["error"]
+
+
 def test_timeouts_and_signals() -> None:
     read = error_of(outcome_of(result(None, timed_out=True)))
     assert (read["code"], read["landed"], read["retry"]) == ("network_error", False, "same_command")
@@ -485,6 +497,13 @@ def test_a_document_with_a_duplicate_key_is_a_contract_mismatch() -> None:
     assert caught.value.outcome.document["error"]["code"] == "lower_contract_mismatch"  # type: ignore[index]
 
 
+def test_forgectl_cannot_pass_interrupted_through_exit_one() -> None:
+    # pins that _PASSTHROUGH[1] stays {"internal"}
+    # `interrupted` is pr-comment's own audit code; a forgectl exit 1 with it is a mismatch
+    outcome = outcome_of(result(1, envelope("interrupted")))
+    assert error_of(outcome)["code"] == "lower_contract_mismatch"
+
+
 def test_a_duplicate_key_in_an_error_envelope_is_a_mismatch() -> None:
     raw = b'{"error": {"code": "not_found", "code": "internal", "message": "m"}}'
     outcome = outcome_of(result(10, raw=raw))
@@ -512,6 +531,31 @@ def test_lower_version_cut_never_leaves_part_of_a_marker() -> None:
         "lower_version"
     ]
     assert version == "a" * 60
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "forgectl 0.54.9",
+        "forgectl 0.55.0",
+        "forgectl 0.55.99",
+        "forgectl 9.9.9",
+        "not a version",
+        None,
+    ],
+)
+def test_no_forgectl_is_refused_by_its_version(version: str | None) -> None:
+    """interface.md: 0.55.x is the supported range, but no version check is made up front;
+    only the fields are checked, so a valid answer is accepted whatever forgectl says it is."""
+    gateway = FakeGateway(version=version)
+    assert require_ok(ok("show", {"pr": "x"}), gateway=gateway) == {"pr": "x"}
+    assert gateway.calls == []  # the version is not even read on success
+
+
+@pytest.mark.parametrize("version", ["forgectl 0.54.9", "forgectl 0.55.7"])
+def test_a_mismatch_reports_the_version_as_is_for_both_sides_of_the_range(version: str) -> None:
+    outcome = mismatch_outcome("show", "why", gateway=FakeGateway(version=version))
+    assert outcome.document["error"]["details"]["lower_version"] == version  # type: ignore[index]
 
 
 def test_lower_version_of_none_stays_none() -> None:

@@ -344,8 +344,18 @@ def s_forgectl_confirmation_order(ctx: Ctx) -> None:
     body = json.dumps(
         {"event": "comment", "body": ctx.text("confirm", "No post expected.")}
     ).encode()
+    # every call pins the head and base: forgectl exits 2 usage without them (the call is not
+    # interactive); the stale head below is the pin that differs
     dry = ctx.runner.fg(
-        "dry-no-yes", "review", "--json", ctx.ref, "--file", "-", "--dry-run", stdin=body
+        "dry-no-yes",
+        "review",
+        "--json",
+        ctx.ref,
+        "--file",
+        "-",
+        *ctx.pins(),
+        "--dry-run",
+        stdin=body,
     )
     ctx.check(
         dry.code == 0, f"a dry run needs no --yes (got exit {dry.code})", "fk.confirmation_order"
@@ -358,7 +368,7 @@ def s_forgectl_confirmation_order(ctx: Ctx) -> None:
         ctx.ref,
         "--file",
         "-",
-        f"--expected-head={ZERO_SHA}",
+        *ctx.pins(ZERO_SHA),
         "--dry-run",
         stdin=body,
     )
@@ -377,7 +387,7 @@ def s_forgectl_confirmation_order(ctx: Ctx) -> None:
         ctx.ref,
         "--file",
         "-",
-        f"--expected-head={ZERO_SHA}",
+        *ctx.pins(ZERO_SHA),
         stdin=body,
         write=True,  # a write for the gate (a verified target) and a dry run in preflight
         yes=False,  # the point of the probe: no --yes
@@ -776,7 +786,7 @@ def s_gitlab_markdown(ctx: Ctx) -> None:
 
 @scenario(rows=("ts.line_separators",))
 def s_line_separators(ctx: Ctx) -> None:
-    """U+2028, U+2029, VT, FF and NEL in a body: stored as sent, and not line breaks on the host."""
+    """U+2028, U+2029, VT, FF and NEL in a body: stored how, and broken into lines by whom."""
     body = ctx.text("seps", "one\u2028two\u2029three")
     out = ctx.comment("seps", body)
     ctx.observe("ts.line_separators", "pr_comment_exit", out.code)
@@ -1418,13 +1428,21 @@ def s_config_flag(ctx: Ctx) -> None:
 
 @scenario(rows=("gw.deadline_kill", "gw.hook_outlasts_slack"), needs=("slow",))
 def s_deadline_kill(ctx: Ctx) -> None:
-    """A forgectl hook that outlasts the deadline: outcome_unknown."""
+    """A forgectl hook that outlasts the deadline: outcome_unknown, landed null.
+
+    ``timeout`` is forgectl's budget for its host calls and the deadline is that plus the slack
+    (60 s). A budget as short as a few seconds is spent by forgectl's own pre-write reads on a real
+    host: forgectl then answers ``network_error`` (nothing sent, ``landed: false``) before the hook
+    ever runs and the deadline is never reached (found live, #93). The budget must outlast those
+    reads, so only the hook is slow.
+    """
     config = ctx.runner.workdir / "forgectl-slow.yaml"
     config.write_text(
         _forgectl_hosts(ctx) + "hooks:\n  pre-post:\n    - cmd: 'sleep 200'\n      timeout: 200s\n",
         encoding="utf-8",
     )
     config.chmod(0o600)
+    started = time.monotonic()
     out = ctx.runner.pc(
         "slow-hook",
         "comment",
@@ -1433,14 +1451,28 @@ def s_deadline_kill(ctx: Ctx) -> None:
         "-",
         stdin=ctx.text("slow", "Deadline probe.").encode(),
         forgectl_config=str(config),
-        extra_config="timeout: 5s\n",
+        extra_config="timeout: 30s\n",
         timeout=400,
     )
+    elapsed = time.monotonic() - started
     ctx.observe("gw.deadline_kill", "exit", out.code)
     ctx.observe("gw.deadline_kill", "code", out.error_code)
+    ctx.observe("gw.deadline_kill", "seconds", round(elapsed))
     ctx.observe("gw.hook_outlasts_slack", "landed", out.error.get("landed"))
+    ctx.observe("gw.hook_outlasts_slack", "retry", out.error.get("retry"))
     if out.real:
         ctx.check(out.code == 12, f"wanted exit 12, got {out.code}", "gw.deadline_kill")
+        ctx.check(
+            out.error_code == "outcome_unknown",
+            f"wanted outcome_unknown after {elapsed:.0f} s, got {out.error_code} "
+            "(network_error before the deadline means forgectl's own budget ended first)",
+            "gw.deadline_kill",
+        )
+        ctx.check(
+            out.error.get("landed") is None and out.error.get("retry") == "same_command",
+            "an unknown write must report landed null and retry same_command",
+            "gw.hook_outlasts_slack",
+        )
         ctx.check(
             len(ctx.posted("slow")) == 0,
             "the write landed although its hook never finished",

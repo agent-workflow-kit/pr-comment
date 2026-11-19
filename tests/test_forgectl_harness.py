@@ -455,7 +455,7 @@ def test_a_clean_use_passes(tmp_path: Path) -> None:
 
 def test_the_pinned_gateway_reports_the_pinned_version() -> None:
     assert PinnedGateway().lower_version() == f"forgectl {PINNED_VERSION}"
-    assert FakeGateway().lower_version() == "forgectl 0.1.0"  # the old default, kept for lower.py
+    assert FakeGateway().lower_version() == f"forgectl {PINNED_VERSION}"  # same default
 
 
 def doc_result(command: str, document: object, *args: str) -> ForgectlResult:
