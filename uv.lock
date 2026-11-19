@@ -259,7 +259,7 @@ wheels = [
 
 [[package]]
 name = "pr-comment"
-version = "0.35.0"
+version = "0.36.1"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },

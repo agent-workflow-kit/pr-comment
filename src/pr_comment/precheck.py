@@ -190,6 +190,27 @@ def _files_moves(plan: Plan, forge: Forge) -> dict[str, str]:
     return {c.finding_id: "files_incomplete" for c in plan.inline_comments if c.path not in listed}
 
 
+def _dry_run_cannot_give(plan: Plan, code: object) -> bool:
+    """Whether ``code`` is an answer a dry run of ``plan`` can never give (a contract break).
+
+    One write-only code is real on a dry run: forgectl's dedupe read (post order step 4) comes
+    before the dry run stops (step 6), so on GitHub a ``review`` or ``approve`` whose dedupe key
+    already posted and whose state step is still needed (an event change on a reused key) exits 12
+    ``outcome_partial`` with nothing sent. It is passed through with the table's GitHub pair
+    (``landed: false``, ``retry: new_key``). GitLab runs that state step instead, and a text action
+    has none, so there it stays a mismatch.
+
+    Evidence: the ``review`` dedupe hit was observed live against forgectl 0.55.2. ``approve`` is
+    inferred from the shared forgectl code path and not yet observed live. forgectl's doc orders
+    this error after the dry-run stop, so the observed behavior is a recorded deviation from it.
+    todo(#39): capture a live approve dry-run dedupe hit and record both cases in
+    tests/forgectl_cases.json
+    """
+    if code == "outcome_partial":
+        return not (plan.action in ("review", "approve") and plan.backend == "github")
+    return code in WRITE_ONLY_CODES or (code == "invalid_position" and plan.action != "review")
+
+
 def run_precheck(
     gateway: Gateway,
     forge: Forge,
@@ -220,7 +241,7 @@ def run_precheck(
         except LowerFailure as failure:
             error = _error_of(failure.outcome)
             code, reason = error.get("code"), error.get("reason")
-            if code in WRITE_ONLY_CODES or (code == "invalid_position" and plan.action != "review"):
+            if _dry_run_cannot_give(plan, code):
                 raise _fail(
                     mismatch_outcome(plan.action, "an error a dry run cannot give", gateway=gateway)
                 ) from None

@@ -968,6 +968,70 @@ def test_the_deadline_of_a_write_is_outcome_unknown_and_never_retried(
     assert audit(state_home)[1]["result"] == "outcome_unknown"
 
 
+@pytest.mark.parametrize("kind", KINDS)
+def test_the_deadline_during_a_pre_write_hook_is_outcome_unknown_never_a_safe_rerun(
+    cli: Run,
+    forgectl: FakeForgectl,
+    tmp_path: Path,
+    state_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+) -> None:
+    # a forgectl `pre-post` hook that outlasts the deadline: forgectl is killed before its own
+    # write, but from outside that cannot be told from a kill after it, so the run is unknown (#93)
+    from pr_comment import gateway
+
+    monkeypatch.setattr(gateway, "DEADLINE_SLACK_SECONDS", 0.0)
+    monkeypatch.setenv("PR_COMMENT_TIMEOUT", "4s")  # the reads before the write fit in it
+    # todo(#94): this deadline also bounds the show and dry-run calls; a load stall there reads
+    # as network_error
+    body = body_file(tmp_path)
+    forgectl.script(
+        show(),
+        dry(kind),
+        ok(kind, h.post_doc(kind, ids=["gh:ic:IC_1"]), hang={"phase": "before_write"}),
+    )
+    forgectl.allow_fake_errors = True  # a call that is killed has no end event
+    code, doc, _ = cli(*args_for(kind, body))
+    assert code == 12
+    error = doc["error"]
+    assert error["code"] == "outcome_unknown"
+    assert (error["landed"], error["retry"]) == (None, "same_command")
+    assert audit(state_home)[1]["result"] == "outcome_unknown"
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_deadline_before_a_slow_forgectl_answers_network_error_is_outcome_unknown(
+    cli: Run,
+    forgectl: FakeForgectl,
+    tmp_path: Path,
+    state_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+) -> None:
+    # forgectl's own network_error answer comes after the deadline kill here, so nothing was printed
+    # (the fake prints after its delay); the printed-envelope case is the unit test
+    # `test_a_killed_write_with_a_network_error_envelope_printed_stays_outcome_unknown`
+    from pr_comment import gateway
+
+    monkeypatch.setattr(gateway, "DEADLINE_SLACK_SECONDS", 0.0)
+    monkeypatch.setenv("PR_COMMENT_TIMEOUT", "4s")  # the reads before the write fit in it
+    # todo(#94): this deadline also bounds the show and dry-run calls; a load stall there reads
+    # as network_error
+    body = body_file(tmp_path)
+    forgectl.script(
+        show(),
+        dry(kind),
+        fail(kind, "network_error", phase="write", delay=10),
+    )
+    forgectl.allow_fake_errors = True
+    code, doc, _ = cli(*args_for(kind, body))
+    assert code == 12
+    error = doc["error"]
+    assert error["code"] == "outcome_unknown"
+    assert (error["landed"], error["retry"]) == (None, "same_command")
+
+
 def test_attempted_is_on_disk_while_forgectl_runs(
     forgectl: FakeForgectl, tmp_path: Path, state_home: Path
 ) -> None:
