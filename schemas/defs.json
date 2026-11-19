@@ -364,7 +364,7 @@
         "links": {
           "type": "integer",
           "minimum": 0,
-          "description": "Upper bound over the untrusted input, code included: link forms (URLs, www., mailto:, e-mail forms)."
+          "description": "Upper bound over the untrusted input, code included: link forms (URLs, www., mailto:, e-mail forms, inline link and image destinations, reference definitions, reference and footnote uses, angle autolinks)."
         },
         "images": {
           "type": "integer",

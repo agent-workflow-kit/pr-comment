@@ -372,7 +372,7 @@ ROWS: tuple[Row, ...] = (
     _r(
         "ts.link_forms",
         "#22",
-        "How a `javascript:` or relative link renders (recorded: the `javascript:` hrefs found).",
+        "How a `javascript:` or relative link renders on the hosts (unverified; the pinned cmark-gfm renders an empty href) (recorded: the `javascript:` hrefs found).",
     ),
     _r(
         "ts.postprocess",
