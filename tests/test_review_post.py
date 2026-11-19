@@ -330,6 +330,24 @@ def test_github_outcome_partial_is_not_landed_and_needs_a_new_key(
     assert len(forgectl.writes()) == 1
 
 
+def test_github_event_change_is_outcome_partial_from_the_dry_run_with_no_write(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path
+) -> None:
+    # real forgectl reads the dedupe key before the dry run stops, so the refusal to apply a new
+    # event to a reused key comes from the pre-check (#93); nothing is sent, nothing is audited
+    draft = draft_file(tmp_path, [finding("f1")])
+    details = {"landed": {"ids": ["gh:r:PRR_1"], "thread_ids": []}, "failed": "request_changes"}
+    forgectl.script(show(), fail("review", "outcome_partial", details=details, phase="read"))
+    code, doc, _ = cli(*args_for(draft))
+    assert code == 12
+    error = doc["error"]
+    assert error["code"] == "outcome_partial"
+    assert (error["landed"], error["retry"]) == (False, "new_key")
+    assert error["details"] == details
+    assert forgectl.writes() == []
+    assert audit(state_home) == []
+
+
 @pytest.mark.parametrize(
     ("landed", "want"),
     [
@@ -916,6 +934,49 @@ def test_the_deadline_of_a_write_is_outcome_unknown_and_never_retried(
     assert (error["landed"], error["retry"]) == (None, "same_command")
     assert len(forgectl.writes()) == 1
     assert audit(state_home)[1]["result"] == "outcome_unknown"
+
+
+def test_the_deadline_during_a_pre_write_hook_of_a_review_is_outcome_unknown(
+    cli: Run,
+    forgectl: FakeForgectl,
+    tmp_path: Path,
+    state_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # the live deadline_kill scenario (#93): a slow forgectl hook, killed at the deadline before
+    # forgectl's own write; from outside that is a write of unknown outcome, never `landed: false`
+    from pr_comment import gateway
+
+    monkeypatch.setattr(gateway, "DEADLINE_SLACK_SECONDS", 0.0)
+    monkeypatch.setenv("PR_COMMENT_TIMEOUT", "4s")  # the reads before the write must finish in it
+    draft = draft_file(tmp_path, [finding("f1")])
+    forgectl.script(
+        show(),
+        dry(),
+        ok("review", h.post_doc("review", ids=["gh:rc:RC_1"]), hang={"phase": "before_write"}),
+    )
+    forgectl.allow_fake_errors = True  # a call that is killed has no end event
+    code, doc, _ = cli(*args_for(draft))
+    assert code == 12
+    error = doc["error"]
+    assert error["code"] == "outcome_unknown"
+    assert (error["landed"], error["retry"]) == (None, "same_command")
+    assert audit(state_home)[1]["result"] == "outcome_unknown"
+
+
+def test_a_forgectl_network_error_without_a_kill_is_not_landed_and_a_plain_rerun(
+    cli: Run, forgectl: FakeForgectl, tmp_path: Path, state_home: Path
+) -> None:
+    # forgectl's own budget ran out before its write (post order step 9, no `attempted` record):
+    # forgectl's table says nothing landed, so the documented pair is false / same_command (#93)
+    draft = draft_file(tmp_path, [finding("f1")])
+    forgectl.script(show(), dry(), fail("review", "network_error", phase="write"))
+    code, doc, _ = cli(*args_for(draft))
+    assert code == 12
+    error = doc["error"]
+    assert error["code"] == "network_error"
+    assert (error["landed"], error["retry"]) == (False, "same_command")
+    assert audit(state_home)[1]["result"] == "failed"
 
 
 def test_attempted_is_on_disk_while_forgectl_runs(
