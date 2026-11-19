@@ -9,6 +9,7 @@ leaves one alive (never by pattern). No forgectl is involved.
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import shutil
@@ -587,6 +588,28 @@ def test_an_async_hook_that_cannot_start_leaves_no_directory_behind(
     assert tmp_entries(dirs) == []
     run_post(r, DecisionIds(()), lambda e, d: PAYLOAD)  # warns "hook_not_started", never raises
     assert tmp_entries(dirs) == []
+
+
+def test_a_failed_payload_descriptor_duplication_leaks_no_descriptor(
+    dirs: StateDirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_fcntl = hooks_module.fcntl.fcntl
+    calls: list[int] = []
+
+    def fcntl_fails_for_payload(fd: int, cmd: int, *args: int) -> int:
+        calls.append(fd)
+        if len(calls) > 3:  # the three directory duplicates succeed; the payload's fails
+            raise OSError(errno.EMFILE, "too many open files")
+        return real_fcntl(fd, cmd, *args)
+
+    cmd = "exit 0"
+    r = runner(dirs, post=[entry(cmd, async_=True)])
+    before = len(os.listdir("/proc/self/fd"))
+    monkeypatch.setattr(hooks_module.fcntl, "fcntl", fcntl_fails_for_payload)
+    assert r.spawn_detached(POST, entry(cmd, async_=True), PAYLOAD) is False
+    assert len(calls) == 4
+    assert tmp_entries(dirs) == []
+    assert len(os.listdir("/proc/self/fd")) == before
 
 
 def test_an_async_hooks_stdout_is_never_read_for_ids(dirs: StateDirs, tmp_path: Path) -> None:

@@ -530,7 +530,12 @@ class HookRunner:
 def _high_descriptor(fd: int, held: list[int], *, close: bool = False) -> int:
     """A duplicate of ``fd`` above 2 (close-on-exec), recorded in ``held``; ``close`` also closes
     ``fd`` itself."""
-    high = fcntl.fcntl(fd, fcntl.F_DUPFD_CLOEXEC, 3)
+    try:
+        high = fcntl.fcntl(fd, fcntl.F_DUPFD_CLOEXEC, 3)
+    except OSError:
+        if close:
+            os.close(fd)  # the caller never sees ``fd``, so nothing else would close it
+        raise
     held.append(high)
     if close:
         os.close(fd)
