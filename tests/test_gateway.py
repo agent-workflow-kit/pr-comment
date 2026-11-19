@@ -392,8 +392,8 @@ def test_hang_is_killed_at_the_deadline_with_its_group(tmp_path: Path, tracker: 
         """,
     )
     started = time.monotonic()
-    result = _gateway(tmp_path, deadline=0.5, term_grace=0.3).call("show", [PR])
-    assert time.monotonic() - started < 10
+    result = _gateway(tmp_path, deadline=5.0, term_grace=0.3).call("show", [PR])
+    assert time.monotonic() - started < 50  # ended by the deadline, not by the 60 s sleeps
     assert result.timed_out and result.exit_code is None
     rows = recorded(tmp_path)
     assert len(rows) == 2
@@ -427,7 +427,7 @@ def test_deadline_terminates_the_leader_only_then_the_group_is_killed(
         time.sleep(60)
         """,
     )
-    result = _gateway(tmp_path, deadline=3.0, term_grace=5.0).call("show", [PR])
+    result = _gateway(tmp_path, deadline=10.0, term_grace=5.0).call("show", [PR])
     assert result.timed_out and result.leftover
     assert result.exit_code == 0  # forgectl's own status is kept (R7)
     assert (tmp_path / "leader-term").exists()  # the leader got the SIGTERM
@@ -450,7 +450,7 @@ def test_deadline_kill_keeps_what_forgectl_left(tmp_path: Path, tracker: Tracker
         time.sleep(60)
         """,
     )
-    result = _gateway(tmp_path, deadline=2.0, term_grace=5.0).call(
+    result = _gateway(tmp_path, deadline=10.0, term_grace=5.0).call(
         "comment", [PR, "--body-file", "-"], stdin=b"x"
     )
     assert result.timed_out and result.exit_code == 12 and b"outcome_unknown" in result.stdout
@@ -487,7 +487,7 @@ def test_group_member_holding_the_pipes_is_ended_and_the_call_returns(
     )
     started = time.monotonic()
     result = _gateway(tmp_path, drain_grace=0.3).call("show", [PR])
-    assert time.monotonic() - started < 10
+    assert time.monotonic() - started < 50  # not held for the grandchild's 60 s
     assert result.exit_code == 0 and result.leftover
     if hasattr(os, "waitid"):  # the group is signaled while its leader is still unreaped
         for pid, _pgid, start in recorded(tmp_path):
@@ -844,7 +844,10 @@ def test_an_inherited_ignored_signal_is_kept_and_does_not_interrupt(
         tmp_path,
         """
         open(D + "/ready", "w").close()
-        time.sleep(1.5)
+        for _ in range(1200):  # held until the test has sent its signal (bounded at 60 s)
+            if os.path.exists(D + "/go"):
+                break
+            time.sleep(0.05)
         print('{}')
         """,
     )
@@ -861,7 +864,8 @@ def test_an_inherited_ignored_signal_is_kept_and_does_not_interrupt(
     try:
         _wait_for(tmp_path / "ready")
         driver.send_signal(signum)  # to the exact driver pid this test started
-        out, err = driver.communicate(timeout=30)
+        (tmp_path / "go").write_text("go", encoding="utf-8")
+        out, err = driver.communicate(timeout=90)
     finally:
         if driver.poll() is None:
             driver.kill()

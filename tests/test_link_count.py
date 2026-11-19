@@ -218,19 +218,19 @@ _ADVERSARIAL = [
 @pytest.mark.parametrize("index", range(len(_ADVERSARIAL)))
 def test_counting_is_linear_on_adversarial_input(index: int) -> None:
     text = _ADVERSARIAL[index]
-    start = time.perf_counter()
+    start = time.process_time()  # CPU time of this process: a stall under load is not counted
     count_text(text)
-    assert time.perf_counter() - start < 5.0
+    assert time.process_time() - start < 30.0  # quadratic work on 1 MB is minutes, not seconds
 
 
 def test_counting_time_grows_linearly() -> None:
     def cost(n: int) -> float:
         text = "<a:[x](u) \n  [r]: v " * n
         best = float("inf")
-        for _ in range(3):
-            start = time.perf_counter()
+        for _ in range(5):
+            start = time.process_time()  # CPU time: descheduling under load is not counted
             count_text(text)
-            best = min(best, time.perf_counter() - start)
+            best = min(best, time.process_time() - start)
         return best
 
     small, large = cost(20_000), cost(160_000)

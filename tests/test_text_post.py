@@ -39,6 +39,7 @@ from tests.test_review_post import (
     _stable,
     audit,
     log,
+    short_write_deadline,
     state_dir,
     validate_audit,
 )
@@ -929,10 +930,7 @@ def test_the_deadline_of_a_write_is_outcome_unknown_and_never_retried(
     monkeypatch: pytest.MonkeyPatch,
     kind: str,
 ) -> None:
-    from pr_comment import gateway
-
-    monkeypatch.setattr(gateway, "DEADLINE_SLACK_SECONDS", 0.0)
-    monkeypatch.setenv("PR_COMMENT_TIMEOUT", "1s")
+    short_write_deadline(monkeypatch)
     body = body_file(tmp_path)
     forgectl.script(
         show(),

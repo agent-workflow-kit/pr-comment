@@ -96,6 +96,26 @@ def posted(pr: str = PR, **kw: Any) -> dict[str, Any]:
     return ok("review", h.post_doc("review", pr, **kw))
 
 
+def short_write_deadline(monkeypatch: pytest.MonkeyPatch, seconds: float = 6.0) -> None:
+    """Give only the forgectl calls that can write a short deadline (issue #94).
+
+    The earlier ``show``, pre-check and ``--version`` calls keep the normal deadline, so a stall
+    under load cannot turn into a ``network_error`` before the write is reached. The write's own
+    deadline stays at least 5 s: a hung write is killed at it either way, and a loaded machine
+    that is slow to start the fake still ends in the same outcome.
+    """
+    from pr_comment import gateway
+
+    real = gateway.run_process
+
+    def run_process(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("write"):
+            kwargs["deadline"] = seconds
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(gateway, "run_process", run_process)
+
+
 def args_for(draft: str, *extra: str, pr: str = PR) -> tuple[str, ...]:
     return ("review", pr, "--draft-file", draft, "--json", "--actor", ACTOR, "--yes", *extra)
 
@@ -894,10 +914,7 @@ def test_the_deadline_of_a_write_is_outcome_unknown_and_never_retried(
     state_home: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from pr_comment import gateway
-
-    monkeypatch.setattr(gateway, "DEADLINE_SLACK_SECONDS", 0.0)
-    monkeypatch.setenv("PR_COMMENT_TIMEOUT", "1s")
+    short_write_deadline(monkeypatch)
     draft = draft_file(tmp_path, [finding("f1")])
     forgectl.script(
         show(),

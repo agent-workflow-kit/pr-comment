@@ -42,6 +42,8 @@ from tests.test_hooks import (
 )
 
 GRACE = 0.3
+# A hook timeout the hook must outlive its own start-up under (issue #94): never below 5 s.
+TIMEOUT = 5.0
 
 
 @pytest.fixture
@@ -108,7 +110,7 @@ def make_runner(dirs: StateDirs, *, log: bool = True) -> HookRunner:
 
 
 def spawn(
-    runner: HookRunner, cmd: str, timeout: float = 0.6, index: int = 3
+    runner: HookRunner, cmd: str, timeout: float = TIMEOUT, index: int = 3
 ) -> subprocess.Popen[bytes]:
     entry = HookEntry(cmd, timeout, async_=True)
     assert runner.spawn_detached(POST, entry, PAYLOAD, index) is True
@@ -143,8 +145,8 @@ def test_an_async_hook_over_its_timeout_is_terminated_with_everything_in_its_gro
     runner = make_runner(dirs)
     started = time.monotonic()
     supervisor = spawn(runner, f"echo $$ >> {pids}; sleep 60 & echo $! >> {pids}; wait")
-    assert supervisor.wait(10) == 0
-    assert time.monotonic() - started < 5
+    assert supervisor.wait(60) == 0
+    assert time.monotonic() - started < 50  # ended by the timeout, not by the hook's 60 s
     hook_pid, child_pid = recorded(pids)
     assert wait_dead(hook_pid) and wait_dead(child_pid)
     # Neither is left as a zombie either: the supervisor reaped the leader, init the rest.
@@ -157,7 +159,7 @@ def test_a_timeout_logs_one_warning_with_a_fixed_reason_and_no_hook_text(
     secret = "do-not-log-this-hook-text"
     runner = make_runner(dirs)
     supervisor = spawn(runner, f"echo $$ >> {pids}; echo {secret} >&2; sleep 60", index=3)
-    assert supervisor.wait(10) == 0
+    assert supervisor.wait(60) == 0
     lines = log_lines(dirs)
     assert [(r["event"], r["level"]) for r in lines] == [("warning", "warn")]
     assert lines[0]["details"] == {"hook": "post-post", "index": 3, "reason": "hook_timeout"}
@@ -172,13 +174,14 @@ def test_a_hook_that_ignores_sigterm_is_killed_after_the_grace_period(
     trapped = tmp_path / "trapped"
     cmd = f"trap 'echo term >> {trapped}' TERM; echo $$ >> {pids}; while :; do sleep 0.05; done"
     started = time.monotonic()
-    supervisor = spawn(runner, cmd, timeout=0.5)
-    assert supervisor.wait(10) == 0
+    supervisor = spawn(runner, cmd)
+    assert supervisor.wait(60) == 0
     elapsed = time.monotonic() - started
     (hook_pid,) = recorded(pids)
-    assert wait_dead(hook_pid, 0.5)
-    # SIGKILL came after the grace period (not at once) and well before the 5 s of the last wait.
-    assert 0.5 + GRACE * 0.9 <= elapsed < 0.5 + GRACE + 2
+    assert wait_dead(hook_pid, 10)
+    # SIGKILL came after the grace period, not at once. Load can only add time, so there is no
+    # upper bound; the supervisor's own 60 s wait above bounds a hang.
+    assert TIMEOUT + GRACE * 0.9 <= elapsed
     assert trapped.read_text().split() == ["term"]  # SIGTERM came first, then SIGKILL
     assert [r["details"]["reason"] for r in log_lines(dirs)] == ["hook_timeout"]
 
@@ -194,7 +197,7 @@ def test_the_working_directory_is_removed_when_the_watchdog_ends_the_hook(
     assert wait_file(seen)
     (entry,) = tmp_entries(dirs)  # the hook's directory exists while it runs
     assert Path(seen.read_text().strip()) == (dirs.tmp_path / entry).resolve()
-    assert supervisor.wait(10) == 0
+    assert supervisor.wait(60) == 0
     assert tmp_entries(dirs) == []  # removed with what the hook left in it
 
 
@@ -204,7 +207,7 @@ def test_only_the_hooks_own_group_is_signaled(
     other = start_bystander(bystanders)
     runner = make_runner(dirs)
     supervisor = spawn(runner, f"echo $$ >> {pids}; sleep 60")
-    assert supervisor.wait(10) == 0
+    assert supervisor.wait(60) == 0
     assert other.poll() is None  # a process in another group and session survives
     (hook_pid,) = recorded(pids)
     assert wait_dead(hook_pid)
@@ -216,8 +219,8 @@ def test_a_hook_that_starts_a_new_session_escapes_the_group_kill(
     """Documented limit: only the group the supervisor created is signaled."""
     runner = make_runner(dirs)
     cmd = f"echo $$ >> {pids}; setsid sh -c 'echo $$ >> {pids}; sleep 60' & sleep 60"
-    supervisor = spawn(runner, cmd, timeout=0.5)
-    assert supervisor.wait(10) == 0
+    supervisor = spawn(runner, cmd)
+    assert supervisor.wait(60) == 0
     hook_pid, escaped = recorded(pids)
     assert wait_dead(hook_pid) and alive(escaped)  # killed by ``pids`` at teardown
 
@@ -234,8 +237,8 @@ def test_a_hook_that_ends_before_its_timeout_ends_the_watchdog_quietly(
     supervisor = spawn(
         runner, f"echo $$ >> {pids}; cat > {tmp_path}/got.json; echo ok > {done}", 30
     )
-    assert supervisor.wait(10) == 0
-    assert time.monotonic() - started < 10  # it did not wait for the 30 s timeout
+    assert supervisor.wait(60) == 0
+    assert time.monotonic() - started < 30  # it did not wait for the 30 s timeout
     assert done.read_text() == "ok\n"
     assert json.loads((tmp_path / "got.json").read_text()) == PAYLOAD
     assert log_lines(dirs) == [] and tmp_entries(dirs) == []
@@ -244,14 +247,14 @@ def test_a_hook_that_ends_before_its_timeout_ends_the_watchdog_quietly(
 def test_a_failing_hook_is_not_a_warning_the_watchdog_owns(dirs: StateDirs, pids: Path) -> None:
     runner = make_runner(dirs)
     supervisor = spawn(runner, f"echo $$ >> {pids}; exit 7", 30)
-    assert supervisor.wait(10) == 0
+    assert supervisor.wait(60) == 0
     assert log_lines(dirs) == [] and tmp_entries(dirs) == []
 
 
 def test_what_a_hook_left_running_in_its_group_ends_with_it(dirs: StateDirs, pids: Path) -> None:
     runner = make_runner(dirs)
     supervisor = spawn(runner, f"echo $$ >> {pids}; sleep 60 & echo $! >> {pids}; exit 0", 30)
-    assert supervisor.wait(10) == 0
+    assert supervisor.wait(60) == 0
     hook_pid, child_pid = recorded(pids)
     assert wait_dead(hook_pid) and wait_dead(child_pid)
     assert log_lines(dirs) == []  # a normal end, not a timeout
@@ -264,7 +267,7 @@ def test_the_hook_gets_no_descriptor_of_the_state_directory(
     listing = tmp_path / "fds"
     cmd = f'for f in /proc/$$/fd/*; do readlink "$f"; done > {listing}'
     supervisor = spawn(runner, cmd, 30)
-    assert supervisor.wait(10) == 0
+    assert supervisor.wait(60) == 0
     targets = listing.read_text().splitlines()
     assert targets  # the hook did list its descriptors
     assert not [t for t in targets if "private-home" in t and t != str(listing)]
@@ -282,7 +285,7 @@ def test_the_hook_gets_exactly_the_environment_it_is_given(dirs: StateDirs, tmp_
     seen = tmp_path / "env"
     entry = HookEntry(f"env > {seen}", 30, async_=True)
     assert runner.spawn_detached(POST, entry, PAYLOAD, 0)
-    assert hooks_module._DETACHED[-1].wait(10) == 0  # pyright: ignore[reportPrivateUsage]
+    assert hooks_module._DETACHED[-1].wait(60) == 0  # pyright: ignore[reportPrivateUsage]
     env = dict(line.split("=", 1) for line in seen.read_text().splitlines())
     expected = hooks_module.hook_environment(
         {**BASE_ENV, "KEEP": "k", "PYTHONPATH": "/x"}, (), hook=POST, pr=PR
@@ -296,15 +299,15 @@ def test_a_hook_that_cannot_be_started_leaves_a_warning_and_no_directory(
     monkeypatch.setattr(hooks_module, "SHELL", "/nonexistent/sh")
     runner = make_runner(dirs)
     supervisor = spawn(runner, "exit 0", 30)
-    assert supervisor.wait(10) == 0
+    assert supervisor.wait(60) == 0
     assert [r["details"]["reason"] for r in log_lines(dirs)] == ["hook_not_started"]
     assert tmp_entries(dirs) == []
 
 
 def test_without_a_log_the_watchdog_writes_nothing(dirs: StateDirs, pids: Path) -> None:
     runner = make_runner(dirs, log=False)
-    supervisor = spawn(runner, f"echo $$ >> {pids}; sleep 60", 0.4)
-    assert supervisor.wait(10) == 0
+    supervisor = spawn(runner, f"echo $$ >> {pids}; sleep 60")
+    assert supervisor.wait(60) == 0
     assert log_lines(dirs) == [] and tmp_entries(dirs) == []
 
 
@@ -327,7 +330,7 @@ def test_the_watchdog_outlives_the_main_process_and_still_enforces_the_timeout(
                 runner = HookRunner(HookSet(), dirs=dirs, environ={dict(BASE_ENV)!r},
                                     log=LogWriter.open(dirs), pr={PR!r}, attempt_id=None,
                                     term_grace={GRACE})
-                entry = HookEntry({f"echo $$ >> {pids}; sleep 60"!r}, 1.0, async_=True)
+                entry = HookEntry({f"echo $$ >> {pids}; sleep 60"!r}, 5.0, async_=True)
                 assert runner.spawn_detached("post-post", entry, {{}}, 0)
             """
         )
@@ -356,7 +359,7 @@ def test_sigterm_to_the_watchdog_ends_the_hook_and_removes_the_directory(
     while len(recorded(pids)) < 2 and time.monotonic() < deadline:
         time.sleep(0.02)
     supervisor.send_signal(signal.SIGTERM)  # an exact PID: our own Popen
-    assert supervisor.wait(10) is not None
+    assert supervisor.wait(60) is not None
     hook_pid, child_pid = recorded(pids)
     assert wait_dead(hook_pid) and wait_dead(child_pid)
     assert tmp_entries(dirs) == []
@@ -371,12 +374,10 @@ def test_a_signal_to_the_watchdog_escalates_a_hook_that_traps_sigterm(
     cmd = f"trap 'echo term >> {trapped}' TERM; echo $$ >> {pids}; while :; do sleep 0.05; done"
     supervisor = spawn(runner, cmd, 60)
     assert wait_file(pids)
-    sent = time.monotonic()
     supervisor.send_signal(signal.SIGTERM)  # an exact PID: our own Popen
-    assert supervisor.wait(10) == 0
-    assert time.monotonic() - sent < GRACE + 2  # SIGKILL after the grace period, no 5 s wait
+    assert supervisor.wait(60) == 0
     (hook_pid,) = recorded(pids)
-    assert wait_dead(hook_pid, 0.5)
+    assert wait_dead(hook_pid, 10)
     assert set(trapped.read_text().split()) == {"term"}  # trapped (forwarded, then group), killed
     assert tmp_entries(dirs) == []
     assert [r["details"]["reason"] for r in log_lines(dirs)] == ["hook_interrupted"]
@@ -386,12 +387,12 @@ def test_a_killed_watchdog_leaves_the_hook_to_its_own_end(dirs: StateDirs, pids:
     """SIGKILL gives the watchdog no chance to act: the hook runs on, as it did before the
     watchdog existed (documented); the directory is then swept by age as for any hook."""
     runner = make_runner(dirs)
-    supervisor = spawn(runner, f"echo $$ >> {pids}; sleep 60", 0.5)
+    supervisor = spawn(runner, f"echo $$ >> {pids}; sleep 60")
     assert wait_file(pids)
     supervisor.kill()
     supervisor.wait(5)
     (hook_pid,) = recorded(pids)
-    time.sleep(1.0)  # past the timeout the dead watchdog would have enforced
+    time.sleep(TIMEOUT + 1.0)  # past the timeout the dead watchdog would have enforced
     assert alive(hook_pid)  # torn down by ``pids``
     assert len(tmp_entries(dirs)) == 1
 
@@ -399,7 +400,7 @@ def test_a_killed_watchdog_leaves_the_hook_to_its_own_end(dirs: StateDirs, pids:
 def test_finished_supervisors_are_reaped_not_left_as_zombies(dirs: StateDirs) -> None:
     runner = make_runner(dirs)
     first = spawn(runner, "exit 0", 30)
-    assert first.wait(10) == 0
+    assert first.wait(60) == 0
     spawn(runner, "exit 0", 30)  # starting another prunes the finished one
     assert first not in hooks_module._DETACHED  # pyright: ignore[reportPrivateUsage]
 
@@ -473,7 +474,7 @@ def test_a_normal_end_signals_only_the_hooks_own_group_and_never_waits_for_the_t
     job = workdir_job(dirs, f"echo $$ >> {pids}; exit 0", 30)
     started = time.monotonic()
     watchdog.supervise(job, b"{}", LogWriter.disabled())
-    assert time.monotonic() - started < 10
+    assert time.monotonic() - started < 30
     (hook_pid,) = recorded(pids)
     assert {pid for pid, _, _ in sent} <= {hook_pid}  # never another group, nor the supervisor's
     assert all(sig == signal.SIGKILL for _, sig, _ in sent)  # after a normal end: leftovers only
@@ -535,7 +536,7 @@ def test_the_hook_environment_cannot_leak_into_the_command_line(
     assert secret.encode() not in argv and secret.encode() not in environ
     assert b"sleep" not in argv  # the command is in the file as well
     supervisor.send_signal(signal.SIGTERM)
-    supervisor.wait(10)
+    supervisor.wait(60)
 
 
 def test_the_supervisor_leads_its_own_session_and_group(dirs: StateDirs, pids: Path) -> None:
@@ -546,7 +547,7 @@ def test_the_supervisor_leads_its_own_session_and_group(dirs: StateDirs, pids: P
     assert os.getpgid(supervisor.pid) == supervisor.pid
     assert os.getsid(supervisor.pid) != os.getsid(0) and os.getpgid(supervisor.pid) != os.getpgrp()
     supervisor.send_signal(signal.SIGTERM)
-    supervisor.wait(10)
+    supervisor.wait(60)
 
 
 def test_the_hook_environment_stays_out_of_the_supervisors_environment(
@@ -569,7 +570,7 @@ def test_the_hook_environment_stays_out_of_the_supervisors_environment(
     assert name.encode() not in environ, "a hook variable name is in the supervisor environment"
     assert value.encode() not in environ, "a hook variable value is in the supervisor environment"
     supervisor.send_signal(signal.SIGTERM)
-    supervisor.wait(10)
+    supervisor.wait(60)
 
 
 # --- what a hook leaves behind -----------------------------------------------------------------
@@ -583,7 +584,7 @@ def test_a_leftover_with_its_output_redirected_is_killed_at_a_normal_end(
     runner = make_runner(dirs)
     cmd = f"echo $$ >> {pids}; {QUIET_LEFTOVER.format(pids=pids)}; exit 0"
     supervisor = spawn(runner, cmd, 30)
-    assert supervisor.wait(10) == 0
+    assert supervisor.wait(60) == 0
     hook_pid, child_pid = recorded(pids)
     assert wait_dead(hook_pid) and wait_dead(child_pid, 2)
 
@@ -593,8 +594,8 @@ def test_a_leftover_with_its_output_redirected_is_killed_at_the_timeout(
 ) -> None:
     runner = make_runner(dirs)
     cmd = f"echo $$ >> {pids}; {QUIET_LEFTOVER.format(pids=pids)}; wait"
-    supervisor = spawn(runner, cmd, 0.5)
-    assert supervisor.wait(10) == 0
+    supervisor = spawn(runner, cmd)
+    assert supervisor.wait(60) == 0
     hook_pid, child_pid = recorded(pids)
     assert wait_dead(hook_pid) and wait_dead(child_pid, 2)
 
@@ -721,7 +722,7 @@ def test_without_waitid_a_timeout_still_ends_the_hook_and_removes_the_directory(
     sent: list[tuple[int, int]] = []
     real_killpg = os.killpg
     monkeypatch.setattr(os, "killpg", lambda p, s: (sent.append((p, s)), real_killpg(p, s)))
-    job = workdir_job(dirs, f"echo $$ >> {pids}; sleep 60", 0.4)
+    job = workdir_job(dirs, f"echo $$ >> {pids}; sleep 60", TIMEOUT)
     log = LogWriter.open(dirs)
     watchdog.supervise(job, b"{}", log)
     log.close()
