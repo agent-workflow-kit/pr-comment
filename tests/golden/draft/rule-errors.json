@@ -215,6 +215,12 @@
       "pointer": "/findings/2/suggestion"
     }
   ],
+  "finding-body-blank-and-over-cap": [
+    {
+      "message": "must contain a character that is not blank",
+      "pointer": "/findings/0/body"
+    }
+  ],
   "finding-body-empty": [
     {
       "message": "must not be empty",

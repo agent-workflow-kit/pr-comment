@@ -326,6 +326,12 @@ RULES: list[tuple[str, Mutator, str, bool]] = [
         "/unanchored/0/finding/body",
         False,
     ),
+    (
+        "finding-body-blank-and-over-cap",
+        _set(["findings", 0, "body"], " " * 65537),
+        "/findings/0/body",
+        True,
+    ),
     ("finding-body-type", _set(["findings", 0, "body"], 1), "/findings/0/body", True),
     ("finding-body-over-cap", _set(["findings", 0, "body"], "a" * 65537), "/findings/0/body", True),
     (
