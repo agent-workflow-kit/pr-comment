@@ -52,6 +52,8 @@ WRONG = [
     pytest.param({**h.resolve_doc("resolve", T1), "changed": "yes"}, id="changed-not-bool"),
     pytest.param({**h.resolve_doc("resolve", T1), "dry_run": 0}, id="dry-run-not-bool"),
     pytest.param({"pr": PR}, id="missing-fields"),
+    pytest.param(h.resolve_doc("resolve", "x"), id="thread-outside-the-grammar"),
+    pytest.param(h.resolve_doc("resolve", ""), id="thread-empty"),
     pytest.param(None, id="not-a-document"),
     pytest.param([h.resolve_doc("resolve", T1)], id="a-list"),
 ]
@@ -94,9 +96,31 @@ def test_each_kind_of_mismatch_of_the_body_thread_keeps_its_own_message() -> Non
     )
 
 
+def _orders_mismatch(command: str, answer: Any) -> dict[str, Any]:
+    request = ThreadRequest(command, PR, ACTOR, (T1,))  # type: ignore[arg-type]
+    run = ThreadRun(request, show_of(), h.HEAD)
+    with pytest.raises(LowerFailure) as caught:
+        _checked_answer(answer, request, Item(T1, ThreadTarget(T1), True), run.show, FakeGateway())
+    return caught.value.outcome.document["error"]  # type: ignore[index,no-any-return]
+
+
+@pytest.mark.parametrize("command", ["resolve", "unresolve"])
+def test_the_orders_name_the_command_of_the_order_in_a_mismatch(command: str) -> None:
+    error = _orders_mismatch(command, h.resolve_doc(command, T2))
+    assert error["details"]["command"] == command
+
+
+def test_the_body_thread_names_resolve_in_a_mismatch() -> None:
+    with pytest.raises(LowerFailure) as caught:
+        _via_body_thread(h.resolve_doc("resolve", T2))
+    assert caught.value.outcome.document["error"]["details"]["command"] == "resolve"  # type: ignore[index]
+
+
 def test_the_orders_say_one_thing_for_every_mismatch() -> None:
     messages: set[str] = set()
     for answer in (
+        h.resolve_doc("resolve", T1, "github.com/acme/other#8"),
+        h.resolve_doc("unresolve", T1),
         h.resolve_doc("resolve", T2),
         {**h.resolve_doc("resolve", T1), "resolved": False},
     ):
