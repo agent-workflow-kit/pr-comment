@@ -1418,13 +1418,21 @@ def s_config_flag(ctx: Ctx) -> None:
 
 @scenario(rows=("gw.deadline_kill", "gw.hook_outlasts_slack"), needs=("slow",))
 def s_deadline_kill(ctx: Ctx) -> None:
-    """A forgectl hook that outlasts the deadline: outcome_unknown."""
+    """A forgectl hook that outlasts the deadline: outcome_unknown, landed null.
+
+    ``timeout`` is forgectl's budget for its host calls and the deadline is that plus the slack
+    (60 s). A budget as short as a few seconds is spent by forgectl's own pre-write reads on a real
+    host: forgectl then answers ``network_error`` (nothing sent, ``landed: false``) before the hook
+    ever runs and the deadline is never reached (found live, #93). The budget must outlast those
+    reads, so only the hook is slow.
+    """
     config = ctx.runner.workdir / "forgectl-slow.yaml"
     config.write_text(
         _forgectl_hosts(ctx) + "hooks:\n  pre-post:\n    - cmd: 'sleep 200'\n      timeout: 200s\n",
         encoding="utf-8",
     )
     config.chmod(0o600)
+    started = time.monotonic()
     out = ctx.runner.pc(
         "slow-hook",
         "comment",
@@ -1433,14 +1441,28 @@ def s_deadline_kill(ctx: Ctx) -> None:
         "-",
         stdin=ctx.text("slow", "Deadline probe.").encode(),
         forgectl_config=str(config),
-        extra_config="timeout: 5s\n",
+        extra_config="timeout: 30s\n",
         timeout=400,
     )
+    elapsed = time.monotonic() - started
     ctx.observe("gw.deadline_kill", "exit", out.code)
     ctx.observe("gw.deadline_kill", "code", out.error_code)
+    ctx.observe("gw.deadline_kill", "seconds", round(elapsed))
     ctx.observe("gw.hook_outlasts_slack", "landed", out.error.get("landed"))
+    ctx.observe("gw.hook_outlasts_slack", "retry", out.error.get("retry"))
     if out.real:
         ctx.check(out.code == 12, f"wanted exit 12, got {out.code}", "gw.deadline_kill")
+        ctx.check(
+            out.error_code == "outcome_unknown",
+            f"wanted outcome_unknown after {elapsed:.0f} s, got {out.error_code} "
+            "(network_error before the deadline means forgectl's own budget ended first)",
+            "gw.deadline_kill",
+        )
+        ctx.check(
+            out.error.get("landed") is None and out.error.get("retry") == "same_command",
+            "an unknown write must report landed null and retry same_command",
+            "gw.hook_outlasts_slack",
+        )
         ctx.check(
             len(ctx.posted("slow")) == 0,
             "the write landed although its hook never finished",
