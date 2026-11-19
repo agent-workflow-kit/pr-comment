@@ -227,9 +227,21 @@
       "pointer": "/findings/0/body"
     }
   ],
+  "finding-body-invisible-only": [
+    {
+      "message": "must contain a character that is not blank",
+      "pointer": "/findings/1/body"
+    }
+  ],
   "finding-body-multibyte-over-cap": [
     {
       "message": "is longer than 65536 bytes of UTF-8",
+      "pointer": "/findings/0/body"
+    }
+  ],
+  "finding-body-nbsp-only": [
+    {
+      "message": "must contain a character that is not blank",
       "pointer": "/findings/0/body"
     }
   ],
@@ -654,6 +666,12 @@
     }
   ],
   "unanchored-body-blank": [
+    {
+      "message": "must contain a character that is not blank",
+      "pointer": "/unanchored/0/finding/body"
+    }
+  ],
+  "unanchored-body-invisible-only": [
     {
       "message": "must contain a character that is not blank",
       "pointer": "/unanchored/0/finding/body"
