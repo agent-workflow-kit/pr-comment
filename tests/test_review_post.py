@@ -962,12 +962,7 @@ def test_the_deadline_during_a_pre_write_hook_of_a_review_is_outcome_unknown(
 ) -> None:
     # the live deadline_kill scenario (#93): a slow forgectl hook, killed at the deadline before
     # forgectl's own write; from outside that is a write of unknown outcome, never `landed: false`
-    from pr_comment import gateway
-
-    monkeypatch.setattr(gateway, "DEADLINE_SLACK_SECONDS", 0.0)
-    monkeypatch.setenv("PR_COMMENT_TIMEOUT", "4s")  # the reads before the write must finish in it
-    # todo(#94): this deadline also bounds the show and dry-run calls; a load stall there reads
-    # as network_error
+    short_write_deadline(monkeypatch)
     draft = draft_file(tmp_path, [finding("f1")])
     forgectl.script(
         show(),
