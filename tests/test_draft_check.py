@@ -473,3 +473,56 @@ def test_draft_check_does_not_use_the_gateway(
     monkeypatch.setattr(gateway, "run_process", boom)
     monkeypatch.setattr(gateway.ProcessGateway, "__init__", boom)
     assert main(["draft", "check", write(tmp_path, good()), "--json"]) == 0
+
+
+# --- the inline comment cap (#70) --------------------------------------------------------------
+
+CAP_MESSAGE = (
+    "has more than 200 findings with a line; "
+    "forgectl accepts at most 200 inline comments in one review"
+)
+
+
+def _inline_doc(inline: int, *, file_level: int = 0) -> Doc:
+    doc = good()
+    findings = [
+        {"id": f"i{n}", "path": "src/a.py", "line": n + 1, "body": "text"} for n in range(inline)
+    ]
+    findings += [
+        {"id": f"g{n}", "path": "src/a.py", "line": None, "body": "text"} for n in range(file_level)
+    ]
+    doc["findings"] = findings
+    doc["unanchored"] = []
+    return doc
+
+
+def test_200_findings_with_a_line_are_valid(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    code, doc, _ = run(capsys, ["draft", "check", write(tmp_path, _inline_doc(200))])
+    assert code == 0 and doc["valid"] is True
+
+
+def test_201_findings_with_a_line_exit_2_with_the_fixed_message(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    code, doc, _ = run(capsys, ["draft", "check", write(tmp_path, _inline_doc(201))])
+    assert code == 2
+    assert doc["errors"] == [{"pointer": "/findings", "message": CAP_MESSAGE, "kind": None}]
+    validate("pr-comment/cli/draft-check.json", doc)
+
+
+def test_file_level_findings_and_unanchored_entries_do_not_count(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    raw = _inline_doc(200, file_level=100)
+    raw["unanchored"] = [
+        {
+            "finding": {"id": f"u{n}", "path": "src/a.py", "line": 3, "body": "text"},
+            "head_sha": "a" * 40,
+            "reason": "changed",
+        }
+        for n in range(100)
+    ]
+    code, doc, _ = run(capsys, ["draft", "check", write(tmp_path, raw)])
+    assert code == 0, doc

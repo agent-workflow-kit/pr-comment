@@ -570,23 +570,6 @@ def test_forgectls_dry_run_refusal_is_exit_20_with_the_lowered_envelope(tmp_path
     assert error["lower_error"]["would_refuse"]["reason"] == "stale_head"
 
 
-def test_more_than_200_inline_comments_are_a_forgectl_usage_error_and_a_mismatch(
-    tmp_path: Path,
-) -> None:
-    # forgectl takes at most 200 inline comments; pr-comment does not cap them itself, so the
-    # pre-check ends with forgectl's usage error read as a contract mismatch, and nothing posts
-    findings = [finding(f"f{i}", "a.py", i + 1) for i in range(201)]
-    draft = write_draft(tmp_path, draft_doc(findings))
-    error = error_of(
-        request(draft_file=draft),
-        show_reply(),
-        error_reply(2, "usage"),
-        pinned=False,
-    )
-    assert error["_exit"] == 12 and error["code"] == "lower_contract_mismatch"
-    assert error["details"]["command"] == "review"
-
-
 # --- plan binding and the dry-run result -----------------------------------------------------
 
 
@@ -950,3 +933,33 @@ def test_the_mention_report_is_capped_and_its_schema_says_so(tmp_path: Path) -> 
     too_long = {**doc, "mentions_neutralized": ["n" * 129]}
     with pytest.raises(Exception, match="maxLength"):
         validate("pr-comment/cli/comment.json", too_long)
+
+
+# --- the inline comment cap (#70) --------------------------------------------------------------
+
+
+def test_200_inline_comments_pass_the_precheck(tmp_path: Path) -> None:
+    findings = [finding(f"f{i}", "a.py", i + 1) for i in range(200)]
+    draft = write_draft(tmp_path, draft_doc(findings))
+    done, gateway = run(request(draft_file=draft), show_reply(), dry_reply())
+    assert len(done.plan.posted_inline) == 200
+    assert [c.subcommand for c in gateway.calls] == ["show", "review"]
+
+
+def test_201_inline_comments_are_a_usage_error_before_any_dry_run(tmp_path: Path) -> None:
+    findings = [finding(f"f{i}", "a.py", i + 1) for i in range(201)]
+    draft = write_draft(tmp_path, draft_doc(findings))
+    gateway = PinnedGateway([show_reply()])
+    with pytest.raises(RunFailure) as caught:
+        prepare(request(draft_file=draft), env(gateway))
+    outcome = check_outcome(caught.value.outcome)
+    assert outcome.document is not None
+    validate("pr-comment/cli/error.json", outcome.document)
+    error = outcome.document["error"]
+    assert outcome.exit_code == 2 and error["code"] == "usage"
+    assert error["message"] == (
+        "the review would post more than 200 inline comments, "
+        "the most forgectl accepts in one review"
+    )
+    assert error["details"] == {"limit": 200, "inline_comments": 201}
+    assert [c.subcommand for c in gateway.calls] == ["show"]

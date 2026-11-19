@@ -53,6 +53,13 @@ MAX_PATH_BYTES: Final = 4096
 MAX_LINE: Final = 2**31 - 1
 MAX_TITLE_CHARS: Final = 256
 MAX_ITEMS: Final = 500
+# forgectl's `review` accepts at most 200 inline comments per call; more is its usage error
+# (../forgectl/docs/interface.md, review input file; the fake pins it as MAX_COMMENTS).
+MAX_INLINE_COMMENTS: Final = 200
+INLINE_CAP_MESSAGE: Final = (
+    f"has more than {MAX_INLINE_COMMENTS} findings with a line; "
+    f"forgectl accepts at most {MAX_INLINE_COMMENTS} inline comments in one review"
+)
 MAX_REPORTED_ERRORS: Final = 100
 _OMITTED: Final = "further errors omitted"
 # The schema's pr pattern has nested quantifiers; a real PR is far shorter than this.
@@ -682,6 +689,20 @@ def _check_items(root: dict[str, Any], issues: _Issues) -> None:
 # --- draft check -----------------------------------------------------------------------------
 
 
+def _inline_count(document: object) -> int:
+    """How many ``findings`` have a line (``unanchored`` entries are never inline comments)."""
+    if not isinstance(document, dict):
+        return 0
+    findings: object = document.get("findings")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    if not isinstance(findings, list):
+        return 0
+    return sum(
+        1
+        for f in findings  # pyright: ignore[reportUnknownVariableType]
+        if isinstance(f, dict) and f.get("line") is not None  # pyright: ignore[reportUnknownMemberType]
+    )
+
+
 def _result_entries(document: object) -> list[dict[str, str | None]]:
     """Schema problems, then text problems, as ``{pointer, message, kind}``.
 
@@ -699,6 +720,8 @@ def _result_entries(document: object) -> list[dict[str, str | None]]:
     if entries and entries[-1]["message"] == _OMITTED and len(entries) > MAX_REPORTED_ERRORS:
         entries.pop()
         omitted = True
+    if _inline_count(document) > MAX_INLINE_COMMENTS:
+        entries.append({"pointer": "/findings", "message": INLINE_CAP_MESSAGE, "kind": None})
     for issue in text_issues(document):
         entries.append(
             {
