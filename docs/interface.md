@@ -481,7 +481,7 @@ Codes 0–21 follow design guide section 4.2. pr-comment defines no codes of 22 
 | 13 | Needs a human. | `confirmation_required`, `escalated` |
 | 20 | Refused; `reason` required. | own: `stale_head`, `stale_base`, `auto_approve_disabled`, `auto_approve_reanchored`, `not_open`, `plan_changed`, `not_resolvable`; forgectl's, passed through: `stale_head`, `stale_base`, `not_open`, `self_approval`, `drafts_present`, `pending_review_exists`, `not_resolvable`, `too_large`, `unknown_host` |
 
-- `interrupted` is pr-comment's own and never printed in an envelope; it appears only in an audit write's `lower.code`, with `lower.exit` 1. A forgectl exit 1 carrying it is a `lower_contract_mismatch`. `export` prints such a record like any other.
+- `interrupted` is pr-comment's own and never printed in an envelope; it appears only in an audit write's `lower.code`, with `lower.exit` 1. The schemas enforce this: `error.code` and the `post-post` hook's `result.code` use the `error_code` enum, which does not list it, and only the audit write's `lower.code` uses `audit_error_code`, which adds it. A forgectl exit 1 carrying it is a `lower_contract_mismatch`. `export` prints such a record like any other.
 - forgectl's exit 2 passes through only for `body_too_large`, `invalid_pr` and `config_invalid`; any other forgectl exit 2 is pr-comment building a call forgectl rejects, and exits 12 `lower_contract_mismatch`.
 - `drafts_present` (GitLab: the account has unpublished draft notes on the MR) and `pending_review_exists` (GitHub: the account has a pending review) need the user to finish or delete that review in the web UI; human output says so.
 - After exit 12, follow the envelope's `retry` ([Error envelope](#error-envelope)). pr-comment never retries a write itself.

@@ -486,6 +486,7 @@ def test_a_document_with_a_duplicate_key_is_a_contract_mismatch() -> None:
 
 
 def test_forgectl_cannot_pass_interrupted_through_exit_one() -> None:
+    # pins that _PASSTHROUGH[1] stays {"internal"}
     # `interrupted` is pr-comment's own audit code; a forgectl exit 1 with it is a mismatch
     outcome = outcome_of(result(1, envelope("interrupted")))
     assert error_of(outcome)["code"] == "lower_contract_mismatch"

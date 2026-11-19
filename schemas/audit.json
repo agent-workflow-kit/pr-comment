@@ -325,7 +325,7 @@
                   "code": {
                     "oneOf": [
                       {
-                        "$ref": "defs.json#/$defs/error_code"
+                        "$ref": "defs.json#/$defs/audit_error_code"
                       },
                       {
                         "type": "null"
