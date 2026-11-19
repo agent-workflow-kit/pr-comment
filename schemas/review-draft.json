@@ -128,7 +128,7 @@
           "body": {
             "type": "string",
             "x-untrusted": true,
-            "description": "Untrusted: the finding's text; at most 64 KiB of UTF-8, checked by pr-comment (maxLength counts code points). Must hold a character that is not blank (blank: a Text pipeline step 1 line separator, ASCII space or tab), checked by pr-comment.",
+            "description": "Untrusted: the finding's text; at most 64 KiB of UTF-8, checked by pr-comment (maxLength counts code points). Must hold a character that is not blank (blank, after Text pipeline step 1: whitespace as Python str.isspace, or a character forgectl's Sanitizing marks as invisible such as U+200B, U+FEFF, U+3164 and U+2800; the same rule as the comment and reply body file), checked by pr-comment.",
             "minLength": 1,
             "maxLength": 65536
           },
@@ -261,7 +261,7 @@
               "body": {
                 "type": "string",
                 "x-untrusted": true,
-                "description": "Untrusted: the finding's text; at most 64 KiB of UTF-8, checked by pr-comment (maxLength counts code points). Must hold a character that is not blank (blank: a Text pipeline step 1 line separator, ASCII space or tab), checked by pr-comment.",
+                "description": "Untrusted: the finding's text; at most 64 KiB of UTF-8, checked by pr-comment (maxLength counts code points). Must hold a character that is not blank (blank, after Text pipeline step 1: whitespace as Python str.isspace, or a character forgectl's Sanitizing marks as invisible such as U+200B, U+FEFF, U+3164 and U+2800; the same rule as the comment and reply body file), checked by pr-comment.",
                 "minLength": 1,
                 "maxLength": 65536
               },

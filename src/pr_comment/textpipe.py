@@ -15,6 +15,8 @@ import html
 import re
 from typing import Final
 
+from pr_comment.display import is_marked
+
 CONTROL_CHARACTER: Final = "control_character"
 SUGGESTION_FENCE: Final = "suggestion_fence"
 
@@ -36,6 +38,21 @@ _ASCII_LOWER: Final = {ord(c): ord(c) + 32 for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 def normalize_lines(text: str) -> str:
     """``text`` with every line separator replaced by one LF (a CRLF is one break)."""
     return _SEPARATOR_RE.sub("\n", text)
+
+
+def is_blank_text(text: str) -> bool:
+    """Whether nothing visible is left in ``text`` after step 1 (the one blank-body rule).
+
+    Blank means every character is whitespace (``str.isspace``) or one forgectl's Sanitizing marks
+    (``display.is_marked``: Cf, Co, Cn, Zl, Zp, variation selectors, U+034F, U+17B4, U+17B5,
+    U+180B to U+180F, U+115F, U+1160, U+3164, U+FFA0 and U+2800), so such a text shows as empty.
+    The empty text is blank. A character step 1 refuses (Cc other than tab and LF, Cs) is not
+    blank: the text is refused for that, with its own kind, rather than as an empty body.
+    """
+    normalized = normalize_lines(text)
+    if has_forbidden_character(normalized):
+        return False
+    return all(ch.isspace() or is_marked(ch) for ch in normalized)
 
 
 def _is_suggestion_info(segment: str) -> bool:

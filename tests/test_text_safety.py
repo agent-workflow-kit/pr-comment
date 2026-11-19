@@ -594,7 +594,24 @@ def test_decision_3_a_fullwidth_at_passes_unchanged() -> None:
 # --- findings of the fuzz about earlier modules (reported, not safety holes) --------------------
 
 
-@pytest.mark.parametrize("blank", ["\n", "\n\n", "\r\n", "\u2028", " \t", "\x85 "])
+@pytest.mark.parametrize(
+    "blank",
+    [
+        "\n",
+        "\n\n",
+        "\r\n",
+        "\u2028",
+        " \t",
+        "\x85 ",
+        "\u00a0",
+        "\u200b",
+        "\ufeff",
+        "\u3000",
+        "\u3164",
+        "\u2800",
+        "\u200b\u3164\u2800\u00a0\n",
+    ],
+)
 def test_finding_a_blank_body_is_refused_so_no_marker_only_comment_posts(blank: str) -> None:
     """Issue #67: ``build_inline`` drops trailing line feeds, so a body with no non-blank
     character would post as the bare hidden marker. Draft validation refuses it instead, for a

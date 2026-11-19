@@ -368,9 +368,9 @@ def _prepare_text(req: Request, env: Env) -> Prepared:
     text: str | None = None
     if req.body_file is not None:
         text = _read_body_file(req.body_file, env.stdin)
-        if command == "approve" and not textpipe.normalize_lines(text).strip():
+        if command == "approve" and textpipe.is_blank_text(text):
             text = None  # an empty or blank body file counts as no body file
-        elif command != "approve" and not textpipe.normalize_lines(text).strip():
+        elif command != "approve" and textpipe.is_blank_text(text):
             raise _usage("the body is empty")
     elif command != "approve":
         raise _usage(f"{command} needs --body-file")
