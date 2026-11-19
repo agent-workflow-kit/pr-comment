@@ -15,10 +15,10 @@ shows names: the attribution line, the review body (the draft body, file-level f
 findings), then the inline comments in draft order.
 
 Counts (``Plan.counts``, the ``counts`` of schemas/defs.json) are taken over the untrusted parts as
-the pipeline gave them (after step 1, before step 3). Open decision 1: ``counts.links`` counts 0
-for ordinary and ``javascript:`` links, so it is not an upper bound. Open decision 2: an applicable
-suggestion swallowed by an open body fence is inert and silent (not in ``suggestions_degraded``).
-Open decision 3: a fullwidth ``＠`` passes unchanged.
+the pipeline gave them (after step 1, before step 3). Decision 1 (#86): ``counts.links`` counts
+every written link destination, ``javascript:`` ones included, which are not neutralized. Open
+decision 2: an applicable suggestion swallowed by an open body fence is inert and silent (not in
+``suggestions_degraded``). Open decision 3: a fullwidth ``＠`` passes unchanged.
 """
 
 from __future__ import annotations
