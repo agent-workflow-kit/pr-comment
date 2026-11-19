@@ -13,7 +13,9 @@ from pr_comment.assemble import MARKER
 from pr_comment.config import ConfigError
 from pr_comment.diffmap import DiffMapper
 from pr_comment.plan import (
+    MAX_INLINE_COMMENTS,
     Plan,
+    TooManyInlineComments,
     build_review_plan,
     build_text_plan,
     marker_present,
@@ -613,3 +615,52 @@ def test_every_plan_pins_the_merge_base_value_it_was_built_from() -> None:
     ok, _ = source_of(doc)
     assert build_review_plan(context(), ok).posted_inline == ("f1",)
     assert BASE_SHA and MB
+
+
+# --- the inline comment cap (#70) --------------------------------------------------------------
+
+
+def _many(count: int) -> list[dict[str, Any]]:
+    return [finding(f"f{i}", "a.py", i + 1) for i in range(count)]
+
+
+def test_the_cap_is_forgectls_review_limit() -> None:
+    from tests.fake_forgectl import MAX_COMMENTS
+
+    assert MAX_INLINE_COMMENTS == MAX_COMMENTS == 200
+
+
+def test_200_inline_comments_build_a_plan() -> None:
+    assert len(review(_many(200)).inline_comments) == 200
+
+
+def test_201_inline_comments_are_refused_with_the_fixed_message() -> None:
+    with pytest.raises(TooManyInlineComments) as caught:
+        review(_many(201))
+    assert str(caught.value) == (
+        "the review would post more than 200 inline comments, "
+        "the most forgectl accepts in one review"
+    )
+    assert caught.value.count == 201
+
+
+def test_only_inline_comments_count_toward_the_cap() -> None:
+    # file-level findings and findings moved to the body (a path marker) are not inline comments
+    findings = _many(200)
+    findings += [finding("g1", "b.py", None), finding("g2", "x<U+202E>y.py", 3)]
+    plan = review(findings)
+    assert len(plan.inline_comments) == 200 and [m.id for m in plan.moved] == ["g2"]
+
+
+def test_a_finding_moved_by_the_source_is_not_counted() -> None:
+    # a left-side finding moves to the body when the merge base changed (source.moves)
+    findings = _many(200) + [finding("l1", "a.py", 9, side="left")]
+    source, _ = source_of(draft_doc(findings), merge_base="2" * 40)
+    plan = build_review_plan(context(), source)
+    assert len(plan.inline_comments) == 200
+    assert [(m.id, m.reason) for m in plan.moved] == [("l1", "base_changed")]
+
+
+def test_a_precheck_move_brings_the_count_under_the_cap() -> None:
+    plan = review(_many(201), extra={"f0": "invalid_position"})
+    assert len(plan.inline_comments) == 200

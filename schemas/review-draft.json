@@ -201,7 +201,7 @@
         ]
       },
       "maxItems": 500,
-      "description": "Finding ids are unique across findings and unanchored; checked by pr-comment, not by this schema."
+      "description": "Finding ids are unique across findings and unanchored; checked by pr-comment, not by this schema. At most 200 findings may have a line (they become inline comments, and forgectl accepts at most 200 per review): draft check refuses more with a fixed message, and the review exits 2 usage when more than 200 would be posted inline; this schema does not express it."
     },
     "unanchored": {
       "type": "array",
