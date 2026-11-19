@@ -548,7 +548,6 @@ def test_a_pending_review_is_a_refusal_even_if_a_dry_run_rarely_finds_it() -> No
     [
         ("vetoed", 11),
         ("outcome_unknown", 12),
-        ("outcome_partial", 12),
         ("quick_action_ran", 12),
         ("approved_stale_head", 12),
         ("audit_failed", 12),
@@ -560,6 +559,63 @@ def test_write_only_codes_in_a_dry_run_are_a_contract_mismatch(code: str, exit_c
     build = review_builder(finding("f1"))
     plan = build({})
     gateway = FakeGateway([dry_error(plan, exit_code, code, details={"landed": {"ids": []}})])
+    with pytest.raises(LowerFailure) as caught:
+        run_precheck(gateway, Forge(gateway), build)
+    document = caught.value.outcome.document
+    assert document is not None and document["error"]["code"] == "lower_contract_mismatch"
+
+
+# forgectl's post order does the dedupe read (step 4) before the dry run stops (step 6): on GitHub a
+# hit whose state step is still needed (an event change on a reused key) is exit 12
+# `outcome_partial` with nothing sent, also on a dry run (found live, #93).
+PARTIAL_DETAILS = {"landed": {"ids": ["gh:r:PRR_x"], "thread_ids": []}, "failed": "request_changes"}
+
+
+def test_a_github_event_change_in_the_dry_run_is_outcome_partial_not_a_mismatch() -> None:
+    build = review_builder(finding("f1"))
+    plan = build({})
+    gateway = FakeGateway([dry_error(plan, 12, "outcome_partial", details=PARTIAL_DETAILS)])
+    with pytest.raises(LowerFailure) as caught:
+        run_precheck(gateway, Forge(gateway), build)
+    outcome = check_outcome(caught.value.outcome)
+    assert outcome.exit_code == 12 and outcome.document is not None
+    error = outcome.document["error"]
+    assert error["code"] == "outcome_partial"
+    assert (error["landed"], error["retry"]) == (False, "new_key")
+    assert error["details"] == PARTIAL_DETAILS
+    assert len(gateway.calls) == 1  # no real call follows a pre-check failure
+
+
+def test_a_github_approve_dedupe_hit_in_the_dry_run_is_outcome_partial() -> None:
+    plan = build_text_plan(context(), action="approve", text="x", head_sha=A, base_ref="main")
+    details = {"landed": {"ids": ["gh:r:PRR_x"], "thread_ids": []}, "failed": "approve"}
+    gateway = FakeGateway([dry_error(plan, 12, "outcome_partial", details=details)])
+    with pytest.raises(LowerFailure) as caught:
+        run_precheck(gateway, Forge(gateway), lambda _m: plan)
+    document = check_outcome(caught.value.outcome).document
+    assert document is not None
+    error = document["error"]
+    assert (error["code"], error["landed"], error["retry"]) == ("outcome_partial", False, "new_key")
+
+
+@pytest.mark.parametrize("action", ["comment", "reply"])
+def test_outcome_partial_in_the_dry_run_of_a_text_action_is_still_a_mismatch(action: str) -> None:
+    kwargs: dict[str, Any] = {"to": "gh:rc:RC_x"} if action == "reply" else {}
+    plan = build_text_plan(
+        context(), action=action, text="x", head_sha=A, base_ref="main", **kwargs
+    )
+    gateway = FakeGateway([dry_error(plan, 12, "outcome_partial", details=PARTIAL_DETAILS)])
+    with pytest.raises(LowerFailure) as caught:
+        run_precheck(gateway, Forge(gateway), lambda _m: plan)
+    document = caught.value.outcome.document
+    assert document is not None and document["error"]["code"] == "lower_contract_mismatch"
+
+
+def test_a_gitlab_outcome_partial_in_the_dry_run_is_a_mismatch() -> None:
+    # forgectl raises it before the dry run stops only on GitHub; GitLab runs the state step
+    build = review_builder(finding("f1"), show=show_of(backend="gitlab"))
+    plan = build({})
+    gateway = FakeGateway([dry_error(plan, 12, "outcome_partial", details=PARTIAL_DETAILS)])
     with pytest.raises(LowerFailure) as caught:
         run_precheck(gateway, Forge(gateway), build)
     document = caught.value.outcome.document
