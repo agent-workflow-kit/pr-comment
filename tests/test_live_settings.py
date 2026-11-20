@@ -355,6 +355,201 @@ def test_html_inspection() -> None:
     assert helpers.distinct_shapes("a", "b") and not helpers.distinct_shapes("a", "a")
 
 
+# the structure of a host's rendered suggestion (sanitized: no names, ids or real content)
+SUGGESTION_HTML = """<p dir="auto">x</p>
+<div class="js-suggested-changes-blob diff-view"><div>Suggested change</div>
+<table><tbody>
+<tr><td class="blob-num blob-num-deletion text-right{hidden}" data-line-number="{num}"></td>
+<td class="blob-code-inner blob-code-deletion">old</td></tr>
+<tr><td class="blob-num blob-num-addition text-right{hidden}" data-line-number="{num}"></td>
+<td class="blob-code-inner blob-code-addition">new</td></tr>
+</tbody></table><div class="js-apply-changes"></div></div>"""
+
+
+def suggestion_html(num: str, hidden: str = "") -> helpers.Html:
+    return helpers.Html(SUGGESTION_HTML.format(num=num, hidden=hidden))
+
+
+def test_line_cells_of_a_rendered_suggestion_show_the_real_line_number() -> None:
+    assert suggestion_html("3").line_cells() == ["3", "3"]
+
+
+def test_line_cells_of_a_hidden_number_are_dots() -> None:
+    cells = suggestion_html("\u00b7", " blob-num-hidden").line_cells()
+    assert cells == ["\u00b7", "\u00b7"]
+    assert helpers.line_cell_verdict(cells, 3) == "hidden"
+
+
+def test_a_hidden_class_with_a_real_number_is_kept_as_a_distinct_signal() -> None:
+    # ASSUMPTION: the host marks a hidden number with the `blob-num-hidden` class
+    cells = suggestion_html("3", " blob-num-hidden").line_cells()
+    assert cells == ["hidden-class:3", "hidden-class:3"]
+    assert helpers.line_cell_verdict(cells, 3) == "hidden-class+match"
+    assert helpers.line_cell_verdict(cells, 4) == "hidden-class+mismatch"
+
+
+def test_the_real_cell_matches_the_expected_line_and_other_cells_are_ignored() -> None:
+    assert helpers.line_cell_verdict(suggestion_html("3").line_cells(), 3) == "match"
+    assert helpers.line_cell_verdict(suggestion_html("3").line_cells(), 4) == "mismatch"
+    other = helpers.Html('<table><tr><td class="x">5</td></tr></table>')
+    assert other.line_cells() == []
+    assert helpers.Html("<p>no table</p>").line_cells() == []
+
+
+@pytest.mark.parametrize(
+    ("cells", "expected"),
+    [
+        (["12"], "match"),
+        (["11", "12"], "match"),
+        (["12", "13"], "match"),
+        ([" 12 "], "match"),
+        (["012"], "match"),
+        (["3"], "mismatch"),
+        (["\u00b7\u00b7\u00b7"], "hidden"),
+        (["a12"], "hidden"),
+        ([""], "hidden"),
+        ([], "absent"),
+        (["hidden-class:12"], "hidden-class+match"),
+        (["hidden-class:3"], "hidden-class+mismatch"),
+        (["hidden-class:12", "3"], "mismatch"),
+    ],
+)
+def test_the_line_cell_verdict(cells: list[str], expected: str) -> None:
+    assert helpers.line_cell_verdict(cells, 12) == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "cells"),
+    [
+        ('<td class="blob-num">7</td>', ["7"]),
+        ('<td data-line-number="8"></td>', ["8"]),
+        ('<th class="blob-num">9</th>', ["9"]),
+        ('<td class="blob-num"> 10 </td>', ["10"]),
+        ('<td class="blob-num" data-line-number="3">4</td>', ["3"]),
+        ('<td data-line-number="03"></td>', ["3"]),
+        ('<td data-line-number="\u0663"></td>', ["\u0663"]),
+        ('<table><td data-line-number="5">', ["5"]),
+        ('<td class="blob-num">12', ["12"]),
+        ('<td class="x">5</td>', []),
+    ],
+)
+def test_line_cells_are_detected_and_normalized(source: str, cells: list[str]) -> None:
+    assert helpers.Html(source).line_cells() == cells
+
+
+def test_line_cells_returns_a_copy() -> None:
+    html = suggestion_html("3")
+    html.line_cells().append("x")
+    assert html.line_cells() == ["3", "3"]
+
+
+def test_the_body_is_verbatim_only_when_every_line_is_in_the_rendered_text() -> None:
+    html = helpers.Html("<pre><code>```\nx\n~~~</code></pre>")
+    assert html.has_body(["```", "x", "~~~"]) is True
+    assert html.has_body(["```", "y"]) is False
+    assert helpers.Html("<pre><code>x</code></pre><p>```</p>").has_body(["```", "x"]) is False
+    assert html.has_body([]) is False
+
+
+@pytest.mark.parametrize(
+    ("source", "wanted", "expected"),
+    [
+        ("<pre>x\n```</pre>", ["```", "x"], False),
+        ("<pre>```\nx</pre>", ["```", "x"], True),
+        ("<pre>x</pre><p>```\nx</p>", ["```", "x"], False),
+        ("<pre>```</pre><pre>x</pre>", ["```", "x"], False),
+        ("<pre><code><span>```</span>\n<span>x</span></code></pre>", ["```", "x"], True),
+        ("<pre>a```\nx</pre>", ["```", "x"], False),
+        ("<pre>```\nxy</pre>", ["```", "x"], False),
+        ("<pre>a\n```\nx\nb</pre>", ["```", "x"], True),
+        ("<pre>```\r\nx\r\n</pre>", ["```", "x"], True),
+        ("<pre>```\nx</pre>", [""], False),
+        ("<pre>```\nx</pre>", ["```\nx"], False),
+        ("<pre>x<p>```</p>", ["x```"], False),
+        ("<pre>x<p>```</p>", ["x", "```"], False),
+        ("<pre>x<p>```</p></pre>", ["x```"], False),
+        ("<pre>x<p>```</p></pre>", ["x", "```"], True),
+        ("<pre>x<pre>y</pre>z</pre>", ["xy"], False),
+        ("<pre>x<pre>y</pre>z</pre>", ["x", "y", "z"], True),
+    ],
+)
+def test_has_body_matches_whole_lines_in_order(
+    source: str, wanted: list[str], expected: bool
+) -> None:
+    assert helpers.Html(source).has_body(wanted) is expected
+
+
+def test_an_unclosed_pre_is_not_a_verbatim_block() -> None:
+    assert helpers.Html("<pre>```\nx").has_body(["```", "x"]) is False
+    assert helpers.Html("<pre>x<p>```</p>").pre == []
+
+
+MULTI_SUGGESTION = """<div class="js-suggested-changes-blob"><table><tbody>
+<tr><td class="blob-num blob-num-deletion" data-line-number="3"></td>
+<td class="blob-code-inner blob-code-deletion">old</td></tr>
+<tr><td class="blob-num blob-num-addition" data-line-number="3"></td>
+<td class="blob-code-inner blob-code-addition"><span>```</span></td></tr>
+<tr><td class="blob-num blob-num-addition" data-line-number="3"></td>
+<td class="blob-code-inner blob-code-addition">x</td></tr>
+</tbody></table></div>"""
+
+
+def test_a_rendered_suggestion_widget_has_a_verbatim_body_without_a_pre() -> None:
+    html = helpers.Html(MULTI_SUGGESTION)
+    assert html.pre == []
+    assert html.has_body(["```", "x"]) is True
+    assert html.has_body(["x", "```"]) is False
+    assert html.has_body(["old", "```"]) is False
+    assert html.has_body(["```x"]) is False
+
+
+def _widget(*cells: str) -> str:
+    rows = "".join(f"<tr><td class='blob-num blob-num-addition'></td>{cell}</tr>" for cell in cells)
+    return f"<table>{rows}</table>"
+
+
+@pytest.mark.parametrize(
+    "cells",
+    [
+        # inner class on a child span, addition class on the td
+        ['<td class="blob-code-addition"><span class="blob-code-inner">```</span></td>'] * 1
+        + ['<td class="blob-code-addition"><span class="blob-code-inner">x</span></td>'],
+        # addition class on a child span, inner class on the td
+        ['<td class="blob-code-inner"><span class="blob-code-addition">```</span></td>']
+        + ['<td class="blob-code-inner"><span class="blob-code-addition">x</span></td>'],
+        # padding newlines around the cell text
+        ['<td class="blob-code-inner blob-code-addition">\n```\n</td>']
+        + ['<td class="blob-code-inner blob-code-addition">\nx  \n</td>'],
+    ],
+)
+def test_addition_rows_are_found_in_each_class_layout(cells: list[str]) -> None:
+    assert helpers.Html(_widget(*cells)).has_body(["```", "x"]) is True
+
+
+def test_a_deletion_row_with_only_the_inner_class_is_not_an_addition() -> None:
+    cells = ['<td class="blob-code-inner blob-code-deletion"><span>```</span></td>']
+    assert helpers.Html(_widget(*cells)).has_body(["```"]) is False
+
+
+def test_leading_spaces_of_a_body_line_are_still_compared() -> None:
+    cell = '<td class="blob-code-inner blob-code-addition">\n  x\n</td>'
+    assert helpers.Html(_widget(cell)).has_body(["  x"]) is True
+    assert helpers.Html(_widget(cell)).has_body(["x"]) is False
+
+
+def test_a_body_spread_over_two_tables_is_not_verbatim() -> None:
+    cell = '<td class="blob-code-inner blob-code-addition">{}</td>'
+    source = _widget(cell.format("```")) + _widget(cell.format("x"))
+    assert helpers.Html(source).has_body(["```", "x"]) is False
+    assert helpers.Html(source).has_body(["x"]) is True
+
+
+def test_a_very_long_digit_string_is_not_a_line_number() -> None:
+    long = "9" * 19
+    assert helpers.Html(f'<td data-line-number="{long}"></td>').line_cells() == [long]
+    assert helpers.Html(f'<td data-line-number="{"1" * 18}"></td>').line_cells() == ["1" * 18]
+
+
 # --- stricter settings (review round 1) -----------------------------------------------------------
 
 

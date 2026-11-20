@@ -339,6 +339,16 @@ ROWS: tuple[Row, ...] = (
     ),
     _r("ts.suggestion_variants", "#22", "Tilde and indented suggestion fences (recorded)."),
     _r(
+        "ts.suggestion_fence_body",
+        "#103",
+        "A 4-backtick suggestion fence whose body holds a line of three backticks, or a `~~~` line, renders as one applicable suggestion with the body verbatim; the same body in a 3-backtick fence is the negative control. The two-line bodies are compared with a plain two-line suggestion (`control-suggestion-2line`), and the body is read from the suggestion's added rows or a code block (recorded, not asserted).",
+    ),
+    _r(
+        "ts.suggestion_line_cell",
+        "#103",
+        "The line-number cell of a rendered suggestion against the line the comment is on: `match`, `mismatch`, `hidden` (dots or empty, as GitHub showed for tilde fences), `hidden-class+match` or `hidden-class+mismatch` (the cell shows a real number but carries the hidden class, so the two signals disagree; the first live run decides which of these tilde fences produce, so any of `match`, `mismatch`, `hidden`, `hidden-class+match`, `hidden-class+mismatch` or `absent` may be recorded) or `absent`. Every form classed `applicable` or `other` is probed. A tilde suggestion is not proven applicable by its widget alone (recorded, not asserted).",
+    ),
+    _r(
         "ts.mention_filters",
         "#22",
         "Neutral mentions, `a@user` and `1@user` do not link on either host; a literal mention does (the positive control).",
