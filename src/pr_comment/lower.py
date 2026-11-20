@@ -105,6 +105,9 @@ def tool_missing_outcome(exc: ToolMissing) -> Outcome:
     return error_outcome("tool_missing", exc.message, details={"install": INSTALL_COMMAND})
 
 
+_FROM_GATEWAY: Final = object()
+
+
 def mismatch_outcome(
     command: str,
     why: str,
@@ -112,16 +115,22 @@ def mismatch_outcome(
     gateway: Gateway,
     write: tuple[bool | None, str] | None = None,
     lower_error: Mapping[str, Any] | None = None,
+    version_text: str | None | object = _FROM_GATEWAY,
 ) -> Outcome:
     """Exit 12 ``lower_contract_mismatch``; ``write`` only when a write may have happened.
+
+    ``version_text`` replaces the gateway's lower version in ``details.lower_version`` (None
+    leaves it null); it is display-sanitized and cut here. Left out, the gateway is read.
 
     Reads the lower version through the gateway, so a signal during that read raises
     ``ForgectlInterrupted`` out of here; callers must not catch it.
     """
+    shown = gateway.lower_version() if version_text is _FROM_GATEWAY else version_text
+    assert shown is None or isinstance(shown, str)
     return error_outcome(
         "lower_contract_mismatch",
         f"forgectl {command} gave an answer pr-comment cannot use ({why})",
-        details={"command": command, "lower_version": _display_version(gateway.lower_version())},
+        details={"command": command, "lower_version": _display_version(shown)},
         write=write,
         lower_error=lower_error,
     )

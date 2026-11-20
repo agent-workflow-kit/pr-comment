@@ -163,6 +163,8 @@ class Gateway(Protocol):
 
     def lower_version(self) -> str | None: ...
 
+    def version_output(self) -> bytes | None: ...
+
     def resolve(self) -> str: ...
 
 
@@ -700,6 +702,8 @@ class ProcessGateway:
         self._graces = (term_grace, interrupt_grace, drain_grace)
         self._version: str | None = None
         self._version_read = False
+        self._version_text_read = False
+        self._version_stdout: bytes | None = None
 
     @classmethod
     def from_config(
@@ -744,15 +748,12 @@ class ProcessGateway:
             drain_grace=self._graces[2],
         )
 
-    def lower_version(self) -> str | None:
-        """The first line of ``forgectl --version``, display-sanitized, at most 64 characters, or
-        None when it cannot be read or forgectl is missing. Read once.
-
-        A signal during the read is not swallowed: ``ForgectlInterrupted`` propagates (callers
-        building a mismatch outcome must not catch it), and so does ``GatewayInternalError``.
-        """
+    def version_output(self) -> bytes | None:
+        """The raw stdout of ``forgectl --version`` (at most 4096 bytes), or None when it cannot
+        be read: forgectl missing, a non-zero exit or a timeout. Read once, shared with
+        ``lower_version``. Signals propagate as for ``lower_version``."""
         if self._version_read:
-            return self._version
+            return self._version_stdout
         self._version_read = True
         try:
             result = run_process(
@@ -772,7 +773,23 @@ class ProcessGateway:
             return None
         if result.exit_code != 0 or result.timed_out:
             return None
-        line = result.stdout.decode("utf-8", "replace").splitlines()[:1]
+        self._version_stdout = result.stdout
+        return self._version_stdout
+
+    def lower_version(self) -> str | None:
+        """The first line of ``forgectl --version``, display-sanitized, at most 64 characters, or
+        None when it cannot be read or forgectl is missing. Read once.
+
+        A signal during the read is not swallowed: ``ForgectlInterrupted`` propagates (callers
+        building a mismatch outcome must not catch it), and so does ``GatewayInternalError``.
+        """
+        if self._version_text_read:
+            return self._version
+        stdout = self.version_output()
+        self._version_text_read = True
+        if stdout is None:
+            return None
+        line = stdout.decode("utf-8", "replace").splitlines()[:1]
         text = sanitize(line[0].strip()) if line else ""
         self._version = cut_bytes(text[:MAX_VERSION_CHARS]) or None
         return self._version

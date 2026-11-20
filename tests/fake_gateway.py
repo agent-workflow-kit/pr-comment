@@ -78,6 +78,9 @@ class FakeGateway:
     def lower_version(self) -> str | None:
         return self._version
 
+    def version_output(self) -> bytes | None:
+        return None if self._version is None else f"{self._version}\n".encode()
+
     def resolve(self) -> str:
         if self._missing is not None:
             raise self._missing

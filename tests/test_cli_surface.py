@@ -231,6 +231,7 @@ def test_doc_parse_finds_the_expected_shape() -> None:
         "draft check",
         "draft new",
         "export",
+        "validate",
     }
     assert commands["resolve"] == commands["unresolve"]
     assert commands["resolve"].flags["--thread"] == FlagSpec(
@@ -291,6 +292,7 @@ MINIMAL: dict[str, list[str]] = {
     "draft check": ["draft", "check", "d.json"],
     "draft new": ["draft", "new", PR],
     "export": ["export"],
+    "validate": ["validate"],
 }
 POSTING = {"review", "comment", "reply", "approve"}
 NON_POSTING = sorted(set(MINIMAL) - POSTING)

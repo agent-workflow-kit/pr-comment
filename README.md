@@ -41,6 +41,7 @@ pr-comment review <pr> --draft-file d.json
 | `pr-comment draft check <path>\|-` | Validate a draft offline. |
 | `pr-comment draft new <pr> [--event comment\|request_changes] [--from <path>\|-]` | Print a new draft anchored at the PR's current head. |
 | `pr-comment export [--since <time>] [--log]` | Print audit or log records. |
+| `pr-comment validate` | Check offline that the config loads and forgectl is installed and recent enough. |
 
 Global flags: `--json`, `--config`, `--dry-run`, `--yes`, `--expect-plan`, `--override-escalation=<scope>`, `--actor`, `--decision-id`, `--hook`, `--verbose`, `--quiet`, `--version` ([Global flags](docs/interface.md#global-flags)).
 

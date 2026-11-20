@@ -44,6 +44,7 @@ from .prepare import (
 )
 from .threads import ThreadRequest, confirm_threads, prepare_threads, write_threads
 from .threads import finish as finish_threads
+from .validate import handle_validate
 
 DESCRIPTION = "Posts reviews, replies and comments to PRs, safely and with attribution."
 
@@ -411,6 +412,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--since", action=_StoreOnce, metavar="TIME", type=_checked(grammars.check_since)
     )
     export.add_argument("--log", action="store_true")
+    _leaf(sub, "validate", "validate", "check the config and forgectl offline", positional=())
     return parser
 
 
@@ -734,6 +736,7 @@ HANDLERS: dict[str, Handler] = {
     **dict.fromkeys(("review", "comment", "reply", "approve"), _posting),
     "draft check": _draft_check,
     "export": handle_export,
+    "validate": handle_validate,
     "draft new": _draft_new,
     **dict.fromkeys(("resolve", "unresolve"), _threads),
 }
@@ -943,12 +946,13 @@ def _load_config_into(args: argparse.Namespace) -> Outcome | None:
     """Load the config once per run into ``args.loaded_config``; an invalid config is the outcome.
 
     ``draft check`` is offline and ``export`` reads local files only: neither reads config, so a
-    broken config never blocks reading the audit trail (interface.md, Commands).
+    broken config never blocks reading the audit trail (interface.md, Commands). ``validate`` loads
+    the config itself, so that it writes no ``config_warning`` log line.
     ``loaded_config.warnings`` go to log.jsonl as ``config_warning`` lines (a failure only warns).
     The posting commands pass the canonical repo id from ``show`` to ``loaded_config.for_repo``.
     The hooks of a write are ``loaded_config.hooks_for(name, args.hook)`` (``_confirm_and_post``).
     """
-    if args.command in ("draft check", "export"):
+    if args.command in ("draft check", "export", "validate"):
         return None
     try:
         args.loaded_config = load_config(args.config, env=os.environ)
