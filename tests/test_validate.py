@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -370,3 +371,111 @@ def test_the_minimum_is_the_start_of_the_pinned_forgectl_range() -> None:
 )
 def test_parse_forgectl_version(line: str | None, expected: tuple[int, int, int] | None) -> None:
     assert validate_module.parse_forgectl_version(line) == expected
+
+
+def raw_forgectl(tmp_path: Path, stdout: bytes, exit_code: int = 0) -> str:
+    """A config naming a forgectl that prints exactly ``stdout`` (the fake's argparse would
+    rewrite whitespace and wrap long lines). ``PATH`` stays empty: nothing but this file runs."""
+    data = tmp_path / "raw-version.bin"
+    data.write_bytes(stdout)
+    script = tmp_path / "raw-bin" / "forgectl"
+    script.parent.mkdir(exist_ok=True)
+    script.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        f"sys.stdout.buffer.write(open({str(data)!r}, 'rb').read())\n"
+        f"sys.exit({exit_code})\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return write_config(tmp_path, f"forgectl_bin: {script}\n")
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        b"forgectl 0.55.0\x0bjunk\n",  # VT: splitlines() would cut here
+        b"forgectl 0.55.0\x0cjunk\n",
+        b"forgectl 0.55.0\x1cjunk\n",
+        b"forgectl 0.55.0\x1djunk\n",
+        b"forgectl 0.55.0\x1ejunk\n",
+        "forgectl 0.55.0\u0085junk\n".encode(),
+        "forgectl 0.55.0 junk\n".encode(),
+        "forgectl 0.55.0 junk\n".encode(),
+        b"forgectl 0.55.0\x1bjunk\n",
+        b"forgectl 0.55.0\x00junk\n",
+        b"forgectl 0.55.0\rjunk\n",
+        b"forgectl 0.55.0-" + b"a" * 100 + b" extra\n",  # cut at 64 characters before the match
+        b"forgectl 0.55.0-" + b"a" * 49 + b"\n",  # 65 characters
+    ],
+)
+def test_a_version_line_that_is_not_exactly_the_documented_line_is_a_mismatch(
+    stdout: bytes, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = raw_forgectl(tmp_path, stdout)
+    code, doc, _ = run(capsys, "--config", config, "validate")
+    assert code == 12, doc
+    assert doc["error"]["code"] == "lower_contract_mismatch"
+    assert "unreadable version" in doc["error"]["message"]
+    validate("pr-comment/cli/error.json", doc)
+    assert all(ord(c) < 128 for c in json.dumps(doc))
+
+
+def test_a_version_line_of_exactly_64_characters_is_accepted(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    line = b"forgectl 0.55.0-" + b"a" * 48  # 64 characters
+    assert len(line) == 64
+    code, doc, _ = run(capsys, "--config", raw_forgectl(tmp_path, line + b"\n"), "validate")
+    assert code == 0 and doc["forgectl"]["version"] == "0.55.0"
+
+
+def test_later_output_lines_do_not_matter(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = raw_forgectl(tmp_path, b"forgectl 0.55.0\nsecond\x0bline\n")
+    code, _, _ = run(capsys, "--config", config, "validate")
+    assert code == 0
+
+
+@pytest.mark.parametrize(("stdout", "exit_code"), [(b"", 0), (b"forgectl 0.55.2\n", 3), (b"", 3)])
+def test_no_version_output_says_the_call_failed_or_timed_out(
+    stdout: bytes, exit_code: int, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = raw_forgectl(tmp_path, stdout, exit_code)
+    code, doc, _ = run(capsys, "--config", config, "validate")
+    assert code == 12, doc
+    assert doc["error"]["code"] == "lower_contract_mismatch"
+    assert "forgectl --version failed or timed out" in doc["error"]["message"]
+    assert doc["error"]["details"]["lower_version"] is None
+
+
+def test_unparsable_version_text_keeps_its_own_message(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = raw_forgectl(tmp_path, b"latest\n")
+    code, doc, _ = run(capsys, "--config", config, "validate")
+    assert code == 12
+    assert "unreadable version" in doc["error"]["message"]
+    assert "failed or timed out" not in doc["error"]["message"]
+    assert doc["error"]["details"]["lower_version"] == "latest"
+
+
+def test_the_untested_warning_text_comes_from_the_constants(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, forgectl: FakeForgectl
+) -> None:
+    use_fake(monkeypatch, forgectl)
+    forgectl.set_version("0.60.0")
+    monkeypatch.setattr(validate_module, "UNTESTED_FROM", (0, 60, 0))
+    monkeypatch.setattr(validate_module, "MINIMUM_FORGECTL", (0, 59, 0))
+    code = main(["validate", "--json"])
+    err = capsys.readouterr().err
+    assert code == 0
+    assert "(0.59.x)" in err and "0.55" not in err.split("warning:")[1]
+
+
+def test_the_interface_doc_names_the_supported_range() -> None:
+    text = (Path(__file__).parent.parent / "docs" / "interface.md").read_text(encoding="utf-8")
+    start = text.index("### `validate`")
+    section = text[start : text.index("\n### ", start + 1)]
+    assert validate_module._dotted(validate_module.MINIMUM_FORGECTL) in section
+    assert validate_module._dotted(validate_module.UNTESTED_FROM) in section
