@@ -174,17 +174,118 @@ def flag_form_problems(argv: Sequence[str]) -> list[str]:
     return problems
 
 
+_BLOCK_TAGS = frozenset(
+    {"p", "div", "table", "thead", "tbody", "tr", "td", "th", "li", "ul", "ol", "br", "pre"}
+    | {"blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "section"}
+)
+_ASCII_NUMBER = re.compile(r"[0-9]+")
+_HIDDEN_CLASS = "hidden-class:"
+
+
+def _normalized_number(value: str) -> str | None:
+    """``"03"`` -> ``"3"`` for ASCII digits only; anything else is not a number."""
+    value = value.strip()
+    if len(value) > 18 or not _ASCII_NUMBER.fullmatch(value):
+        return None
+    return str(int(value))
+
+
 class _Collector(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.tags: list[tuple[str, dict[str, str]]] = []
         self.text: list[str] = []
+        self.pre: list[str] = []  # the text of each closed outermost <pre> block
+        self.cells: list[str] = []  # the line-number cells, in document order
+        # the text of each addition code cell of a rendered diff, grouped per <table>
+        self.groups: list[list[str]] = [[]]
+        self._pre_depth = 0
+        self._pre_buf = ""
+        self._cell: list[str] | None = None  # text of the open numbered cell
+        self._cell_attr = ""
+        self._cell_hidden = False
+        self._add: list[str] | None = None  # text of the open addition code cell
+        self._add_ok = False  # the open code cell is known to be an addition
+
+    def _separate(self) -> None:
+        if self._pre_depth and self._pre_buf and not self._pre_buf.endswith("\n"):
+            self._pre_buf += "\n"
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self.tags.append((tag, {k: v or "" for k, v in attrs}))
+        values = {k: v or "" for k, v in attrs}
+        self.tags.append((tag, values))
+        if tag == "pre":
+            if self._pre_depth == 0:
+                self._pre_buf = ""
+            else:
+                self._separate()
+            self._pre_depth += 1
+        elif tag in _BLOCK_TAGS:
+            self._separate()
+        classes = values.get("class", "").split()
+        if tag == "table":
+            self.groups.append([])
+        elif tag not in ("td", "th") and self._add is not None:
+            if "blob-code-addition" in classes:
+                self._add_ok = True
+        if tag in ("td", "th"):
+            if "blob-code-addition" in classes or "blob-code-inner" in classes:
+                if self._add is None:
+                    self._add = []
+                    self._add_ok = "blob-code-addition" in classes
+            elif self._cell is None and ("data-line-number" in values or "blob-num" in classes):
+                self._cell = []
+                # a hidden number (tilde fences) is marked by a class (an assumption about the host)
+                self._cell_hidden = "blob-num-hidden" in classes
+                self._cell_attr = values.get("data-line-number", "").strip()
+
+    def _flush_cell(self) -> None:
+        if self._cell is None:
+            return
+        value = self._cell_attr or "".join(self._cell).strip()
+        number = _normalized_number(value)
+        if self._cell_hidden:
+            self.cells.append(f"{_HIDDEN_CLASS}{number}" if number is not None else "\u00b7")
+        else:
+            self.cells.append(number if number is not None else value)
+        self._cell = None
+
+    def _flush_add(self) -> None:
+        if self._add is not None and self._add_ok:
+            # padding newlines around the cell and trailing spaces are not part of the body
+            self.groups[-1].append("".join(self._add).strip("\r\n").rstrip())
+        self._add = None
+        self._add_ok = False
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "pre" and self._pre_depth:
+            self._pre_depth -= 1
+            if self._pre_depth == 0:
+                self.pre.append(self._pre_buf)
+            else:
+                self._separate()
+        elif tag in _BLOCK_TAGS:
+            self._separate()
+        if tag in ("td", "th"):
+            self._flush_add()
+            self._flush_cell()
 
     def handle_data(self, data: str) -> None:
         self.text.append(data)
+        if self._pre_depth:
+            self._pre_buf += data
+        if self._cell is not None:
+            self._cell.append(data)
+        if self._add is not None:
+            self._add.append(data)
+
+    def finish(self) -> None:
+        """Flush what an unclosed trailing cell holds; an unclosed <pre> is dropped, never
+        taken for a verbatim block."""
+        self._flush_add()
+        self._flush_cell()
+        self._pre_depth = 0
+        self._pre_buf = ""
 
 
 class Html:
@@ -194,8 +295,35 @@ class Html:
         self.source = source
         parser = _Collector()
         parser.feed(source)
+        parser.close()
+        parser.finish()
         self.tags = parser.tags
         self.text = "".join(parser.text)
+        self.pre = parser.pre
+        self._cells = parser.cells
+        self._groups = parser.groups
+
+    def line_cells(self) -> list[str]:
+        """The line-number cells of any rendered diff: the ``data-line-number`` value, else the
+        cell text, normalized (``03`` -> ``3``). A host that hides the number shows dots or nothing.
+        A cell with the hidden class but a real number is ``hidden-class:<n>``."""
+        return list(self._cells)
+
+    def has_body(self, lines: Sequence[str]) -> bool:
+        """The lines appear verbatim (whole lines, in order, contiguous) in one rendered code
+        block, or in the addition rows of a rendered suggestion (which has no ``<pre>``)."""
+        if not lines or any(not line or "\n" in line or "\r" in line for line in lines):
+            return False
+        sources = [block.splitlines() for block in self.pre]
+        sources.extend(
+            [part for row in group for part in (row.splitlines() or [""])] for group in self._groups
+        )
+        width = len(lines)
+        return any(
+            list(lines) == source[i : i + width]
+            for source in sources
+            for i in range(len(source) - width + 1)
+        )
 
     def count(self, tag: str) -> int:
         return sum(1 for name, _ in self.tags if name == tag)
@@ -228,6 +356,30 @@ class Html:
             classes = " ".join(sorted(attrs.get("class", "").split()))
             parts.append(f"{name}.{classes}" if classes else name)
         return " ".join(parts)
+
+
+def line_cell_verdict(cells: Sequence[str], expected: int) -> str:
+    """``match`` when a line-number cell is the expected line (any cell equal to it counts),
+    ``mismatch`` when the cells show other numbers, ``hidden`` when none shows a number (dots or
+    empty), ``absent`` without cells. A cell that shows a number but carries the hidden class is a
+    separate signal: ``hidden-class+match`` or ``hidden-class+mismatch`` (when no plain number)."""
+    if not cells:
+        return "absent"
+    plain: list[int] = []
+    hidden: list[int] = []
+    for cell in cells:
+        cell = cell.strip()
+        if cell.startswith(_HIDDEN_CLASS):
+            number = _normalized_number(cell[len(_HIDDEN_CLASS) :])
+            if number is not None:
+                hidden.append(int(number))
+        elif (number := _normalized_number(cell)) is not None:
+            plain.append(int(number))
+    if plain:
+        return "match" if expected in plain else "mismatch"
+    if hidden:
+        return "hidden-class+match" if expected in hidden else "hidden-class+mismatch"
+    return "hidden"
 
 
 def distinct_shapes(*shapes: str) -> bool:
