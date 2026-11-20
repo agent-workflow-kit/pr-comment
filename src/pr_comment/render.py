@@ -192,8 +192,8 @@ def render_finding_text(
     A fence the body leaves open cannot be seen without a parser. ``render_suggestion`` therefore
     renders a degraded or moved block with no fence run in its lines whenever the finding's body
     holds one, so no line of the block can end a fence the body left open and leave later lines
-    as live Markdown. An applicable block (no fence run in its lines) is then at worst swallowed
-    into that fence and shown as code.
+    as live Markdown. An applicable block is only written when ``open_fence_possible(body)`` is
+    false; otherwise ``render_suggestion`` degrades it as ``open_fence``.
     """
     pieces: list[str] = []
     prefix = render_prefix(finding, mentions)
@@ -255,9 +255,59 @@ def _refuse_suggestion_fences(lines: Sequence[str]) -> None:
         raise ValueError("a suggestion line holds a suggestion fence")
 
 
+_FENCE_LINE_RE: Final = re.compile(r" {0,3}(`{3,}|~{3,})(.*)")
+# What may precede a fence run on a line for the line to be able to start a fence: block quote
+# and list markers and spacing. Any other text makes the run part of a paragraph.
+_CONTAINER_STARTS: Final = frozenset(">-+*0123456789")
+_CONTAINER_PREFIX_RE: Final = re.compile(r"[ \t>\-+*0-9.)]*")
+
+
+def open_fence_possible(body: str) -> bool:
+    """True when ``body`` can leave a code fence open at its end, so a block written after it may
+    be swallowed. Linear time, over the body's lines only, and conservative.
+
+    A line with up to three spaces, a run of three or more backticks or tildes and the rest of a
+    fence line (no backtick in a backtick fence's info string) opens or closes a fence as
+    CommonMark says; the state is followed to the end. A run on any other line that could still
+    start a block (only spaces, tabs, block quote and list markers and digits before it: a quote,
+    a list item, a deeper indent) makes the answer True, since pr-comment parses no containers.
+    Once an earlier line outside a fence could start a container (it starts with ``>``, ``-``,
+    ``+``, ``*`` or a digit), a fence line with one to three leading spaces also makes the answer
+    True: the indent may belong to the container, so a dedented line would open a new fence.
+    A run after other text on a line belongs to a paragraph and is ignored."""
+    open_char = ""
+    open_size = 0
+    container_seen = False
+    for line in textpipe.normalize_lines(body).split("\n"):
+        match = _FENCE_LINE_RE.fullmatch(line)
+        if match is not None:
+            run, rest = match.groups()
+            if not open_char and container_seen and line[0] == " ":
+                # The indent may belong to a quote or list item above, so the fence this line
+                # opens could be closed by a dedented line that then opens a top-level one.
+                return True
+            if open_char:
+                if run[0] == open_char and len(run) >= open_size and not rest.strip(" \t"):
+                    open_char = ""
+                continue
+            if run[0] == "`" and "`" in rest:
+                continue
+            open_char, open_size = run[0], len(run)
+            continue
+        if open_char:
+            continue
+        if line.lstrip(" \t")[:1] in _CONTAINER_STARTS:
+            container_seen = True
+        found = _FENCE_RUN_RE.search(line)
+        if found is not None and _CONTAINER_PREFIX_RE.fullmatch(line[: found.start()]):
+            return True
+    return bool(open_char)
+
+
 def degrade_reason(lines: Sequence[str]) -> str | None:
     """The first reason an applicable suggestion must be degraded, in the order
-    ``invisible_chars``, ``fence``, ``slash_line``, ``dedupe_text``, or None."""
+    ``invisible_chars``, ``fence``, ``slash_line``, ``dedupe_text``, or None. (``open_fence`` is
+    decided by ``render_suggestion`` from the body, after these.)"""
     if any(is_marked(ch) for line in lines for ch in line):
         return "invisible_chars"
     if any(_FENCE_RUN_RE.search(line) for line in lines):
@@ -328,9 +378,12 @@ def render_suggestion(
     An applicable suggestion (an inline finding on the right side with a line) is a three-backtick
     fence: ``suggestion`` on GitHub, ``suggestion:-N+0`` on GitLab with ``N = line - start_line``;
     its lines are raw. When a line has an invisible character, a fence run or a leading ``/``, or
-    when ``moved`` is true, it is a ``text`` block with a note before it and its lines neutralized
-    and marked; only the first case reports a reason. Text pipeline step 6's leading space for a
-    ``/`` line is forgectl's pre-applied neutralizing, applied once to the whole body by
+    when ``moved`` is true, or when the finding's own body can leave a fence open
+    (``open_fence_possible``, reason ``open_fence``, last in the order), it is a ``text`` block
+    with a note before it and its lines neutralized and marked. A moved block reports no reason;
+    the other cases (``invisible_chars``, ``fence``, ``slash_line``, ``dedupe_text`` and
+    ``open_fence``) report theirs. Text pipeline step 6's leading space for a ``/`` line is
+    forgectl's pre-applied neutralizing, applied once to the whole body by
     ``assemble.build_body`` and ``assemble.build_inline``.
 
     A degraded or moved block has its fence runs split when the finding's own body holds a fence
@@ -357,6 +410,8 @@ def render_suggestion(
     if finding.get("side") not in (None, "right"):
         raise ValueError("a suggestion is only for the right side")
     reason = degrade_reason(lines)
+    if reason is None and body is not None and open_fence_possible(body):
+        reason = "open_fence"
     if reason is not None:
         block = _text_block(lines, mentions, isolate=isolate)
         return SuggestionBlock(DEGRADE_NOTE + _SEPARATOR + block, reason)

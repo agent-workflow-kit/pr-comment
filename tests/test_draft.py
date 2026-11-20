@@ -1110,9 +1110,9 @@ def test_hostile_long_pr_is_refused_quickly() -> None:
     for pr in ("a" * 1_000_000 + "!", "a." * 500_000 + "#", "a-" * 500_000 + "/x#0"):
         doc = good()
         doc["pr"] = pr
-        started = time.monotonic()
+        started = time.process_time()  # CPU time: descheduling under load is not counted
         assert pointers_of(doc) == ["/pr"]
-        assert time.monotonic() - started < 1.0
+        assert time.process_time() - started < 0.1  # linear ~0.001 s; no guard 0.2 s
     doc = good()
     doc["pr"] = "a" * 250 + "/" + "b" * 100 + "#1"
     assert validate_document(doc) == []
