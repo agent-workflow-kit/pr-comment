@@ -399,8 +399,8 @@ ROWS: tuple[Row, ...] = (
     _r(
         "ts.line_separators",
         "#22",
-        "Whether hosts treat U+2028, U+2029, VT, FF and NEL as line breaks (observe: recorded, not asserted). cmark does not, and the first live run on GitHub did not match that expectation: the probe came back as line breaks (one `p` and six `br` in the rendered HTML), so the cmark-based expectation of no break was not observed to hold. The run did not separate the five characters, and forgectl itself splits on these characters and rejoins with LF (its neutralizing step 1), so the break may come from forgectl and not from the host: which of the two does it, and for which character, is still open. GitLab was not run.",
-        manual="Read the stored text of the probe comment (does it still hold the separator characters, or LF?) and, for each of the five characters alone between two words, the rendered HTML, to tell the host's doing from forgectl's.",
+        "Whether hosts treat U+2028, U+2029, VT, FF and NEL as line breaks (observe: recorded, not asserted). Observed live on GitHub against forgectl 0.55.2: GitHub does not break lines on any of the five. From a plain REST comment posted without forgectl, the rendered HTML turned LF, CR and CRLF into `br`, left U+2028, U+2029 and FF as literal characters with no break, and turned VT, NEL and U+001C to U+001E into U+FFFD, and the stored text equalled the text sent. The line breaks seen in the first live run (one `p` and six `br`) therefore came from forgectl's own neutralizing step 1, which splits on these characters and rejoins with LF. GitLab and enterprise hosts were not observed.",
+        manual="For GitLab and enterprise hosts: read the stored text of a plain REST comment (does it still hold the separator characters, or LF?) and, for each of the five characters alone between two words, the rendered HTML.",
     ),
     _r(
         "ts.dedupe_line_format",

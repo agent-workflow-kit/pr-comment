@@ -234,11 +234,13 @@ def test_the_document_states_the_cleanup_expectation_and_what_cannot_be_deleted(
     assert "submitted reviews and approvals" in text and "throwaway repo" in text
 
 
-def test_the_line_separator_rows_are_recorded_as_observations_with_the_open_question() -> None:
+def test_the_line_separator_row_records_that_only_forgectl_breaks_lines() -> None:
     from tests.live import checklist
 
     row = next(r for r in checklist.ROWS if r.id == "ts.line_separators")
-    assert "observe" in row.text and "line breaks" in row.text and "forgectl itself" in row.text
+    assert "observe" in row.text and "does not break lines" in row.text
+    assert "forgectl's own neutralizing step" in row.text and "still open" not in row.text
+    assert "GitLab and enterprise hosts were not observed" in row.text
     assert checklist.automated("ts.line_separators")
 
 
