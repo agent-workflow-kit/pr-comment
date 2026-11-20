@@ -460,17 +460,48 @@ def test_unparsable_version_text_keeps_its_own_message(
     assert doc["error"]["details"]["lower_version"] == "latest"
 
 
-def test_the_untested_warning_text_comes_from_the_constants(
+def test_the_untested_warning_names_the_minimum_not_the_untested_boundary(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, forgectl: FakeForgectl
 ) -> None:
     use_fake(monkeypatch, forgectl)
     forgectl.set_version("0.60.0")
-    monkeypatch.setattr(validate_module, "UNTESTED_FROM", (0, 60, 0))
-    monkeypatch.setattr(validate_module, "MINIMUM_FORGECTL", (0, 59, 0))
+    monkeypatch.setattr(validate_module, "MINIMUM_FORGECTL", (0, 59, 0))  # only this one
     code = main(["validate", "--json"])
     err = capsys.readouterr().err
     assert code == 0
-    assert "(0.59.x)" in err and "0.55" not in err.split("warning:")[1]
+    assert "(0.59.x)" in err.split("warning:")[1]
+
+
+def test_changing_only_the_untested_boundary_leaves_the_warning_text(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, forgectl: FakeForgectl
+) -> None:
+    use_fake(monkeypatch, forgectl)
+    forgectl.set_version("0.60.0")
+    monkeypatch.setattr(validate_module, "UNTESTED_FROM", (0, 60, 0))  # only this one
+    code = main(["validate", "--json"])
+    err = capsys.readouterr().err
+    assert code == 0
+    assert "(0.55.x)" in err.split("warning:")[1]
+
+
+@pytest.mark.parametrize(
+    ("stdout", "expected"),
+    [
+        (b"forgectl 0.55.0\x0bjunk\n", "forgectl 0.55.0<U+000B>junk"),
+        (b"forgectl 0.55.0\x0cjunk\n", "forgectl 0.55.0<U+000C>junk"),
+        ("forgectl 0.55.0\u2028junk\n".encode(), "forgectl 0.55.0<U+2028>junk"),
+        ("forgectl 0.55.0\u0085junk\nsecond\n".encode(), "forgectl 0.55.0<U+0085>junk"),
+    ],
+)
+def test_the_mismatch_details_show_the_whole_offending_line(
+    stdout: bytes, expected: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = raw_forgectl(tmp_path, stdout)
+    code, doc, _ = run(capsys, "--config", config, "validate")
+    assert code == 12, doc
+    assert "unreadable version" in doc["error"]["message"]
+    assert doc["error"]["details"]["lower_version"] == expected
+    validate("pr-comment/cli/error.json", doc)
 
 
 def test_the_interface_doc_names_the_supported_range() -> None:

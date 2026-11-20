@@ -74,7 +74,10 @@ def check(loaded: LoadedConfig, gateway: Gateway) -> Outcome:
         )
     version = parse_forgectl_version(version_line(raw))
     if version is None:
-        return mismatch_outcome("--version", "unreadable version", gateway=gateway)
+        first_line = raw.decode("utf-8", "replace").split("\n", 1)[0].strip()
+        return mismatch_outcome(
+            "--version", "unreadable version", gateway=gateway, version_text=first_line
+        )
     if version < MINIMUM_FORGECTL:
         return mismatch_outcome(
             "--version", f"older than {_dotted(MINIMUM_FORGECTL)}", gateway=gateway
