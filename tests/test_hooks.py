@@ -243,8 +243,8 @@ def test_without_a_state_directory_a_hook_does_not_run() -> None:
 def test_a_timeout_is_a_failure_and_ends_the_whole_group(dirs: StateDirs, pids: Path) -> None:
     cmd = f"echo $$ >> {pids}; sleep 60 & echo $! >> {pids}; wait"
     started = time.monotonic()
-    result = run_one(runner(dirs), entry(cmd, timeout=0.3))
-    assert time.monotonic() - started < 10
+    result = run_one(runner(dirs), entry(cmd, timeout=5.0))
+    assert time.monotonic() - started < 30  # ended by the timeout, far below the hook's 60 s
     assert (result.verdict, result.reason, result.timed_out) == ("fail", "timeout", True)
     recorded = [int(x) for x in pids.read_text().split()]
     assert len(recorded) == 2
@@ -256,9 +256,10 @@ def test_a_hook_that_ignores_sigterm_is_killed_after_the_grace_period(
 ) -> None:
     cmd = f"trap '' TERM; echo $$ >> {pids}; sleep 60 & echo $! >> {pids}; wait; sleep 60"
     started = time.monotonic()
-    result = run_one(runner(dirs, term_grace=0.3), entry(cmd, timeout=0.3))
+    result = run_one(runner(dirs, term_grace=0.3), entry(cmd, timeout=5.0))
     elapsed = time.monotonic() - started
-    assert result.timed_out and 0.5 <= elapsed < 10
+    # The kill came after the timeout and the grace (load only adds time) and far before 60 s.
+    assert result.timed_out and 5.0 + 0.3 * 0.9 <= elapsed < 30
     assert all(wait_dead(int(p)) for p in pids.read_text().split())
 
 
@@ -319,7 +320,7 @@ def test_a_timeout_sends_sigterm_to_the_whole_group_before_the_kill(
         f"while [ ! -s {ready} ]; do sleep 0.02; done; trap '' TERM; "
         "while :; do sleep 0.05; done"
     )
-    result = run_one(runner(dirs, term_grace=1.5), entry(cmd, timeout=1.0))
+    result = run_one(runner(dirs, term_grace=1.5), entry(cmd, timeout=5.0))
     assert result.timed_out
     assert termed.read_text().strip() == "termed"
     assert all(wait_dead(int(p)) for p in pids.read_text().split())
@@ -340,7 +341,7 @@ def test_a_timeout_never_touches_a_process_of_another_session(
     )
     pid, started = bystander.pid, start_ticks(bystander.pid)
     try:
-        result = run_one(runner(dirs), entry("sleep 60", timeout=0.3))
+        result = run_one(runner(dirs), entry("sleep 60", timeout=5.0))
         assert result.timed_out
         assert alive(pid) and start_ticks(pid) == started
         assert bystander.poll() is None
@@ -509,7 +510,7 @@ def test_several_escalations_are_all_reported_first_first(dirs: StateDirs, tmp_p
 
 
 def test_a_timeout_in_pre_post_is_a_veto(dirs: StateDirs) -> None:
-    r = runner(dirs, pre=[entry("sleep 30", timeout=0.2)])
+    r = runner(dirs, pre=[entry("sleep 30", timeout=5.0)])
     verdict = run_pre(r, DecisionIds(()), lambda e, d: PAYLOAD)
     assert verdict.vetoed is not None and verdict.vetoed.timed_out
 
@@ -526,7 +527,7 @@ def test_post_post_failures_only_warn_and_every_hook_runs(dirs: StateDirs, tmp_p
     post = [
         entry(f"echo 0 >> {marker}; exit 9"),
         entry(f"echo 1 >> {marker}; kill -9 $$"),
-        entry(f"echo 2 >> {marker}; sleep 30", timeout=0.2),
+        entry(f"echo 2 >> {marker}; sleep 30", timeout=5.0),
         entry(f'echo 3 >> {marker}; echo \'{{"decision_id": "late"}}\''),
     ]
     ids = DecisionIds(("c",))
@@ -548,17 +549,22 @@ def test_an_async_hook_is_detached_and_not_waited_for(
     dirs: StateDirs, tmp_path: Path, pids: Path
 ) -> None:
     done = tmp_path / "done"
+    release = tmp_path / "release"
     got = tmp_path / "got.json"
     ids = tmp_path / "ids"
     cmd = (
         f"echo $$ >> {pids}; ps -o pid=,pgid=,sid= -p $$ > {ids}; "
-        f"cat > {got}; sleep 1; echo ok > {done}"
+        f"cat > {got}; i=0; "
+        f"while [ ! -e {release} ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done; "
+        f"echo ok > {done}"
     )
-    r = runner(dirs, post=[entry(cmd, async_=True)])
-    started = time.monotonic()
+    r = runner(dirs, post=[entry(cmd, timeout=60, async_=True)])
+    # The hook holds until the test releases it, so "not waited for" is proved by the run ending
+    # while the hook is still held, not by a wall-clock limit that load can trip.
     run_post(r, DecisionIds(()), lambda e, d: PAYLOAD)
-    assert time.monotonic() - started < 0.9 and not done.exists()
-    assert wait_file(done, 10)
+    assert not done.exists()
+    release.write_text("go", encoding="utf-8")
+    assert wait_file(done, 30)
     assert json.loads(got.read_text()) == PAYLOAD
     (pid,) = (int(x) for x in pids.read_text().split())
     hook_pid, pgid, sid = (int(x) for x in ids.read_text().split())

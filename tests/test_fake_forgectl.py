@@ -757,13 +757,13 @@ def test_what_a_blocked_write_would_have_said_or_waited_for_is_not_printed(
         "host_rejected",
         details={"status": 422},
         stderr_lines=["forgectl: warning: slow host"],
-        delay=5,
+        delay=60,
     )
     forgectl.script(step)
     started = time.monotonic()
     proc = forgectl.run(COMMENT_CALL, stdin=b"x")
     assert proc.returncode == 13 and b"warning" not in proc.stderr
-    assert time.monotonic() - started < 4
+    assert time.monotonic() - started < 30  # not held for the 60 s delay
 
 
 @pytest.mark.parametrize("phase", ["after_write_attempt", "after_outcome"])

@@ -114,10 +114,11 @@ def test_suggestion_stays_applicable_after_a_closed_body() -> None:
     assert blocks == [("py", "x\n"), ("suggestion", "new\n")]
 
 
-def test_suggestion_after_an_unclosed_body_fence_is_swallowed_not_applicable() -> None:
-    # The body's own open fence makes the host see no suggestion block; nothing is applicable
-    # that pr-comment did not write, and the text stays inside the code.
+def test_suggestion_after_an_unclosed_body_fence_is_degraded_not_applicable() -> None:
+    # The body's own open fence would swallow an applicable block: it degrades as open_fence and
+    # the text stays inside the code (tests/test_open_fence.py).
     f = sug("new", body="```\nopen")
+    assert block(f).degraded == "open_fence"
     text = render_finding_text(f, mn(), suggestion_block=block(f).block)
     assert [lang for lang, _ in pre_blocks(text)] == [""]
 
