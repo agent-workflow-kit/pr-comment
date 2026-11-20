@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pr-comment/cli/validate.json",
+  "title": "validate output",
+  "description": "Printed with --json on exit 0 only: the config loaded and forgectl resolves at or above the minimum. Offline and read-only. Any other exit prints the error envelope (config_invalid, tool_missing, lower_contract_mismatch).",
+  "type": "object",
+  "properties": {
+    "valid": {
+      "const": true
+    },
+    "config_path": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "x-untrusted": true,
+      "description": "Untrusted: the main config file actually read (absolute), or null when none exists."
+    },
+    "forgectl": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "description": "The version read from `forgectl --version`, three numbers only."
+        },
+        "minimum": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "description": "The minimum version checked against."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "minimum"
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "config_warning",
+          "forgectl_untested_version"
+        ]
+      },
+      "uniqueItems": true,
+      "description": "Empty when there is nothing to say. config_warning: a config file sets allow_auto_approve or a mentions.* key. forgectl_untested_version: forgectl is newer than the supported range."
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "valid",
+    "config_path",
+    "forgectl",
+    "warnings"
+  ]
+}
